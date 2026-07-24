@@ -25,103 +25,20 @@ use \app\MemberEnginePrefs;
 use \Exception as Exception;
 use app\BaseControls\Control;
 
-class Workbench extends Control {
-
-    /** @var WorkbenchAccess instance-scoped access (replaces core TaskAccessControl) */
-    private $access;
-    /** @var array|null the instance whose workbench.db is selected for this request */
-    private $selected = null;
-    /** @var bool did SSO establish a session? */
-    private $authed = false;
-
-    public function __construct() {
-        // Do NOT call parent::__construct(): it pulls the member from CORE's session and
-        // loads core's nav menu. In the sidecar, identity comes from the SSO session and
-        // task data lives in the SELECTED instance's workbench.db.
-        $this->logger = Flight::get('log');
-
-        $s = \app\Sidecar\Sso::session();
-        $core = \app\Sidecar\Kernel::coreDb();
-        if ($s && $core) {
-            $this->authed = true;
-            $mid = (int) $s['member_id'];
-
-            // Member value object from core (identity is global; tasks are per-instance).
-            $this->member = $this->loadMember($core, $mid, $s);
-
-            // Instance-scoped access + which instances this member may reach.
-            $this->access = new WorkbenchAccess($mid, $core);
-
-            // Resolve the selected instance (?instance_tag=slug.app or ?inst=slug; else
-            // the first accessible). A slug is a lookup hint — only accessible ones match.
-            $this->selected = $this->resolveSelected();
-            if ($this->selected) {
-                $this->access->setCurrent($this->selected);   // selects its workbench.db (this process)
-                // Children (PlanRunner/ClaudeRunner/plan-orchestrate) inherit this so their
-                // bootstrap writes task state to the SAME per-instance workbench.db. INERT for
-                // core (only the sidecar sets it). See bootstrap.php TIKNIX_WORKSPACE_DB hook.
-                putenv('TIKNIX_WORKSPACE_DB=' . WorkbenchDb::path($this->selected));
-            }
-        } else {
-            $this->member = (object) ['id' => 0, 'level' => LEVELS['PUBLIC'], 'email' => '',
-                'displayName' => '', 'username' => '', 'avatarUrl' => ''];
-        }
-
-        $this->viewData = [
-            'member'     => $this->member,
-            'isLoggedIn' => $this->authed,
-            'menu'       => [],
-            'title'      => 'AI Projects',
-            'csrf'       => SimpleCsrf::getTokenArray(),
-            'selected'   => $this->selected,
-        ];
-    }
-
-    /** Build the member value object from core's member table (tolerant of fluid columns). */
-    private function loadMember(\PDO $core, int $mid, array $s): object {
-        $row = [];
-        try {
-            $st = $core->prepare('SELECT * FROM member WHERE id = ? LIMIT 1');
-            $st->execute([$mid]);
-            $row = $st->fetch(\PDO::FETCH_ASSOC) ?: [];
-        } catch (\Throwable $e) {}
-        return (object) [
-            'id'          => $mid,
-            'level'       => (int) ($row['level'] ?? $s['level'] ?? LEVELS['MEMBER']),
-            'email'       => (string) ($row['email'] ?? $s['email'] ?? ''),
-            'displayName' => (string) ($row['display_name'] ?? $row['username'] ?? ''),
-            'username'    => (string) ($row['username'] ?? ''),
-            'avatarUrl'   => (string) ($row['avatar_url'] ?? ''),
-            'locale'      => (string) ($row['locale'] ?? 'en'),
-        ];
-    }
+class Workbench extends BuildControl {
 
     /**
-     * The instance whose workbench.db this request targets. Priority:
-     *   1. explicit ?inst=<slug> / ?instance_tag=<slug.app>
-     *   2. self-locate: a task id (?id / POST id) → scan accessible DBs for its owner
-     *      instance (so every existing task link works WITHOUT threading ?inst everywhere)
-     *   3. first accessible (board default)
+     * Workbench routes address instances BY TASK: extend the shared hint resolver with
+     * self-location — a ?id/task_id → the accessible instance whose workbench.db holds it
+     * (so every existing task link works WITHOUT threading ?inst everywhere). Falls back to
+     * ?instance_id (store/create) via the base hint, then the first accessible (board).
      */
-    private function resolveSelected(): ?array {
+    protected function resolveSelected(): ?array {
         $insts = $this->access->accessibleInstances();
         if (!$insts) return null;
 
-        $hint = (string) ($this->getParam('inst') ?? '');
-        if ($hint === '') {
-            $tag = (string) ($this->getParam('instance_tag') ?? '');
-            if ($tag !== '') $hint = explode('.', $tag)[0];   // "slug.app" → "slug"
-        }
-        if ($hint !== '') {
-            foreach ($insts as $i) if ($i['slug'] === $hint) return $i;
-        }
-
-        // store()/create() carry the target instance as instance_id — select ITS db so a
-        // new task lands in the right workbench.db (not the first-accessible default).
-        $iid = (int) ($this->getParam('instance_id') ?? 0);
-        if ($iid > 0) {
-            foreach ($insts as $i) if ((int) $i['id'] === $iid) return $i;
-        }
+        $i = $this->resolveByInstanceHint($insts);   // ?inst / ?instance_tag / ?instance_id
+        if ($i) return $i;
 
         $taskId = (int) ($this->getParam('id') ?? $this->getParam('task_id') ?? 0);
         if ($taskId > 0) {
@@ -130,25 +47,6 @@ class Workbench extends Control {
         }
 
         return $insts[0];   // default: first accessible
-    }
-
-    /** SSO-session login gate (replaces core's session/redirect-to-/auth/login). */
-    protected function requireLogin() {
-        if ($this->authed) return true;
-        if (Flight::request()->ajax) { Flight::jsonError('Login required', 401); }
-        else { Flight::redirect('/sso/logout'); }   // Kit clears + bounces to launch
-        return false;
-    }
-
-    /** Render inside the sidecar's own lean layout (no core header/footer/nav chrome). */
-    protected function render($template, $data = [], $layout = true) {
-        $data = array_merge($this->viewData, $data);
-        if ($layout) {
-            Flight::render($template, $data, 'ws_body');
-            Flight::render('layouts/sidecar', $data);
-        } else {
-            Flight::render($template, $data);
-        }
     }
 
     /**
