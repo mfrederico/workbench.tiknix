@@ -56,5 +56,10 @@ The bulk (plan pipeline, browse, checkpoints=git, uploads, terminal) is selector
   selection). Fixed planrun: run-orchestrator.sh now exports TIKNIX_WORKBENCH_DB so plan-orchestrate + its
   per-task agents write there too (was the divergence bug). Verified: ?id=6→R:: on bidsurge workbench.db + env set;
   ?plan=1→self-locates bidsurge.
-- NEXT: (a) prove the Aibuilder PAGE renders (member+instance) + terminal wsBase → CORE host in the view;
-  (b) the B+C WRITE-SEAM: create/fork/delete/share (6 core R:: ops + 2 hasLevel) — decide core-API vs RW.
+- DONE: **write-seam = core provisioning API.** core/lib/ProvisionService (create/fork/delete/share own the
+  instance-registry writes + capricorn/git ops) behind core/controls/Provision `provision::call` (HMAC via
+  [sidecar.workbench].sso_secret, authcontrol=101, self-auth like /mcp). Sidecar create/fork/delete/share →
+  provisionCall() signs+POSTs (no curl_close). Dead sidecar helpers removed → the sidecar has ZERO core-registry
+  writes (only per-instance workbench.db plan writes remain). Proven LIVE (non-destructive): create/fork slug/
+  checkpoint gates, share team gate, delete owner+confirm gate, bad-sig 403, unknown-id 404.
+- NEXT: prove the Aibuilder PAGE renders (member+instance) + terminal wsBase → CORE host in views/aibuilder/index.php.

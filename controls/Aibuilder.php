@@ -538,58 +538,21 @@ class Aibuilder extends BuildControl {
     public function share($params = []): void {
         if (!$this->requireLevel($this->minLevel())) return;
         if (!$this->validateCSRF()) return;
-        $inst = $this->ownedInstance($this->getParam('id', 0));   // owner only
-        if (!$inst) { Flight::jsonError('No such instance (owner only)', 404); return; }
-
-        $teamId = (int)$this->getParam('team_id', 0);
-        $shared = (int)$this->getParam('shared', 0) === 1;
-        if ($teamId <= 0) { Flight::jsonError('Pick a team', 400); return; }
-
-        // Owner must belong to the team they share into.
-        $isMember = (int)R::getCell('SELECT COUNT(*) FROM teammember WHERE team_id = ? AND member_id = ?',
-                [$teamId, (int)$this->member->id]) > 0;
-        if (!$isMember) { Flight::jsonError('You are not a member of that team', 403); return; }
-        $team = R::load('team', $teamId);
-        if (!$team->id) { Flight::jsonError('No such team', 404); return; }
-
-        // Add/remove this team in the instance's shared-team set (keyed by bean id,
-        // so the toggle is idempotent). RedBean reconciles the instance_team link
-        // table on store.
-        $teams = $inst->sharedTeamList;
-        if ($shared) $teams[$team->id] = $team;
-        else         unset($teams[$team->id]);
-        $inst->sharedTeamList = $teams;
-        R::store($inst);
-
-        $ids = array_map('intval', array_keys($inst->sharedTeamList));
-        Flight::jsonSuccess(
-            ['team_id' => $teamId, 'team_name' => $team->name, 'shared' => $shared, 'shared_team_ids' => array_values($ids)],
-            $shared ? ('Shared with ' . $team->name) : ('Removed from ' . $team->name)
-        );
+        // Registry write (instance_team m2m) → core provision seam.
+        $res = $this->provisionCall('share', [
+            'id'      => (int) $this->getParam('id', 0),
+            'team_id' => (int) $this->getParam('team_id', 0),
+            'shared'  => (int) $this->getParam('shared', 0) === 1,
+        ]);
+        if (!empty($res['success'])) {
+            $d = (array) ($res['data'] ?? []);
+            $tn = (string) ($d['team_name'] ?? 'team');
+            Flight::jsonSuccess($d, !empty($d['shared']) ? ('Shared with ' . $tn) : ('Removed from ' . $tn));
+        } else { Flight::jsonError((string) ($res['message'] ?? 'Share failed'), (int) ($res['code'] ?? 500)); }
     }
 
-    /** The configured sqlite db path (relative) for an instance, e.g. "database/foo.db". */
-    private function instanceDbRel(string $slug): string {
-        $ini = @parse_ini_file($this->instanceDir($slug) . '/conf/config.ini', true) ?: [];
-        $p   = (string)($ini['database']['path'] ?? '');
-        return preg_match('#^database/[A-Za-z0-9._-]+\.db$#', $p) ? $p : 'database/' . $slug . '.db';
-    }
-
-    /** Register an instance bean owned by the current member (shared by create/fork). */
-    private function registerInstanceBean(string $slug, string $name, string $engine): object {
-        $member = R::load('member', (int)$this->member->id);
-        $inst = R::dispense('instance');
-        $inst->slug        = $slug;
-        $inst->app         = $this->appNamespace();
-        $inst->displayName = $name;
-        $inst->engine      = $engine;
-        $inst->status      = 'active';
-        $inst->isDefault   = 0;   // forks/creates by non-root are never the core default
-        $inst->createdAt   = date('Y-m-d H:i:s');
-        $member->ownInstanceList[] = $inst;
-        R::store($member);
-        return $inst;
-    }
+    // instanceDbRel / registerInstanceBean / archiveInstance moved to core ProvisionService
+    // (the write-seam): registry writes + capricorn ops run in core, not the sidecar.
 
     /**
      * POST /aibuilder/fork — create a NEW instance from a source instance's checkpoint.
@@ -601,97 +564,20 @@ class Aibuilder extends BuildControl {
     public function fork($params = []): void {
         if (!$this->requireLevel(LEVELS['ADMIN'])) return;
         if (!$this->validateCSRF()) return;
-
-        $src = $this->accessibleInstance($this->getParam('id', 0));
-        if (!$src) { Flight::jsonError('No such source instance', 404); return; }
-
-        $ckpt = (string)($params['operation']->name ?? $this->getParam('checkpoint', 'checkpoint-baseline'));
-        if (!preg_match('/^checkpoint-[A-Za-z0-9._-]+$/', $ckpt)) { Flight::jsonError('Invalid checkpoint name', 400); return; }
-        // The tag must exist in the source repo.
-        $tagCheck = $this->gitInstance($src->slug, ['tag', '-l', $ckpt]);
-        if (trim($tagCheck['out']) !== $ckpt) { Flight::jsonError('Checkpoint not found in source instance', 404); return; }
-
-        $slug   = strtolower(trim((string)$this->getParam('slug', '')));
-        $name   = trim((string)$this->getParam('name', '')) ?: ucfirst($slug);
-        $engine = (string)($src->engine ?: 'claude');
-        if (!preg_match(self::SLUG_RE, $slug)) {
-            Flight::jsonError('Invalid name: use 2-50 lowercase letters/numbers, starting with a letter.', 400);
-            return;
-        }
-        if (R::count('instance', 'slug = ?', [$slug]) > 0 || is_dir($this->instanceDir($slug))) {
-            Flight::jsonError('That name is already taken.', 409);
-            return;
-        }
-
-        $srcDir = $this->instanceDir($src->slug);
-        $newDir = $this->instanceDir($slug);
-
-        // 1) Provision a fresh skeleton (own db + config + jail + fresh secrets).
-        $out = $this->runScript('provision-instance.sh',
-            [$this->appNamespace(), $slug, '--admin', (string)$this->member->email, '--name', $name]);
-        if (!is_file($newDir . '/public/index.php')) {
-            $this->logger->error('aibuilder fork: provision failed', ['slug' => $slug, 'out' => $out['out']]);
-            Flight::jsonError('Provisioning failed. ' . substr(trim($out['out']), -300), 500);
-            return;
-        }
-
-        // 2) Overlay the source checkpoint CODE (tracked tree minus database/, which is
-        //    instance-specific) onto the fresh instance. Config is gitignored, so the
-        //    new instance keeps its own — that's the secret/connection reset.
-        $tar = $newDir . '/.aibuilder/fork-src.tar';
-        @mkdir(dirname($tar), 0775, true);
-        $a = []; $ac = 0;
-        exec('git -C ' . escapeshellarg($srcDir) . ' archive ' . escapeshellarg($ckpt)
-             . ' -o ' . escapeshellarg($tar) . ' 2>&1', $a, $ac);
-        if ($ac !== 0) {
-            $this->logger->error('aibuilder fork: archive failed', ['slug' => $slug, 'out' => implode("\n", $a)]);
-            Flight::jsonError('Could not read the checkpoint tree.', 500);
-            return;
-        }
-        $e = []; $ec = 0;
-        exec('tar -xf ' . escapeshellarg($tar) . ' -C ' . escapeshellarg($newDir)
-             . ' --exclude=' . escapeshellarg('database') . ' --exclude=' . escapeshellarg('database/*')
-             . ' 2>&1', $e, $ec);
-        @unlink($tar);
-        if ($ec !== 0) {
-            $this->logger->error('aibuilder fork: extract failed', ['slug' => $slug, 'out' => implode("\n", $e)]);
-            Flight::jsonError('Could not apply the checkpoint code (permissions?).', 500);
-            return;
-        }
-
-        // 3) Carry DATA: stream the source checkpoint's tracked sqlite db into the new
-        //    instance's configured db path (overwriting the freshly-seeded db).
-        $srcDbRel = $this->instanceDbRel($src->slug);   // e.g. database/bidsurge.db
-        $newDb    = $newDir . '/' . $this->instanceDbRel($slug);
-        $carried  = false;
-        // Confirm the db blob exists in the tag before copying.
-        $lt = $this->gitInstance($src->slug, ['cat-file', '-e', $ckpt . ':' . $srcDbRel]);
-        if ($lt['ok']) {
-            $d = []; $dc = 0;
-            exec('git -C ' . escapeshellarg($srcDir) . ' show ' . escapeshellarg($ckpt . ':' . $srcDbRel)
-                 . ' > ' . escapeshellarg($newDb) . ' 2>&1', $d, $dc);
-            $carried = ($dc === 0 && is_file($newDb) && filesize($newDb) > 0);
-            if (!$carried) {
-                $this->logger->warning('aibuilder fork: db copy failed', ['slug' => $slug, 'out' => implode("\n", $d)]);
-            }
-        }
-
-        // 4) Commit the overlaid tree as the new instance's baseline.
-        $this->gitInstance($slug, ['add', '-A']);
-        $this->gitInstance($slug, ['commit', '--no-verify', '-m',
-            'Fork from ' . $src->slug . '@' . $ckpt . ($carried ? ' (code+data)' : ' (code only)')]);
-
-        // 5) Neutralize the in-jail browser + register ownership (forker owns it).
-        $this->ensureOAuthCapture($slug);
-        $inst = $this->registerInstanceBean($slug, $name, $engine);
-
-        $this->logger->info('aibuilder instance forked', [
-            'from' => $src->slug, 'checkpoint' => $ckpt, 'slug' => $slug, 'by' => $this->member->id, 'data' => $carried,
+        // Registry write + capricorn provision + git overlay → core provision seam
+        // (ProvisionService::fork owns the source-checkpoint archive/data-carry + new bean).
+        $res = $this->provisionCall('fork', [
+            'id'         => (int) $this->getParam('id', 0),
+            'checkpoint' => (string) ($params['operation']->name ?? $this->getParam('checkpoint', 'checkpoint-baseline')),
+            'slug'       => strtolower(trim((string) $this->getParam('slug', ''))),
+            'name'       => trim((string) $this->getParam('name', '')),
         ]);
-        Flight::jsonSuccess(
-            ['id' => $inst->id, 'slug' => $slug, 'data_carried' => $carried],
-            'New instance created from ' . $ckpt . ($carried ? '' : ' (code only — data not carried)')
-        );
+        if (!empty($res['success'])) {
+            $d = (array) ($res['data'] ?? []);
+            $carried = !empty($d['data_carried']);
+            Flight::jsonSuccess(['id' => (int) ($d['id'] ?? 0), 'slug' => (string) ($d['slug'] ?? ''), 'data_carried' => $carried],
+                'New instance created' . ($carried ? '' : ' (code only — data not carried)'));
+        } else { Flight::jsonError((string) ($res['message'] ?? 'Fork failed'), (int) ($res['code'] ?? 500)); }
     }
 
     /** Validate a decomposed-plan array: {title, subtasks:[{title,...}]}. */
@@ -955,123 +841,18 @@ class Aibuilder extends BuildControl {
         if (!$this->requireLevel($this->minLevel())) return;
         if (!$this->validateCSRF()) return;
 
-        $inst = R::load('instance', (int)$this->getParam('id', 0));
-        if (!$inst->id) { Flight::jsonError('No such instance', 404); return; }
-        if ((int)$inst->memberId !== (int)$this->member->id && !Flight::hasLevel(LEVELS['ROOT'])) {
-            Flight::jsonError('Not your instance', 403); return;
-        }
-        if (!empty($inst->isDefault)) { Flight::jsonError('The (default) core instance cannot be deleted here.', 403); return; }
-
-        $slug = (string)$inst->slug;
-        if (!preg_match(self::SLUG_RE, $slug)) { Flight::jsonError('Invalid instance slug', 400); return; }
-        $domain = $slug . '.' . $this->appNamespace() . '.com';
-        if (!hash_equals($domain, trim((string)$this->getParam('confirm', '')))) {
-            Flight::jsonError('Confirmation does not match — type "' . $domain . '" exactly.', 400); return;
-        }
-
-        $dir = $this->instanceDir($slug);
-        // Hard safety before any destructive fs op: canonical path + a dot in the
-        // basename (every instance dir is "slug.app"; the source app dir is not).
-        if ($dir !== '/var/www/html/default/' . $slug . '.' . $this->appNamespace() || strpos(basename($dir), '.') === false) {
-            Flight::jsonError('Refusing to delete: path failed validation', 400); return;
-        }
-
-        $steps = [];
-
-        // 1) Kill the jailed session (same mechanism as restart).
-        $sock = $dir . '/.aibuilder/tmux.sock';
-        if (@file_exists($sock)) { @exec('tmux -S ' . escapeshellarg($sock) . ' kill-server 2>&1'); $steps[] = 'killed jailed session'; }
-
-        // 2) Unlink GitHub connector(s). The remote repo itself is left untouched.
-        $conns = R::find('connections', 'instance_id = ?', [(int)$inst->id]);
-        if ($conns) { R::trashAll($conns); $steps[] = 'removed ' . count($conns) . ' connector(s)'; }
-
-        // 3) Archive + wipe, leaving a tombstone zip in a fresh public/.
-        if (is_dir($dir)) {
-            $res = $this->archiveInstance($dir, $slug);
-            if (!$res['ok']) { Flight::jsonError('Archive failed: ' . $res['error'], 500); return; }
-            $steps[] = $res['message'];
-        } else {
-            $steps[] = 'folder already absent';
-        }
-
-        // 4) Delete every workbench task tagged to this instance (plan parents +
-        // subtasks, standalone tasks) and their child rows, so the workbench isn't
-        // left showing orphaned tasks for a gone instance. Also stop any of their
-        // still-live sessions and remove per-task workspace clones under /projects/.
-        $tasks = R::find('workbenchtask', 'instance_id = ?', [(int)$inst->id]);
-        if ($tasks) {
-            $killed = 0; $wiped = 0;
-            foreach ($tasks as $t) {
-                // Stop live agent/task sessions + any plan orchestrator (parents).
-                $sessions = [(string)$t->agentSession, (string)$t->tmuxSession];
-                if (empty($t->parentTaskId)) $sessions[] = 'tiknix-plan' . (int)$t->id . '-orchestrator';
-                foreach (array_unique(array_filter($sessions)) as $s) {
-                    if (TmuxManager::exists($s)) { TmuxManager::kill($s); $killed++; }
-                }
-                // Remove the per-task workspace clone (guard to a /projects/ path).
-                $ws = (string)$t->projectPath;
-                if ($ws !== '' && strpos($ws, '/projects/') !== false && is_dir($ws)) {
-                    @exec('rm -rf ' . escapeshellarg($ws) . ' 2>&1'); $wiped++;
-                }
-                // Child rows keyed by task_id.
-                foreach (['tasklog', 'taskcomment', 'tasksnapshot'] as $child) {
-                    $rows = R::find($child, 'task_id = ?', [(int)$t->id]);
-                    if ($rows) R::trashAll($rows);
-                }
-            }
-            R::trashAll($tasks);
-            $steps[] = 'deleted ' . count($tasks) . ' workbench task(s)'
-                     . ($killed ? ", stopped {$killed} session(s)" : '')
-                     . ($wiped ? ", removed {$wiped} workspace(s)" : '');
-        }
-
-        // 5) Drop the instance record.
-        R::trash($inst);
-        $steps[] = 'removed instance record';
-
-        $this->logger->warning('aibuilder instance deleted', ['slug' => $slug, 'by' => (int)$this->member->id, 'steps' => $steps]);
-        Flight::jsonSuccess(['slug' => $slug, 'steps' => $steps], 'Deleted ' . $domain);
-    }
-
-    /**
-     * Archive an instance folder to public/slug.zip, then wipe. Excludes the big
-     * regenerable dirs (vendor, node_modules, .git); swaps real conf/*.ini for the
-     * matching .example.ini (or drops a secret-bearing .ini with no example) so the
-     * web-served archive never carries live credentials.
-     */
-    private function archiveInstance(string $dir, string $slug): array {
-        // (a) Neutralize secrets: real conf/*.ini -> its .example.ini.
-        foreach (glob($dir . '/conf/*.ini') ?: [] as $ini) {
-            if (substr($ini, -12) === '.example.ini') continue;
-            $example = substr($ini, 0, -4) . '.example.ini';
-            if (is_file($example)) @copy($example, $ini);
-            else                   @unlink($ini);
-        }
-
-        // (b) Zip everything except the heavy regenerable dirs.
-        $tmpZip = sys_get_temp_dir() . '/' . $slug . '-' . date('Ymd-His') . '.zip';
-        @unlink($tmpZip);
-        $cmd = 'cd ' . escapeshellarg($dir) . ' && zip -r -q ' . escapeshellarg($tmpZip)
-             . " . -x 'vendor/*' 'node_modules/*' '.git/*'";
-        $out = []; $code = 0; @exec($cmd . ' 2>&1', $out, $code);
-        if (!is_file($tmpZip)) {
-            return ['ok' => false, 'error' => 'zip produced no archive: ' . implode(' ', array_slice($out, -2))];
-        }
-
-        // (c) Wipe the folder, then recreate an empty public/.
-        @exec('rm -rf ' . escapeshellarg($dir) . ' 2>&1');
-        if (!@mkdir($dir . '/public', 0775, true) && !is_dir($dir . '/public')) {
-            return ['ok' => false, 'error' => 'could not recreate public/ (archive kept at ' . $tmpZip . ')'];
-        }
-
-        // (d) Drop the tombstone zip into public/.
-        $dest = $dir . '/public/' . $slug . '.zip';
-        if (!@rename($tmpZip, $dest)) { @copy($tmpZip, $dest); @unlink($tmpZip); }
-        @chmod($dest, 0644);
-
-        $kb = (int)round((@filesize($dest) ?: 0) / 1024);
-        return ['ok' => true, 'message' => 'archived to public/' . $slug . '.zip (' . $kb . ' KB)'];
+        // Confirm-gated teardown (kill jail, unlink connectors, archive+wipe the dir incl.
+        // its workbench.db, trash the instance + core task records) → core provision seam.
+        $res = $this->provisionCall('delete', [
+            'id'      => (int) $this->getParam('id', 0),
+            'confirm' => trim((string) $this->getParam('confirm', '')),
+            'is_root' => $this->hasLevel(LEVELS['ROOT']),
+        ]);
+        if (!empty($res['success'])) {
+            $d = (array) ($res['data'] ?? []);
+            Flight::jsonSuccess(['slug' => (string) ($d['slug'] ?? ''), 'steps' => (array) ($d['steps'] ?? [])],
+                'Deleted ' . (string) ($d['domain'] ?? ($d['slug'] ?? 'instance')));
+        } else { Flight::jsonError((string) ($res['message'] ?? 'Delete failed'), (int) ($res['code'] ?? 500)); }
     }
 
     // --- Uploads: secure (private/gitignored) + public (published) ------------
