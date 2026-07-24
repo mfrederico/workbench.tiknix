@@ -1,0 +1,7 @@
+/vendor/
+conf/config.ini
+conf/*.ini
+!conf/*.example.ini
+/data/
+*.db
+.DS_Store
