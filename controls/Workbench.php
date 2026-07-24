@@ -50,6 +50,17 @@ class Workbench extends BuildControl {
     }
 
     /**
+     * Base URL for the test-server proxy domain. The capricorn proxy router that serves the
+     * `.proxy.<hash>.<domain>` files lives on the CONTROL PLANE — so a test server must be
+     * reachable at <hash>.tiknix.com, NOT the sidecar host or localhost. In the sidecar
+     * Flight has no 'baseurl' (only 'app.baseurl'=workbench.tiknix.com), so fall back to the
+     * core url; that null-baseurl→localhost gap is why an in-sidecar test server was unreachable.
+     */
+    protected function serverBaseurl(): string {
+        return (string) (Flight::get('baseurl') ?: Flight::get('sidecar.core_url') ?: 'https://localhost');
+    }
+
+    /**
      * Task dashboard
      */
     public function index($params = []) {
@@ -2444,7 +2455,7 @@ class Workbench extends BuildControl {
             // File format: proxyhost=X\nproxyport=Y (lua loadEnvFile expects key=value)
             // Filename: .proxy.{hash}.{domain} (no TLD - nginx lua strips it)
             if (!empty($task->proxyHash)) {
-                $baseDomain = preg_replace('#^https?://#', '', Flight::get('baseurl') ?? 'https://localhost');
+                $baseDomain = preg_replace('#^https?://#', '', $this->serverBaseurl());
                 // Strip TLD (e.g., .com, .net) - nginx lua expects domain without TLD
                 $baseDomain = preg_replace('/\.[a-z]{2,}$/i', '', $baseDomain);
                 $proxyFile = "/var/www/html/.proxy.{$task->proxyHash}.{$baseDomain}";
@@ -2466,7 +2477,7 @@ class Workbench extends BuildControl {
             $this->logTaskEvent($taskId, 'info', 'system', "Test server started on port {$task->assignedPort}");
 
             // Build response with subdomain URL if available
-            $baseDomain = preg_replace('#^https?://#', '', Flight::get('baseurl') ?? 'https://localhost');
+            $baseDomain = preg_replace('#^https?://#', '', $this->serverBaseurl());
             $testUrl = "http://localhost:{$task->assignedPort}";
             if (!empty($task->proxyHash)) {
                 $testUrl = "https://{$task->proxyHash}.{$baseDomain}";
@@ -3434,7 +3445,7 @@ class Workbench extends BuildControl {
             // File format: proxyhost=X\nproxyport=Y (lua loadEnvFile expects key=value)
             // Filename: .proxy.{hash}.{domain} (no TLD - nginx lua strips it)
             if (!empty($task->proxyHash)) {
-                $baseDomain = preg_replace('#^https?://#', '', Flight::get('baseurl') ?? 'https://localhost');
+                $baseDomain = preg_replace('#^https?://#', '', $this->serverBaseurl());
                 // Strip TLD (e.g., .com, .net) - nginx lua expects domain without TLD
                 $baseDomain = preg_replace('/\.[a-z]{2,}$/i', '', $baseDomain);
                 $proxyFile = "/var/www/html/.proxy.{$task->proxyHash}.{$baseDomain}";
@@ -3446,7 +3457,7 @@ class Workbench extends BuildControl {
 
             Bean::store($task);
 
-            $baseDomain = $baseDomain ?? preg_replace('#^https?://#', '', Flight::get('baseurl') ?? 'https://localhost');
+            $baseDomain = $baseDomain ?? preg_replace('#^https?://#', '', $this->serverBaseurl());
             $testUrl = !empty($task->proxyHash)
                 ? "https://{$task->proxyHash}.{$baseDomain}"
                 : "http://localhost:{$task->assignedPort}";
