@@ -107,6 +107,22 @@ abstract class BuildControl extends Control {
         return $this->resolveByInstanceHint($insts) ?? $insts[0];
     }
 
+    /** Level check against the SSO'd member (NOT Flight::hasLevel, which reads core's session). */
+    protected function hasLevel($level): bool {
+        return $this->authed && (int) $this->member->level <= (int) $level;
+    }
+
+    /** Gate an action to a level; 403/redirect otherwise. Mirrors core Control::requireLevel. */
+    protected function requireLevel($level) {
+        if (!$this->requireLogin()) return false;
+        if (!$this->hasLevel($level)) {
+            if (Flight::request()->ajax) { Flight::jsonError('Access denied', 403); }
+            else { Flight::redirect('/'); }
+            return false;
+        }
+        return true;
+    }
+
     /** SSO-session login gate (replaces core's session/redirect-to-/auth/login). */
     protected function requireLogin() {
         if ($this->authed) return true;

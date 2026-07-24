@@ -49,14 +49,28 @@ class WorkbenchAccess {
             $st->execute([$id]);
             $r = $st->fetch(\PDO::FETCH_ASSOC) ?: [];
         } catch (\Throwable $e) { $r = []; }
-        return (object) [
-            'id'          => $id,
-            'slug'        => (string) ($r['slug'] ?? $this->instances[$id]['slug']),
-            'app'         => (string) ($r['app'] ?? $this->instances[$id]['app']),
-            'displayName' => (string) ($r['display_name'] ?? $this->instances[$id]['name']),
-            'engine'      => (string) ($r['engine'] ?? ''),
-            'memberId'    => (int) ($r['member_id'] ?? 0),
-        ];
+        // Expose EVERY column camelCased so it's a drop-in for a read-only instance bean
+        // (Aibuilder reads $inst->slug / ->app / ->memberId / ->displayName / ->engine / …).
+        $o = new \stdClass();
+        foreach ($r as $k => $v) {
+            $camel = lcfirst(str_replace(' ', '', ucwords(str_replace('_', ' ', (string) $k))));
+            $o->$camel = $v;
+        }
+        $o->id       = $id;
+        if (!isset($o->slug))     $o->slug     = $this->instances[$id]['slug'];
+        if (!isset($o->app))      $o->app      = $this->instances[$id]['app'];
+        if (!isset($o->memberId)) $o->memberId = 0;
+        return $o;
+    }
+
+    /** Team ids a given instance is shared with (core instance_team, read-only). */
+    public function teamIdsForInstance(int $instanceId): array {
+        if ($instanceId <= 0) return [];
+        try {
+            $st = $this->pdo->prepare('SELECT team_id FROM instance_team WHERE instance_id = ?');
+            $st->execute([$instanceId]);
+            return array_values(array_map('intval', $st->fetchAll(\PDO::FETCH_COLUMN)));
+        } catch (\Throwable $e) { return []; }
     }
 
     /** The accessible instance (row) whose workbench.db holds this task id, or null. */

@@ -26,7 +26,7 @@ use app\EngineRegistry;
 use app\MemberEnginePrefs;
 use app\BrokerService;
 
-class Aibuilder extends Control {
+class Aibuilder extends BuildControl {
 
     private const SLUG_RE = '/^[a-z][a-z0-9]{1,49}$/';
     private const APP     = 'tiknix';
@@ -36,13 +36,30 @@ class Aibuilder extends Control {
      * is a leaf and must not run the instance tooling (no nested instances until
      * host-aware nesting exists). Gate every route in one place.
      */
-    public function __construct() {
-        parent::__construct();
-        $this->requireBuilderTools('The AI Builder');
+    // Constructor is inherited from BuildControl (SSO member + WorkbenchAccess + instance
+    // selection). AI Builder routes address instances by ?id, or a plan (workbenchtask) id.
+    protected function resolveSelected(): ?array {
+        $insts = $this->access->accessibleInstances();
+        if (!$insts) return null;
+        $id = (int) ($this->getParam('id') ?? 0);           // /aibuilder/open/<id> — instance id
+        if ($id > 0) {
+            foreach ($insts as $i) if ((int) $i['id'] === $id) return $i;
+        }
+        $i = $this->resolveByInstanceHint($insts);           // ?inst / ?instance_tag / ?instance_id
+        if ($i) return $i;
+        $plan = (int) ($this->getParam('plan') ?? 0);        // a workbenchtask id → its instance
+        if ($plan > 0) {
+            $found = $this->access->findTaskInstance($plan);
+            if ($found) return $found;
+        }
+        return null;   // no default: the landing is an instance picker
     }
 
     private function cfg(): array {
-        return @parse_ini_file(dirname(__DIR__) . '/conf/aibuilder.ini', true) ?: [];
+        // Read CORE's aibuilder.ini (token secret + bridge ws paths) via core_root, so the
+        // terminal token validates against core's node bridge and the wss path matches.
+        $coreRoot = rtrim((string) \Flight::get('sidecar.core_root'), '/') ?: dirname(__DIR__);
+        return @parse_ini_file($coreRoot . '/conf/aibuilder.ini', true) ?: [];
     }
 
     private function minLevel(): int {
@@ -88,66 +105,36 @@ class Aibuilder extends Control {
         return $b64 . '.' . hash_hmac('sha256', $b64, $secret);
     }
 
-    /** Load an instance the current member owns and that exists on disk. */
+    // ---- instance access: converged onto WorkbenchAccess (owner/team scoping from CORE,
+    //      read-only). Return a read-only instance-meta object (drop-in for the old bean on
+    //      READ paths). Registry MUTATIONS (create/fork/delete/share) are the core write-seam.
+
+    /** An instance the current member OWNS and that exists on disk (owner-only actions). */
     private function ownedInstance($id) {
-        $id = (int)$id;
-        if (!$id) return null;
-        $inst = R::load('instance', $id);
-        if (!$inst->id) return null;
-        if ((int)$inst->memberId !== (int)$this->member->id) return null;
-        if (!is_file($this->instanceDir($inst->slug) . '/public/index.php')) return null;
+        $id = (int) $id;
+        if (!$id || !$this->access->ownsInstance((int) $this->member->id, $id)) return null;
+        $inst = $this->access->instanceMeta($id);
+        if (!$inst || !is_file($this->instanceDir($inst->slug) . '/public/index.php')) return null;
         return $inst;
     }
 
-    /**
-     * An instance the current member may USE: their own, OR one shared with a team
-     * they belong to. Owner-only actions (share/unshare, delete, rollback) keep
-     * using ownedInstance() instead.
-     */
+    /** An instance the current member may USE: owned OR shared with one of their teams. */
     private function accessibleInstance($id) {
-        $id = (int)$id;
+        $id = (int) $id;
         if (!$id) return null;
-        $inst = R::load('instance', $id);
-        if (!$inst->id) return null;
-        $mid  = (int)$this->member->id;
-        $mine = (int)$inst->memberId === $mid;
-        if (!$mine) {
-            // Shared with one of the member's teams (many-to-many via instance_team)?
-            if (!$this->hasShareTable()) return null;
-            $shared = (int)R::getCell(
-                'SELECT COUNT(*) FROM instance_team it
-                   JOIN teammember tm ON tm.team_id = it.team_id
-                 WHERE it.instance_id = ? AND tm.member_id = ?', [$id, $mid]) > 0;
-            if (!$shared) return null;
-        }
-        if (!is_file($this->instanceDir($inst->slug) . '/public/index.php')) return null;
+        $inst = $this->access->instanceMeta($id);   // null unless accessible (owned ∪ team-shared)
+        if (!$inst || !is_file($this->instanceDir($inst->slug) . '/public/index.php')) return null;
         return $inst;
     }
 
     /** True when the current member owns the instance (for owner-only actions). */
     private function isInstanceOwner($inst): bool {
-        return $inst && (int)$inst->memberId === (int)$this->member->id;
-    }
-
-    /** The instance<->team link table appears only after the first share. */
-    private function hasShareTable(): bool {
-        return in_array('instance_team', R::inspect(), true);
-    }
-
-    /** Instance ids shared with ANY of the given teams (empty if unshared / no table). */
-    private function instanceIdsSharedWithTeams(array $teamIds): array {
-        $teamIds = array_values(array_map('intval', $teamIds));
-        if (!$teamIds || !$this->hasShareTable()) return [];
-        $ph = implode(',', array_fill(0, count($teamIds), '?'));
-        return array_map('intval', R::getCol(
-            "SELECT DISTINCT instance_id FROM instance_team WHERE team_id IN ($ph)", $teamIds));
+        return $inst && $this->access->ownsInstance((int) $this->member->id, (int) $inst->id);
     }
 
     /** Team ids a given instance is currently shared with. */
     private function teamIdsForInstance(int $instanceId): array {
-        if (!$instanceId || !$this->hasShareTable()) return [];
-        return array_map('intval', R::getCol(
-            'SELECT team_id FROM instance_team WHERE instance_id = ?', [$instanceId]));
+        return $this->access->teamIdsForInstance($instanceId);
     }
 
     /** Run git inside an instance's directory (read/write its own repo only). */
@@ -245,40 +232,23 @@ class Aibuilder extends Control {
 
     /** Render the instance picker plus, if one is selected, its Terminal/Chat. */
     private function renderHome(int $selId): void {
-        // Owned instances + any shared with a team the member belongs to (many-to-many).
-        $mid     = (int)$this->member->id;
-        $teamIds = array_values(array_map('intval', R::getCol('SELECT team_id FROM teammember WHERE member_id = ?', [$mid])));
-        $sharedInstanceIds = $this->instanceIdsSharedWithTeams($teamIds);
-        $where = 'member_id = ?';
-        $args  = [$mid];
-        if ($sharedInstanceIds) {
-            $where .= ' OR id IN (' . implode(',', array_fill(0, count($sharedInstanceIds), '?')) . ')';
-            $args   = array_merge($args, $sharedInstanceIds);
-        }
-        $instances = R::find('instance', $where . ' ORDER BY created_at DESC', $args);
+        // Accessible instances (owned ∪ team-shared) from CORE via WorkbenchAccess, as
+        // read-only meta objects (drop-in for the old instance beans on read paths).
+        $mid       = (int) $this->member->id;
+        $instances = array_values(array_filter(array_map(
+            fn($i) => $this->access->instanceMeta((int) $i['id']),
+            $this->access->accessibleInstances())));
         $selected  = $selId ? $this->accessibleInstance($selId) : null;
 
         // Neutralize Claude's in-jail browser-open before the terminal opens, so a
         // first-run `claude` sign-in surfaces in the gate instead of a dead browser.
         if ($selected) $this->ensureOAuthCapture($selected->slug);
 
-        // Teams the member can share an owned instance INTO (for the share control).
-        $shareTeams = $teamIds
-            ? R::find('team', 'id IN (' . implode(',', array_fill(0, count($teamIds), '?')) . ') ORDER BY name', $teamIds)
-            : [];
-
-        // Which of the displayed instances have ANY share (for the picker badges),
-        // and which teams the SELECTED instance is shared with (for checkbox state).
-        // array_values(): R::find keys results by bean id; those keys must not leak
-        // into the IN() binding below (RedBean maps int keys to param positions).
-        $displayIds = array_values(array_map(fn($i) => (int)$i->id, $instances));
-        $instSharedIds = [];
-        if ($displayIds && $this->hasShareTable()) {
-            $ph = implode(',', array_fill(0, count($displayIds), '?'));
-            $instSharedIds = array_map('intval', R::getCol(
-                "SELECT DISTINCT instance_id FROM instance_team WHERE instance_id IN ($ph)", $displayIds));
-        }
-        $selSharedTeamIds = $selected ? $this->teamIdsForInstance((int)$selected->id) : [];
+        // Share-management UI (owner-only team sharing) is part of the registry write-seam;
+        // the read/terminal/plan path works without it. Selected instance's shares are read-only.
+        $shareTeams       = [];   // TODO write-seam: teams the member can share INTO
+        $instSharedIds    = [];   // TODO write-seam: which displayed instances have any share
+        $selSharedTeamIds = $selected ? $this->teamIdsForInstance((int) $selected->id) : [];
 
         $cfg = $this->cfg();
         $this->render('aibuilder/index', [
@@ -296,8 +266,8 @@ class Aibuilder extends Control {
             'ab_chat_wspath' => (string)($cfg['bridge']['chat_ws_path'] ?? '/aibuilder/chat-ws'),
             'ab_hasInstance' => (bool)$selected,
             'ab_isDefault'   => $selected ? (bool)$selected->isDefault : false,
-            'ab_isRoot'      => Flight::hasLevel(LEVELS['ROOT']),
-            'ab_canCreate'   => Flight::hasLevel(LEVELS['ADMIN']),
+            'ab_isRoot'      => $this->hasLevel(LEVELS['ROOT']),
+            'ab_canCreate'   => $this->hasLevel(LEVELS['ADMIN']),
             'ab_mainRepo'    => GitHubPublisher::mainGithubRepo(),
             'ab_url'         => $selected ? 'https://' . $selected->slug . '.' . $this->appNamespace() . '.com' : '',
         ]);

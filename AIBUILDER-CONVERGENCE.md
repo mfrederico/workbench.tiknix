@@ -43,6 +43,13 @@ The bulk (plan pipeline, browse, checkpoints=git, uploads, terminal) is selector
    workbench sidecar (feature `workbench`) — no separate domain/feature.
 
 ## Status
-- DONE: copied controller + views; wired the `aibuilder` route.
-- NEXT: shared base (step 1) → Aibuilder ctor+helpers onto it (step 2) → plan-pipeline selector (step 3)
-  → prove read/plan/terminal render → then the B+C write-seam (step 4).
+- DONE: copied controller+views; wired `aibuilder` route; **shared `BuildControl` base** (SSO member +
+  WorkbenchAccess + selector + render + level helpers); **Workbench migrated to it** (verified, fixed the
+  TIKNIX_WORKBENCH_DB env mismatch); **Aibuilder migrated** — extends BuildControl, ctor→base, resolveSelected
+  override (?id=instance / ?plan=task), access helpers (owned/accessible/isOwner/teamIds) → WorkbenchAccess,
+  `renderHome` → accessibleInstances+instanceMeta, `cfg()` reads CORE aibuilder.ini (terminal secret),
+  Flight::hasLevel → $this->hasLevel. WorkbenchAccess::instanceMeta now returns ALL columns camelCased +
+  teamIdsForInstance. Lints clean.
+- NEXT: (a) plan-pipeline methods (planapprove/planrun/planstatus/list) → the selector (workbench.db) — fixes
+  the divergence; (b) prove the Aibuilder page renders (member+instance) + terminal wsBase → CORE host in the
+  view; (c) the B+C WRITE-SEAM: create/fork/delete/share (6 core R:: ops + 2 hasLevel) — decide core-API vs RW.
