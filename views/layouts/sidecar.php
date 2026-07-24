@@ -6,6 +6,9 @@
  * shell can size the frame (Kit convention).
  */
 $title = htmlspecialchars($title ?? 'AI Projects');
+// Which of the sidecar's two facets is active (board vs AI Builder), for the tab bar.
+$__p = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/';
+$__onBuilder = strpos($__p, '/aibuilder') === 0;
 ?><!doctype html>
 <html lang="en" data-bs-theme="light">
 <head>
@@ -17,6 +20,13 @@ $title = htmlspecialchars($title ?? 'AI Projects');
 <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
 </head>
 <body>
+<nav class="navbar navbar-expand bg-body-tertiary border-bottom px-3 py-1">
+  <span class="navbar-brand fw-semibold d-flex align-items-center gap-1" style="font-size:.95rem"><i class="bi bi-hammer"></i> Build</span>
+  <ul class="nav nav-pills ms-2 gap-1">
+    <li class="nav-item"><a class="nav-link py-1 px-2 <?= $__onBuilder ? '' : 'active' ?>" href="/workbench"><i class="bi bi-kanban me-1"></i>AI Projects</a></li>
+    <li class="nav-item"><a class="nav-link py-1 px-2 <?= $__onBuilder ? 'active' : '' ?>" href="/aibuilder"><i class="bi bi-robot me-1"></i>AI Builder</a></li>
+  </ul>
+</nav>
 <?= $ws_body ?? '' ?>
 <script src="https://cdn.jsdelivr.net/npm/jquery@3.7.1/dist/jquery.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
