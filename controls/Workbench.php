@@ -2368,139 +2368,64 @@ class Workbench extends BuildControl {
             return;
         }
 
-        // Must have a branch and port assigned
         if (empty($task->branchName)) {
             Flight::jsonError('No branch assigned to this task', 400);
             return;
         }
-
-        if (empty($task->assignedPort)) {
-            Flight::jsonError('No port assigned to this task', 400);
-            return;
-        }
-
-        // Check if test server session already exists
-        if (!empty($task->testServerSession)) {
-            if (TmuxManager::exists($task->testServerSession)) {
-                Flight::jsonError('Test server is already running', 400);
-                return;
-            }
-            $task->testServerSession = null;
-        }
-
-        // Check if port is available
-        if (!PortManager::isPortAvailable($task->assignedPort)) {
-            Flight::jsonError("Port {$task->assignedPort} is already in use", 400);
+        if (empty($task->projectPath) || !is_dir($task->projectPath)) {
+            Flight::jsonError('No workspace to preview yet — run the task first.', 400);
             return;
         }
 
         try {
-            $sessionName = TmuxManager::buildServerSessionName($this->member->id, $task->id);
             $initMessages = [];
+            if (empty($task->proxyHash)) $task->proxyHash = bin2hex(random_bytes(6));
 
-            // Use workspace path if available, otherwise default to main project
-            $projectPath = !empty($task->projectPath) ? $task->projectPath : dirname(__DIR__);
+            // Pull the branch work + set up a fresh isolated db/config for the preview.
+            exec(sprintf('cd %s && git pull origin %s 2>&1',
+                escapeshellarg($task->projectPath), escapeshellarg($task->branchName)), $pullOutput, $pullCode);
+            if ($pullCode === 0) $initMessages[] = "Pulled latest changes from {$task->branchName}";
 
-            // Generate proxy hash if not exists
-            if (empty($task->proxyHash)) {
-                $task->proxyHash = bin2hex(random_bytes(6));
-                $initMessages[] = "Generated proxy hash: {$task->proxyHash}";
+            $wsManager = new WorkspaceManager();
+            $wsManager->initialize($task->projectPath, $task->proxyHash);
+            $initMessages[] = "Fresh database created with admin/admin1234";
+
+            // The PREVIEW is just a symlink at the capricorn-auto-routed path pointing at the
+            // workspace clone — capricorn serves {host}.com → {host}/public/index.php directly.
+            // No php -S, no proxy file, NO PORT. Temporary; removed on stop / cleanup.
+            $slug = preg_replace('/[^a-z0-9]/', '', strtolower(explode('.', (string) $task->instanceTag)[0])) ?: 'ws';
+            $host = "{$slug}-{$task->proxyHash}.tiknix";        // e.g. bidsurge-4b1234ba0a55.tiknix
+            $link = '/var/www/html/default/' . $host;
+            $target = rtrim($task->projectPath, '/');
+            // Safety: only ever link to a workspace clone under the default docroot.
+            if (strpos($target, '/var/www/html/default/') !== 0) {
+                Flight::jsonError('Refusing to preview: workspace path failed validation', 400); return;
+            }
+            @unlink($link);
+            if (!@symlink($target, $link)) {
+                Flight::jsonError('Could not create the preview link.', 500); return;
             }
 
-            // Initialize or refresh workspace environment
-            if (!empty($task->projectPath) && is_dir($task->projectPath)) {
-                // Pull latest changes from branch
-                $pullCmd = sprintf(
-                    'cd %s && git pull origin %s 2>&1',
-                    escapeshellarg($task->projectPath),
-                    escapeshellarg($task->branchName)
-                );
-                exec($pullCmd, $pullOutput, $pullCode);
-                if ($pullCode === 0) {
-                    $initMessages[] = "Pulled latest changes from {$task->branchName}";
-                } else {
-                    // Not fatal - might be a local-only branch
-                    $this->logger->info('Git pull skipped (local branch)', ['output' => implode("\n", $pullOutput)]);
-                }
-
-                // Initialize workspace with fresh database and config
-                $wsManager = new WorkspaceManager();
-                $wsInfo = $wsManager->initialize($task->projectPath, $task->proxyHash);
-                $initMessages[] = "Initialized workspace: {$wsInfo['baseurl']}";
-                $initMessages[] = "Fresh database created with admin/admin1234";
-
-                // Workspace mode - already in isolated clone on correct branch
-                $serverCmd = sprintf(
-                    'cd %s && php -S 0.0.0.0:%d server.php; echo "Server stopped. Press Enter to close..."; read',
-                    escapeshellarg($projectPath),
-                    $task->assignedPort
-                );
-            } else {
-                // Main project mode - need to checkout branch
-                $serverCmd = sprintf(
-                    'cd %s && git checkout %s && php -S 0.0.0.0:%d server.php; echo "Server stopped. Press Enter to close..."; read',
-                    escapeshellarg($projectPath),
-                    escapeshellarg($task->branchName),
-                    $task->assignedPort
-                );
-            }
-
-            // Use TmuxManager to create the session
-            TmuxManager::create($sessionName, $serverCmd, $projectPath);
-
-            $task->testServerSession = $sessionName;
+            $task->testServerSession = $host;   // "preview live" marker + host for the UI
+            $task->proxyFile = $link;           // the symlink to remove on stop
             $task->updatedAt = date('Y-m-d H:i:s');
-
-            // Create .proxy file for nginx subdomain routing (if proxyHash exists)
-            // File format: proxyhost=X\nproxyport=Y (lua loadEnvFile expects key=value)
-            // Filename: .proxy.{hash}.{domain} (no TLD - nginx lua strips it)
-            if (!empty($task->proxyHash)) {
-                $baseDomain = preg_replace('#^https?://#', '', $this->serverBaseurl());
-                // Strip TLD (e.g., .com, .net) - nginx lua expects domain without TLD
-                $baseDomain = preg_replace('/\.[a-z]{2,}$/i', '', $baseDomain);
-                $proxyFile = "/var/www/html/.proxy.{$task->proxyHash}.{$baseDomain}";
-                $proxyContent = "proxyhost=127.0.0.1\nproxyport={$task->assignedPort}";
-                if (file_put_contents($proxyFile, $proxyContent) !== false) {
-                    $task->proxyFile = $proxyFile;
-                    $this->logTaskEvent($taskId, 'info', 'system', "Created proxy file: {$proxyFile}");
-                } else {
-                    $this->logger->warning("Failed to create proxy file: {$proxyFile}");
-                }
-            }
-
             Bean::store($task);
 
-            // Log initialization messages
-            foreach ($initMessages as $msg) {
-                $this->logTaskEvent($taskId, 'info', 'system', $msg);
-            }
-            $this->logTaskEvent($taskId, 'info', 'system', "Test server started on port {$task->assignedPort}");
-
-            // Build response with subdomain URL if available
-            $baseDomain = preg_replace('#^https?://#', '', $this->serverBaseurl());
-            $testUrl = "http://localhost:{$task->assignedPort}";
-            if (!empty($task->proxyHash)) {
-                $testUrl = "https://{$task->proxyHash}.{$baseDomain}";
-            }
-
-            $message = "Test server started on port {$task->assignedPort}";
-            if (!empty($initMessages)) {
-                $message .= " (" . implode(", ", $initMessages) . ")";
-            }
+            $testUrl = "https://{$host}.com";
+            foreach ($initMessages as $msg) $this->logTaskEvent($taskId, 'info', 'system', $msg);
+            $this->logTaskEvent($taskId, 'info', 'system', "Preview live at {$testUrl}");
 
             Flight::json([
-                'success' => true,
-                'message' => $message,
-                'session' => $sessionName,
-                'port' => $task->assignedPort,
-                'url' => $testUrl,
-                'subdomain' => !empty($task->proxyHash) ? "{$task->proxyHash}.{$baseDomain}" : null,
-                'init_details' => $initMessages
+                'success'      => true,
+                'message'      => "Preview live at {$testUrl}",
+                'session'      => $host,
+                'url'          => $testUrl,
+                'subdomain'    => "{$host}.com",
+                'init_details' => $initMessages,
             ]);
-
         } catch (Exception $e) {
-            $this->logger->error('Failed to start test server', ['error' => $e->getMessage()]);
-            Flight::jsonError('Failed to start test server: ' . $e->getMessage(), 500);
+            $this->logger->error('Failed to start preview', ['error' => $e->getMessage()]);
+            Flight::jsonError('Failed to start preview: ' . $e->getMessage(), 500);
         }
     }
 
@@ -2524,21 +2449,20 @@ class Workbench extends BuildControl {
             return;
         }
 
-        if (empty($task->testServerSession)) {
-            Flight::jsonError('No test server is running', 400);
+        if (empty($task->testServerSession) && empty($task->proxyFile)) {
+            Flight::jsonError('No preview is running', 400);
             return;
         }
 
         try {
-            TmuxManager::kill($task->testServerSession);
-
-            // Delete .proxy file for nginx subdomain routing
-            if (!empty($task->proxyFile) && file_exists($task->proxyFile)) {
-                if (unlink($task->proxyFile)) {
-                    $this->logTaskEvent($taskId, 'info', 'system', "Deleted proxy file: {$task->proxyFile}");
-                } else {
-                    $this->logger->warning("Failed to delete proxy file: {$task->proxyFile}");
-                }
+            // New model: remove the symlink. Back-compat: also drop a legacy .proxy file and
+            // kill a legacy `php -S` tmux session if this task still has them.
+            if (!empty($task->proxyFile)) {
+                if (is_link($task->proxyFile)) @unlink($task->proxyFile);
+                elseif (file_exists($task->proxyFile)) @unlink($task->proxyFile);
+            }
+            if (!empty($task->testServerSession) && TmuxManager::exists($task->testServerSession)) {
+                TmuxManager::kill($task->testServerSession);
             }
 
             $task->testServerSession = null;
@@ -2546,16 +2470,11 @@ class Workbench extends BuildControl {
             $task->updatedAt = date('Y-m-d H:i:s');
             Bean::store($task);
 
-            $this->logTaskEvent($taskId, 'info', 'system', 'Test server stopped');
-
-            Flight::json([
-                'success' => true,
-                'message' => 'Test server stopped'
-            ]);
-
+            $this->logTaskEvent($taskId, 'info', 'system', 'Preview stopped');
+            Flight::json(['success' => true, 'message' => 'Preview stopped']);
         } catch (Exception $e) {
-            $this->logger->error('Failed to stop test server', ['error' => $e->getMessage()]);
-            Flight::jsonError('Failed to stop test server: ' . $e->getMessage(), 500);
+            $this->logger->error('Failed to stop preview', ['error' => $e->getMessage()]);
+            Flight::jsonError('Failed to stop preview: ' . $e->getMessage(), 500);
         }
     }
 
