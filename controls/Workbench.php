@@ -55,7 +55,13 @@ class Workbench extends Control {
             // Resolve the selected instance (?instance_tag=slug.app or ?inst=slug; else
             // the first accessible). A slug is a lookup hint — only accessible ones match.
             $this->selected = $this->resolveSelected();
-            if ($this->selected) $this->access->setCurrent($this->selected);  // selects its workspace.db
+            if ($this->selected) {
+                $this->access->setCurrent($this->selected);   // selects its workspace.db (this process)
+                // Children (PlanRunner/ClaudeRunner/plan-orchestrate) inherit this so their
+                // bootstrap writes task state to the SAME per-instance workspace.db. INERT for
+                // core (only the sidecar sets it). See bootstrap.php TIKNIX_WORKSPACE_DB hook.
+                putenv('TIKNIX_WORKSPACE_DB=' . WorkspaceDb::path($this->selected));
+            }
         } else {
             $this->member = (object) ['id' => 0, 'level' => LEVELS['PUBLIC'], 'email' => '',
                 'displayName' => '', 'username' => '', 'avatarUrl' => ''];
@@ -638,7 +644,11 @@ class Workbench extends Control {
         $ab = $dir . '/.aibuilder';
         @mkdir($ab, 0775, true);
         $scriptFile = $ab . '/run-orchestrator.sh';
-        file_put_contents($scriptFile, "#!/bin/bash\n" . $cmd . ' 2>&1 | tee ' . escapeshellarg($ab . '/orchestrator.log') . "\n");
+        // Propagate the per-instance workspace.db so plan-orchestrate's bootstrap writes there.
+        $wsDbEnv  = getenv('TIKNIX_WORKSPACE_DB');
+        $wsExport = ($wsDbEnv !== false && $wsDbEnv !== '')
+            ? 'export TIKNIX_WORKSPACE_DB=' . escapeshellarg($wsDbEnv) . "\n" : '';
+        file_put_contents($scriptFile, "#!/bin/bash\n" . $wsExport . $cmd . ' 2>&1 | tee ' . escapeshellarg($ab . '/orchestrator.log') . "\n");
         @chmod($scriptFile, 0755);
         return TmuxManager::create('tiknix-plan' . (int)$plan->id . '-orchestrator', $scriptFile, $dir);
     }

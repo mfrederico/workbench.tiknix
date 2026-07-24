@@ -109,3 +109,31 @@ instanceMeta) — structurally equivalent; verify live once the vhost is up.
   bootstrap, and they read more instance fields (port/engine/status) than instanceMeta carries.
 - Firehose reverse-dep → POST to sidecar. Data migration (split core workbenchtask by
   instance_id). Instances gitignore `data/workspace.db`. Nav flip + workspace.tiknix.com vhost.
+
+---
+
+## Orchestration DB-routing DONE + PROVEN (2026-07-24, session 3)
+
+The hard part — making spawned children write task state to the per-instance workspace.db —
+is solved with ONE inert keystone + env propagation (no rewrite of the runners' logic):
+
+- **Keystone (core `bootstrap.php`):** honors `TIKNIX_WORKSPACE_DB` — if set, `R::addDatabase('ws')`
+  + `selectDatabase('ws')` + fluid. **INERT for core + normal instances** (env unset). Proven:
+  inert when unset (core reads normally), redirects writes when set, core db uncontaminated.
+- **Runner propagation (core `lib/PlanRunner`, `lib/ClaudeRunner`):** each exports
+  `TIKNIX_WORKSPACE_DB` into its generated child script IFF the env is set in its own process.
+  Proven via reflection: export present when set, absent when unset — inert for core's /workbench.
+- **Sidecar (`controls/Workbench` ctor):** `putenv(TIKNIX_WORKSPACE_DB = WorkspaceDb::path(selected))`
+  once an instance is resolved. `startOrchestrator()` also writes the export into run-orchestrator.sh.
+- **Coverage:** the authoritative CLI writers all `require` core bootstrap and inherit the env →
+  `plan-ingest.php` (decomposed plan), `cli/task-complete.php` (status + tasklog on completion),
+  `plan-orchestrate.php` + its per-task agents. All land in the instance's workspace.db.
+
+### Residual (documented, not blocking)
+- **Live progress stream:** ClaudeRunner sets `TIKNIX_HOOK_URL → localhost:8080/mcp/message`
+  (core web). In-run progress hooks POST there and write CORE's db, so live tasklog streaming
+  won't appear in the sidecar's workspace.db view (final state via task-complete.php IS correct).
+  Fix later: make the progress hook instance-aware (carry slug/ws path → select workspace.db),
+  or point the hook at the sidecar.
+- Firehose reverse-dep → POST to sidecar. Data migration (split core workbenchtask by instance_id).
+  Instances gitignore `data/workspace.db`. Nav flip + workspace.tiknix.com vhost.

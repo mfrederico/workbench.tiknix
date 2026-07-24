@@ -28,6 +28,11 @@ class WorkspaceDb {
         R::freeze(false);   // fluid: auto-create workbenchtask/taskcomment/… on first store
     }
 
+    /** The instance's workspace.db file path (for the TIKNIX_WORKSPACE_DB env of children). */
+    public static function path(array $inst): string {
+        return rtrim(self::instanceDir($inst), '/') . '/data/workspace.db';
+    }
+
     /** Convenience: resolve dir from an instance row and select it. Returns the dir. */
     public static function selectInstance(array $inst): string {
         $dir = self::instanceDir($inst);
