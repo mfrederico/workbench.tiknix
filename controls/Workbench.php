@@ -27,12 +27,101 @@ use app\BaseControls\Control;
 
 class Workbench extends Control {
 
-    private TaskAccessControl $access;
+    /** @var WorkspaceAccess instance-scoped access (replaces core TaskAccessControl) */
+    private $access;
+    /** @var array|null the instance whose workspace.db is selected for this request */
+    private $selected = null;
+    /** @var bool did SSO establish a session? */
+    private $authed = false;
 
     public function __construct() {
-        parent::__construct();
-        $this->access = new TaskAccessControl();
-        $this->requireBuilderTools('The Workbench');
+        // Do NOT call parent::__construct(): it pulls the member from CORE's session and
+        // loads core's nav menu. In the sidecar, identity comes from the SSO session and
+        // task data lives in the SELECTED instance's workspace.db.
+        $this->logger = Flight::get('log');
+
+        $s = \app\Sidecar\Sso::session();
+        $core = \app\Sidecar\Kernel::coreDb();
+        if ($s && $core) {
+            $this->authed = true;
+            $mid = (int) $s['member_id'];
+
+            // Member value object from core (identity is global; tasks are per-instance).
+            $this->member = $this->loadMember($core, $mid, $s);
+
+            // Instance-scoped access + which instances this member may reach.
+            $this->access = new WorkspaceAccess($mid, $core);
+
+            // Resolve the selected instance (?instance_tag=slug.app or ?inst=slug; else
+            // the first accessible). A slug is a lookup hint — only accessible ones match.
+            $this->selected = $this->resolveSelected();
+            if ($this->selected) $this->access->setCurrent($this->selected);  // selects its workspace.db
+        } else {
+            $this->member = (object) ['id' => 0, 'level' => LEVELS['PUBLIC'], 'email' => '',
+                'displayName' => '', 'username' => '', 'avatarUrl' => ''];
+        }
+
+        $this->viewData = [
+            'member'     => $this->member,
+            'isLoggedIn' => $this->authed,
+            'menu'       => [],
+            'title'      => 'AI Projects',
+            'csrf'       => SimpleCsrf::getTokenArray(),
+            'selected'   => $this->selected,
+        ];
+    }
+
+    /** Build the member value object from core's member table (tolerant of fluid columns). */
+    private function loadMember(\PDO $core, int $mid, array $s): object {
+        $row = [];
+        try {
+            $st = $core->prepare('SELECT * FROM member WHERE id = ? LIMIT 1');
+            $st->execute([$mid]);
+            $row = $st->fetch(\PDO::FETCH_ASSOC) ?: [];
+        } catch (\Throwable $e) {}
+        return (object) [
+            'id'          => $mid,
+            'level'       => (int) ($row['level'] ?? $s['level'] ?? LEVELS['MEMBER']),
+            'email'       => (string) ($row['email'] ?? $s['email'] ?? ''),
+            'displayName' => (string) ($row['display_name'] ?? $row['username'] ?? ''),
+            'username'    => (string) ($row['username'] ?? ''),
+            'avatarUrl'   => (string) ($row['avatar_url'] ?? ''),
+            'locale'      => (string) ($row['locale'] ?? 'en'),
+        ];
+    }
+
+    /** The accessible instance matching ?instance_tag / ?inst, else the first accessible. */
+    private function resolveSelected(): ?array {
+        $insts = $this->access->accessibleInstances();
+        if (!$insts) return null;
+        $hint = (string) ($this->getParam('inst') ?? '');
+        if ($hint === '') {
+            $tag = (string) ($this->getParam('instance_tag') ?? '');
+            if ($tag !== '') $hint = explode('.', $tag)[0];   // "slug.app" → "slug"
+        }
+        if ($hint !== '') {
+            foreach ($insts as $i) if ($i['slug'] === $hint) return $i;
+        }
+        return $insts[0];   // default: first accessible
+    }
+
+    /** SSO-session login gate (replaces core's session/redirect-to-/auth/login). */
+    protected function requireLogin() {
+        if ($this->authed) return true;
+        if (Flight::request()->ajax) { Flight::jsonError('Login required', 401); }
+        else { Flight::redirect('/sso/logout'); }   // Kit clears + bounces to launch
+        return false;
+    }
+
+    /** Render inside the sidecar's own lean layout (no core header/footer/nav chrome). */
+    protected function render($template, $data = [], $layout = true) {
+        $data = array_merge($this->viewData, $data);
+        if ($layout) {
+            Flight::render($template, $data, 'ws_body');
+            Flight::render('layouts/sidecar', $data);
+        } else {
+            Flight::render($template, $data);
+        }
     }
 
     /**
@@ -105,7 +194,7 @@ class Workbench extends Control {
         $this->viewData['instanceTags'] = $this->access->getInstanceTags($this->member->id);
         // Provisioning a new instance is ADMIN-only (mirrors Aibuilder::create); the
         // left-nav shows the inline create form only to those who can use it.
-        $this->viewData['canCreate'] = Flight::hasLevel(LEVELS['ADMIN']);
+        $this->viewData['canCreate'] = (int)$this->member->level <= LEVELS['ADMIN'];
         $this->viewData['engines']   = \app\EngineRegistry::menu();
         $this->viewData['planMeta'] = $planMeta;
         $this->viewData['parentIdsWithChildren'] = array_keys($childParentIds);
@@ -118,13 +207,10 @@ class Workbench extends Control {
         $prefix = 'tiknix-' . (int)$this->member->id . '-plan-';
         $active = \app\TmuxManager::list($prefix);
         if ($active) {
-            $accIds = $this->access->getAccessibleInstanceIds((int)$this->member->id);
-            if ($accIds) {
-                $ph = implode(',', array_fill(0, count($accIds), '?'));
-                foreach (Bean::find('instance', "id IN ($ph) ORDER BY slug ASC", $accIds) as $inst) {
-                    if (in_array($prefix . $inst->slug, $active, true)) {
-                        $decomposing[] = ['id' => (int)$inst->id, 'tag' => $inst->slug . '.' . ($inst->app ?: 'tiknix')];
-                    }
+            // Accessible instances come from core (Sidecar\Access), never from workspace.db.
+            foreach ($this->access->accessibleInstances() as $inst) {
+                if (in_array($prefix . $inst['slug'], $active, true)) {
+                    $decomposing[] = ['id' => (int)$inst['id'], 'tag' => $inst['slug'] . '.' . ($inst['app'] ?: 'tiknix')];
                 }
             }
         }

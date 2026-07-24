@@ -41,3 +41,40 @@ use core's session-based `$this->member`; it uses the SSO session explicitly:
 
 ## Deploy (owner TODO)
 - vhost + DNS for `workspace.tiknix.com`; php-fpm pool; `conf/config.ini` present (gitignored).
+
+---
+
+## Board slice DONE + PROVEN (2026-07-24)
+
+The read path is built and verified end-to-end (CLI harness + render smoke against live
+core, read-only):
+
+- `lib/WorkspaceDb` — `select()` / `instanceDir()` / `selectInstance()` (RedBean per-instance
+  selector; fluid auto-creates tables). **Proven:** two instances' `workspace.db` fully
+  isolated, filters + counts correct.
+- `lib/WorkspaceAccess` — instance-scoped replacement for core's `TaskAccessControl` with the
+  SAME method surface the controller calls (`getVisibleTasks`/`getTaskCounts`/`getInstanceTags`/
+  `can*`/`canAccessInstance`/`getAccessibleInstanceIds`). Identity/instances answered from core
+  via `Sidecar\Access`; tasks from the selected `workspace.db`. `setCurrent()` selects the DB
+  (self-consistent). **Proven:** accessible-instance scoping + per-instance tab counts + current
+  restored after a multi-DB tab scan.
+- `controls/Workbench.php` — constructor rewritten: no `parent::__construct()`; member from
+  `Sso::session()` + core `member` row (`loadMember`); `WorkspaceAccess` instead of
+  `TaskAccessControl`; `resolveSelected()` picks the instance from `?instance_tag`/`?inst` (or
+  first accessible) and selects its DB. Overrides `requireLogin()` (SSO gate) and `render()`
+  (lean sidecar layout). `index()` patched: `Flight::hasLevel`→`member->level`, raw
+  `Bean::find('instance')`→`accessibleInstances()`.
+- `views/layouts/sidecar.php` — iframe shell (Bootstrap/icons/jQuery via CDN, postMessage height).
+- **Render smoke:** member 1 → 13.7KB board, title "AI Projects", status tabs, all three
+  instance tabs (bidsurge/mileage/core), New Task button, no fatal.
+
+### Still TODO (unchanged, minus the board)
+- **The other 35 methods** (create/store/view/run/decompose/…): apply the same pattern — each
+  action must resolve its instance (thread `?inst=<slug>` through the views' links/forms) and
+  `WorkspaceDb::select` it before touching tasks. Right now only the constructor's default/`?inst`
+  selection is wired, so a task-by-id action without `?inst` hits the default instance's DB.
+- **Orchestration** children (PlanRunner/tmux) must `WorkspaceDb::select` the same per-instance DB.
+- **Firehose reverse-dep** (core writes `workbenchtask` directly) → POST to the sidecar.
+- **Data migration** — split core `workbenchtask`(+comment/log/snapshot) by `instance_id`.
+- **Instances must gitignore `data/workspace.db`** (so an upgrade checkpoint never commits it).
+- **Flip** nav + owner deploys `workspace.tiknix.com` vhost/DNS.
