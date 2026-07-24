@@ -105,6 +105,7 @@ class Aibuilder extends BuildControl {
         $ttl    = (int)($cfg['token']['ttl'] ?? 120);
         $payload = json_encode([
             'app' => $this->appNamespace(), 'sub' => $sub, 'member_id' => $memberId,
+            'nonce' => bin2hex(random_bytes(8)),   // single-use: the bridge burns this on connect
             'exp' => time() + $ttl,
         ]);
         $b64 = rtrim(strtr(base64_encode($payload), '+/', '-_'), '=');

@@ -453,7 +453,8 @@ if (AB.has) {
     });
 
     freshToken().then(tok=>{
-      termWs=new WebSocket(wsBase+AB.wsPath+'?token='+encodeURIComponent(tok));
+      // Bearer over the handshake: token rides in Sec-WebSocket-Protocol, not the URL (no log leak).
+      termWs=new WebSocket(wsBase+AB.wsPath, ['tiknix-bearer', tok]);
       termWs.onopen=()=>{ setStatus('terminal connected'); termWs.send(JSON.stringify({type:'resize',cols:term.cols,rows:term.rows})); };
       termWs.onmessage=e=>term.write(typeof e.data==='string'?e.data:new Uint8Array(e.data));
       termWs.onclose=()=>setStatus('terminal disconnected');
