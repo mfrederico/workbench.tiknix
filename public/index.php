@@ -7,8 +7,9 @@ if (php_sapi_name() === 'cli-server') {
 $cfg      = @parse_ini_file(dirname(__DIR__) . '/conf/config.ini', true) ?: [];
 $coreRoot = rtrim($cfg['sidecar']['core_root'] ?? '/var/www/html/default/tiknix', '/');
 require $coreRoot . '/vendor/autoload.php';   // Sidecar Kit (tiknix/sidecar-kit) + core shared classes
-app\Sidecar\Kernel::guard(['', 'sso', 'index', 'error']);
+app\Sidecar\Kernel::guard(['', 'sso', 'index', 'workbench', 'error']);
 (new app\Sidecar\Kernel(dirname(__DIR__), [
     'index' => 'Index',
     'sso'   => 'Sso',
+    'workbench' => 'Workbench',
 ]))->run();
