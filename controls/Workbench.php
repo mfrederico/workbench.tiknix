@@ -543,9 +543,9 @@ class Workbench extends BuildControl {
         @mkdir($ab, 0775, true);
         $scriptFile = $ab . '/run-orchestrator.sh';
         // Propagate the per-instance workbench.db so plan-orchestrate's bootstrap writes there.
-        $wsDbEnv  = getenv('TIKNIX_WORKSPACE_DB');
+        $wsDbEnv  = getenv('TIKNIX_WORKBENCH_DB');
         $wsExport = ($wsDbEnv !== false && $wsDbEnv !== '')
-            ? 'export TIKNIX_WORKSPACE_DB=' . escapeshellarg($wsDbEnv) . "\n" : '';
+            ? 'export TIKNIX_WORKBENCH_DB=' . escapeshellarg($wsDbEnv) . "\n" : '';
         file_put_contents($scriptFile, "#!/bin/bash\n" . $wsExport . $cmd . ' 2>&1 | tee ' . escapeshellarg($ab . '/orchestrator.log') . "\n");
         @chmod($scriptFile, 0755);
         return TmuxManager::create('tiknix-plan' . (int)$plan->id . '-orchestrator', $scriptFile, $dir);

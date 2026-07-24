@@ -122,7 +122,7 @@ class WorkbenchAccess {
     public function isTeamMember(int $teamId, int $memberId): bool { return false; }
 
     /**
-     * Left-nav workspace tabs: one per accessible instance, with a plan count read from
+     * Left-nav workbench tabs: one per accessible instance, with a plan count read from
      * that instance's own workbench.db. Scans each DB then restores the current selection.
      */
     public function getInstanceTags(int $memberId): array {

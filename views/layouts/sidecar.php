@@ -1,6 +1,6 @@
 <?php
 /**
- * Sidecar layout — the lean shell the workspace views render inside. No core nav/header;
+ * Sidecar layout — the lean shell the workbench views render inside. No core nav/header;
  * the sidecar renders within core's shell iframe. Bootstrap + icons + jQuery so the copied
  * workbench views' markup and scripts run unchanged. postMessage the height so the parent
  * shell can size the frame (Kit convention).

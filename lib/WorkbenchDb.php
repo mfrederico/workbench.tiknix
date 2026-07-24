@@ -28,7 +28,7 @@ class WorkbenchDb {
         R::freeze(false);   // fluid: auto-create workbenchtask/taskcomment/… on first store
     }
 
-    /** The instance's workbench.db file path (for the TIKNIX_WORKSPACE_DB env of children). */
+    /** The instance's workbench.db file path (for the TIKNIX_WORKBENCH_DB env of children). */
     public static function path(array $inst): string {
         return rtrim(self::instanceDir($inst), '/') . '/data/workbench.db';
     }
