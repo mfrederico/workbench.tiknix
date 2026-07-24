@@ -78,3 +78,34 @@ core, read-only):
 - **Data migration** — split core `workbenchtask`(+comment/log/snapshot) by `instance_id`.
 - **Instances must gitignore `data/workspace.db`** (so an upgrade checkpoint never commits it).
 - **Flip** nav + owner deploys `workspace.tiknix.com` vhost/DNS.
+
+---
+
+## CRUD write-path DONE + PROVEN (2026-07-24, session 2)
+
+The read+write CRUD core is built and integration-tested against live core (read-only for
+identity; per-instance workspace.db for tasks; all seeded data cleaned up):
+
+- **`WorkspaceAccess::instanceMeta($id)`** — core-backed camelCase instance object (replaces
+  `Bean::load('instance')`, which is wrong in the sidecar — that table isn't in workspace.db).
+  Access-gated. ALL 10 `Bean::load/find('instance')` sites converted (CRUD + orchestration).
+- **`WorkspaceAccess::findTaskInstance($taskId)`** — scans accessible instances' workspace.db
+  for a task id. Powers the self-locating resolver so existing task links work unchanged.
+- **`resolveSelected()`** now resolves the target instance in priority order:
+  `?inst`/`?instance_tag` → `?instance_id` (store/create) → self-locate by task `?id` → first
+  accessible. So a task action needs NO `?inst` in its link, and a new task lands in the
+  chosen instance's DB (not the default).
+- **Proven:** `view()` with only `?id=` self-locates the right instance (43KB, task rendered);
+  `create()` renders the instance picker; `store()` (POST + CSRF) writes the new task to the
+  CHOSEN instance's workspace.db and does NOT leak into another accessible instance.
+
+update/delete/comment are POST handlers on the same machinery (self-locate by task id + CSRF +
+instanceMeta) — structurally equivalent; verify live once the vhost is up.
+
+### Still TODO
+- **Orchestration methods** (run/rerun/decompose/plan*/consolidate/startserver/stopserver/
+  console/progress): instance loads are converted, but the SPAWNED children (PlanRunner/
+  PlanExecutor/tmux/ClaudeRunner) must `WorkspaceDb::select` the same per-instance DB on
+  bootstrap, and they read more instance fields (port/engine/status) than instanceMeta carries.
+- Firehose reverse-dep → POST to sidecar. Data migration (split core workbenchtask by
+  instance_id). Instances gitignore `data/workspace.db`. Nav flip + workspace.tiknix.com vhost.

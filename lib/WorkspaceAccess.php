@@ -23,6 +23,7 @@ use RedBeanPHP\R;
 class WorkspaceAccess {
 
     private Access $core;
+    private \PDO $pdo;
     private int $memberId;
     /** @var array<int,array> accessible instances, keyed by id */
     private array $instances = [];
@@ -31,8 +32,45 @@ class WorkspaceAccess {
 
     public function __construct(int $memberId, \PDO $coreDb) {
         $this->memberId = $memberId;
+        $this->pdo = $coreDb;
         $this->core = new Access($coreDb);
         foreach ($this->core->instances($memberId) as $i) $this->instances[$i['id']] = $i;
+    }
+
+    /**
+     * Instance metadata from CORE as a camelCase object (the sidecar replacement for
+     * Bean::load('instance', $id) — the instance table lives in core, not workspace.db).
+     * Access-gated: returns null for an instance the member can't reach.
+     */
+    public function instanceMeta(int $id): ?object {
+        if (!isset($this->instances[$id])) return null;
+        try {
+            $st = $this->pdo->prepare('SELECT * FROM instance WHERE id = ? LIMIT 1');
+            $st->execute([$id]);
+            $r = $st->fetch(\PDO::FETCH_ASSOC) ?: [];
+        } catch (\Throwable $e) { $r = []; }
+        return (object) [
+            'id'          => $id,
+            'slug'        => (string) ($r['slug'] ?? $this->instances[$id]['slug']),
+            'app'         => (string) ($r['app'] ?? $this->instances[$id]['app']),
+            'displayName' => (string) ($r['display_name'] ?? $this->instances[$id]['name']),
+            'engine'      => (string) ($r['engine'] ?? ''),
+            'memberId'    => (int) ($r['member_id'] ?? 0),
+        ];
+    }
+
+    /** The accessible instance (row) whose workspace.db holds this task id, or null. */
+    public function findTaskInstance(int $taskId): ?array {
+        if ($taskId <= 0) return null;
+        foreach ($this->instances as $inst) {
+            try {
+                WorkspaceDb::selectInstance($inst);
+                if ((int) R::getCell("SELECT id FROM workbenchtask WHERE id = ?", [$taskId]) === $taskId) {
+                    return $inst;
+                }
+            } catch (\Throwable $e) { /* table absent */ }
+        }
+        return null;
     }
 
     /** Accessible instances (list), each [{id,slug,app,name,owned}]. */

@@ -90,10 +90,17 @@ class Workbench extends Control {
         ];
     }
 
-    /** The accessible instance matching ?instance_tag / ?inst, else the first accessible. */
+    /**
+     * The instance whose workspace.db this request targets. Priority:
+     *   1. explicit ?inst=<slug> / ?instance_tag=<slug.app>
+     *   2. self-locate: a task id (?id / POST id) → scan accessible DBs for its owner
+     *      instance (so every existing task link works WITHOUT threading ?inst everywhere)
+     *   3. first accessible (board default)
+     */
     private function resolveSelected(): ?array {
         $insts = $this->access->accessibleInstances();
         if (!$insts) return null;
+
         $hint = (string) ($this->getParam('inst') ?? '');
         if ($hint === '') {
             $tag = (string) ($this->getParam('instance_tag') ?? '');
@@ -102,6 +109,20 @@ class Workbench extends Control {
         if ($hint !== '') {
             foreach ($insts as $i) if ($i['slug'] === $hint) return $i;
         }
+
+        // store()/create() carry the target instance as instance_id — select ITS db so a
+        // new task lands in the right workspace.db (not the first-accessible default).
+        $iid = (int) ($this->getParam('instance_id') ?? 0);
+        if ($iid > 0) {
+            foreach ($insts as $i) if ((int) $i['id'] === $iid) return $i;
+        }
+
+        $taskId = (int) ($this->getParam('id') ?? $this->getParam('task_id') ?? 0);
+        if ($taskId > 0) {
+            $found = $this->access->findTaskInstance($taskId);
+            if ($found) return $found;
+        }
+
         return $insts[0];   // default: first accessible
     }
 
@@ -256,20 +277,14 @@ class Workbench extends Control {
         // AI Builder instances (tenants) a task can target: ones this member OWNS
         // plus ones shared with their teams. A shared workspace is labelled so.
         $instances = [];
-        $accessibleIds = $this->access->getAccessibleInstanceIds($this->member->id);
-        if (!empty($accessibleIds)) {
-            $ph = implode(',', array_fill(0, count($accessibleIds), '?'));
-            $rows = Bean::find('instance', "id IN ($ph) AND status = ? ORDER BY slug ASC",
-                array_merge($accessibleIds, ['active']));
-            foreach ($rows as $inst) {
-                $tag      = $inst->slug . '.' . ($inst->app ?: 'tiknix');
-                $isShared = (int)$inst->memberId !== (int)$this->member->id;
-                $instances[] = [
-                    'id'    => (int)$inst->id,
-                    'tag'   => $tag,
-                    'label' => ($inst->displayName ? $inst->displayName . ' — ' : '') . $tag . ($isShared ? ' (shared)' : ''),
-                ];
-            }
+        foreach ($this->access->accessibleInstances() as $inst) {
+            $tag      = $inst['slug'] . '.' . ($inst['app'] ?: 'tiknix');
+            $isShared = empty($inst['owned']);
+            $instances[] = [
+                'id'    => (int)$inst['id'],
+                'tag'   => $tag,
+                'label' => ($inst['name'] ? $inst['name'] . ' — ' : '') . $tag . ($isShared ? ' (shared)' : ''),
+            ];
         }
         $this->viewData['instances'] = $instances;
         // Pre-select an instance: by id (AI Builder "Plan & build in the Workbench") or
@@ -337,7 +352,7 @@ class Workbench extends Control {
         // Instance (tenant) is required — must be one the member owns OR one shared
         // with their teams (mirrors the create-form picker and getVisibleTasks).
         $instanceId = (int)$this->getParam('instance_id', 0);
-        $instance = $instanceId ? Bean::load('instance', $instanceId) : null;
+        $instance = $instanceId ? $this->access->instanceMeta((int)$instanceId) : null;
         if (!$instance || !$instance->id || !$this->access->canAccessInstance((int)$this->member->id, (int)$instance->id)) {
             $this->flash('error', 'Please select a valid instance for this task');
             Flight::redirect('/workbench/create');
@@ -411,7 +426,7 @@ class Workbench extends Control {
         // Instance (tenant) is required — one the member owns OR one shared with
         // their teams (mirrors the create picker and store/getVisibleTasks).
         $instanceId = (int)$this->getParam('instance_id', 0);
-        $instance = $instanceId ? Bean::load('instance', $instanceId) : null;
+        $instance = $instanceId ? $this->access->instanceMeta((int)$instanceId) : null;
         if (!$instance || !$instance->id || !$this->access->canAccessInstance((int)$this->member->id, (int)$instance->id)) {
             $this->flash('error', 'Please select a valid instance to decompose for');
             Flight::redirect('/workbench/create');
@@ -484,7 +499,7 @@ class Workbench extends Control {
             $tasks[] = $t;
         }
 
-        $inst = $instanceId ? Bean::load('instance', $instanceId) : null;
+        $inst = $instanceId ? $this->access->instanceMeta((int)$instanceId) : null;
         if (!$inst || !$inst->id || !$this->access->canAccessInstance((int)$this->member->id, (int)$inst->id)) { Flight::jsonError('No valid instance for these tasks.', 409); return; }
 
         // Don't consolidate tasks whose plan is actively building.
@@ -551,7 +566,7 @@ class Workbench extends Control {
         $plan = Bean::load('workbenchtask', $planId);
         if (!$plan->id || !empty($plan->parentTaskId)) return null;      // must be a plan parent
         if (!$this->access->canDelete((int)$this->member->id, $plan)) return null;
-        $inst = $plan->instanceId ? Bean::load('instance', (int)$plan->instanceId) : null;
+        $inst = $plan->instanceId ? $this->access->instanceMeta((int)$plan->instanceId) : null;
         return [$plan, ($inst && $inst->id) ? $inst : null];
     }
 
@@ -564,7 +579,7 @@ class Workbench extends Control {
         $plan = Bean::load('workbenchtask', $planId);
         if (!$plan->id || !empty($plan->parentTaskId)) return null;      // must be a plan parent
         if (!$this->access->canRun((int)$this->member->id, $plan)) return null;
-        $inst = $plan->instanceId ? Bean::load('instance', (int)$plan->instanceId) : null;
+        $inst = $plan->instanceId ? $this->access->instanceMeta((int)$plan->instanceId) : null;
         return [$plan, ($inst && $inst->id) ? $inst : null];
     }
 
@@ -643,7 +658,7 @@ class Workbench extends Control {
 
         $plan = Bean::load('workbenchtask', (int)$task->parentTaskId);
         if (!$plan->id) { Flight::jsonError('Parent plan not found', 404); return; }
-        $inst = $plan->instanceId ? Bean::load('instance', (int)$plan->instanceId) : null;
+        $inst = $plan->instanceId ? $this->access->instanceMeta((int)$plan->instanceId) : null;
         if (!$inst || !$inst->id) { Flight::jsonError('This plan has no linked instance.', 409); return; }
         if (TmuxManager::exists('tiknix-plan' . (int)$plan->id . '-orchestrator')) {
             Flight::jsonError('This plan is already building — the task will be picked up in that run.', 409);
@@ -702,7 +717,7 @@ class Workbench extends Control {
     public function decomposestatus($params = []) {
         if (!$this->requireLogin()) return;
         $instanceId = (int)$this->getParam('instance_id', 0);
-        $inst = $instanceId ? Bean::load('instance', $instanceId) : null;
+        $inst = $instanceId ? $this->access->instanceMeta((int)$instanceId) : null;
         if (!$inst || !$inst->id || !$this->access->canAccessInstance((int)$this->member->id, (int)$inst->id)) {
             Flight::jsonError('No such instance', 404);
             return;
@@ -717,7 +732,7 @@ class Workbench extends Control {
 
     /** Absolute path to a plan subtask's executor agent log (stream-json), or '' if unknown. */
     private function agentLogPath($task): string {
-        $inst = $task->instanceId ? Bean::load('instance', (int)$task->instanceId) : null;
+        $inst = $task->instanceId ? $this->access->instanceMeta((int)$task->instanceId) : null;
         if (!$inst || !$inst->id) return '';
         $dir = '/var/www/html/default/' . $inst->slug . '.' . ($inst->app ?: 'tiknix');
         return $dir . '/.aibuilder/wt/task-' . (int)$task->id . '/.aibuilder/agent.log';
@@ -1354,7 +1369,7 @@ class Workbench extends Control {
                 $liveDbPath = null;
                 $instDir = $this->instanceDirForTask($task);
                 if ($instDir !== null && (string)($task->dbSource ?? 'live') !== 'fresh') {
-                    $inst = Bean::load('instance', (int)$task->instanceId);
+                    $inst = $this->access->instanceMeta((int)$task->instanceId);
                     $cand = $instDir . '/database/' . $inst->slug . '.db';
                     if (is_file($cand)) $liveDbPath = $cand;
                 }
@@ -3130,7 +3145,7 @@ class Workbench extends Control {
     /** Absolute git repo dir for a task's instance, or null if not instance-tagged / missing. */
     private function instanceDirForTask($task): ?string {
         if (empty($task->instanceId)) return null;
-        $inst = Bean::load('instance', (int)$task->instanceId);
+        $inst = $this->access->instanceMeta((int)$task->instanceId);
         if (!$inst->id) return null;
         $dir = '/var/www/html/default/' . $inst->slug . '.' . ($inst->app ?: 'tiknix');
         return is_dir($dir . '/.git') ? $dir : null;
