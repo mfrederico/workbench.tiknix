@@ -50,6 +50,11 @@ The bulk (plan pipeline, browse, checkpoints=git, uploads, terminal) is selector
   `renderHome` → accessibleInstances+instanceMeta, `cfg()` reads CORE aibuilder.ini (terminal secret),
   Flight::hasLevel → $this->hasLevel. WorkbenchAccess::instanceMeta now returns ALL columns camelCased +
   teamIdsForInstance. Lints clean.
-- NEXT: (a) plan-pipeline methods (planapprove/planrun/planstatus/list) → the selector (workbench.db) — fixes
-  the divergence; (b) prove the Aibuilder page renders (member+instance) + terminal wsBase → CORE host in the
-  view; (c) the B+C WRITE-SEAM: create/fork/delete/share (6 core R:: ops + 2 hasLevel) — decide core-API vs RW.
+- DONE: **plan pipeline → selector.** The base ctor selects the instance workbench.db per request (?id=instance,
+  ?plan=workbenchtask→findTaskInstance), so plan/plansave/plangenerate/planstatus/planapprove/planrun/planprogress
+  + ownedPlan run their workbenchtask R:: ops against that db (no code change needed — R:: facade follows the
+  selection). Fixed planrun: run-orchestrator.sh now exports TIKNIX_WORKBENCH_DB so plan-orchestrate + its
+  per-task agents write there too (was the divergence bug). Verified: ?id=6→R:: on bidsurge workbench.db + env set;
+  ?plan=1→self-locates bidsurge.
+- NEXT: (a) prove the Aibuilder PAGE renders (member+instance) + terminal wsBase → CORE host in the view;
+  (b) the B+C WRITE-SEAM: create/fork/delete/share (6 core R:: ops + 2 hasLevel) — decide core-API vs RW.

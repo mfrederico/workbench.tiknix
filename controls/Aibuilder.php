@@ -893,7 +893,13 @@ class Aibuilder extends BuildControl {
         $ab = $dir . '/.aibuilder';
         @mkdir($ab, 0775, true);
         $scriptFile = $ab . '/run-orchestrator.sh';
-        file_put_contents($scriptFile, "#!/bin/bash\n" . $cmd . ' 2>&1 | tee ' . escapeshellarg($ab . '/orchestrator.log') . "\n");
+        // Propagate the per-instance workbench.db so plan-orchestrate's bootstrap (and the
+        // per-task agents it spawns) write plan/task state THERE, not core. The base ctor
+        // already putenv'd it for this instance; tmux won't inherit it, so export explicitly.
+        $wsDbEnv  = getenv('TIKNIX_WORKBENCH_DB');
+        $wsExport = ($wsDbEnv !== false && $wsDbEnv !== '')
+            ? 'export TIKNIX_WORKBENCH_DB=' . escapeshellarg($wsDbEnv) . "\n" : '';
+        file_put_contents($scriptFile, "#!/bin/bash\n" . $wsExport . $cmd . ' 2>&1 | tee ' . escapeshellarg($ab . '/orchestrator.log') . "\n");
         @chmod($scriptFile, 0755);
 
         if (!TmuxManager::create($session, $scriptFile, $dir)) {
