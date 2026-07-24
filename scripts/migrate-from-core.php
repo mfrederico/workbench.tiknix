@@ -1,15 +1,15 @@
 <?php
 /**
  * migrate-from-core.php — one-time, NON-DESTRUCTIVE copy of workbench task data out of
- * core's db into each instance's per-instance workspace.db (the AI Projects sidecar model).
+ * core's db into each instance's per-instance workbench.db (the AI Projects sidecar model).
  *
  *   php scripts/migrate-from-core.php            # dry-run: report what WOULD copy
  *   php scripts/migrate-from-core.php --apply     # copy
  *
  * SAFE: reads core read-only (PDO), never writes/deletes core. Idempotent — skips any
- * instance whose workspace.db already holds tasks. Copies workbenchtask (+ its taskcomment
+ * instance whose workbench.db already holds tasks. Copies workbenchtask (+ its taskcomment
  * / tasklog children) grouped by instance_id, remapping ids so parent/child links stay
- * intact. Tasks with instance_id 0/NULL can't be routed to a workspace.db and are left in
+ * intact. Tasks with instance_id 0/NULL can't be routed to a workbench.db and are left in
  * core (reported).
  */
 
@@ -18,10 +18,10 @@ $CORE  = '/var/www/html/default/tiknix';
 $SC    = dirname(__DIR__);
 
 require $CORE . '/vendor/autoload.php';
-require $SC . '/lib/WorkspaceDb.php';
+require $SC . '/lib/WorkbenchDb.php';
 use RedBeanPHP\R;
 use app\Bean;
-use app\WorkspaceDb;
+use app\WorkbenchDb;
 
 \Flight::set('sidecar.core_root', $CORE);
 
@@ -53,10 +53,10 @@ foreach ($byInst as $row) {
     if (!$inst) { echo "  instance_id=$iid: NO instance row — skipping {$row['n']} tasks\n"; continue; }
     $meta = ['id' => $iid, 'slug' => $inst['slug'], 'app' => $inst['app'] ?: 'tiknix', 'name' => $inst['display_name']];
 
-    WorkspaceDb::selectInstance($meta);
+    WorkbenchDb::selectInstance($meta);
     $existing = 0;
     try { $existing = (int) R::getCell("SELECT COUNT(*) FROM workbenchtask"); } catch (\Throwable $e) {}
-    if ($existing > 0) { echo "  {$inst['slug']} (id=$iid): workspace.db already has $existing tasks — SKIP (idempotent)\n"; continue; }
+    if ($existing > 0) { echo "  {$inst['slug']} (id=$iid): workbench.db already has $existing tasks — SKIP (idempotent)\n"; continue; }
 
     // read everything for this instance from core FIRST (we're about to switch RedBean db)
     $tasks    = coreRows($core, "SELECT * FROM workbenchtask WHERE instance_id=? ORDER BY id", [$iid]);
@@ -70,7 +70,7 @@ foreach ($byInst as $row) {
     $grandTasks += count($tasks); $grandChildren += count($comments) + count($logs);
     if (!$apply) continue;
 
-    WorkspaceDb::selectInstance($meta);   // ensure this instance's db is selected for writes
+    WorkbenchDb::selectInstance($meta);   // ensure this instance's db is selected for writes
 
     // pass 1: copy tasks (parent_task_id nulled), capture old→new id map
     $map = []; $parentOf = [];

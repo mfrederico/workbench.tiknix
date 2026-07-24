@@ -1,6 +1,6 @@
 <?php
 /**
- * WorkspaceAccess — the sidecar's instance-scoped replacement for core's
+ * WorkbenchAccess — the sidecar's instance-scoped replacement for core's
  * lib/TaskAccessControl. Same method surface the Workbench controller already calls
  * ($this->access->canRun / getVisibleTasks / getInstanceTags / …), but under the
  * per-instance model (decided 2026-07-24):
@@ -8,9 +8,9 @@
  *   Access = "can you reach this instance" (Sidecar\Access, computed from core's
  *   team/instance tables, read-only). Anyone with access to an instance sees ALL its
  *   tasks. There is no per-task team ACL — a task belongs to exactly one instance and
- *   lives in that instance's workspace.db.
+ *   lives in that instance's workbench.db.
  *
- * The controller selects ONE instance's workspace.db per request (setCurrent), so the
+ * The controller selects ONE instance's workbench.db per request (setCurrent), so the
  * task-side methods here just query the currently-selected DB. The identity/instance
  * side (which instances, ownership, admin level) is answered from core via Sidecar\Access.
  */
@@ -20,14 +20,14 @@ use \app\Bean;
 use \app\Sidecar\Access;
 use RedBeanPHP\R;
 
-class WorkspaceAccess {
+class WorkbenchAccess {
 
     private Access $core;
     private \PDO $pdo;
     private int $memberId;
     /** @var array<int,array> accessible instances, keyed by id */
     private array $instances = [];
-    /** @var array|null the instance whose workspace.db is currently selected */
+    /** @var array|null the instance whose workbench.db is currently selected */
     private ?array $current = null;
 
     public function __construct(int $memberId, \PDO $coreDb) {
@@ -39,7 +39,7 @@ class WorkspaceAccess {
 
     /**
      * Instance metadata from CORE as a camelCase object (the sidecar replacement for
-     * Bean::load('instance', $id) — the instance table lives in core, not workspace.db).
+     * Bean::load('instance', $id) — the instance table lives in core, not workbench.db).
      * Access-gated: returns null for an instance the member can't reach.
      */
     public function instanceMeta(int $id): ?object {
@@ -59,12 +59,12 @@ class WorkspaceAccess {
         ];
     }
 
-    /** The accessible instance (row) whose workspace.db holds this task id, or null. */
+    /** The accessible instance (row) whose workbench.db holds this task id, or null. */
     public function findTaskInstance(int $taskId): ?array {
         if ($taskId <= 0) return null;
         foreach ($this->instances as $inst) {
             try {
-                WorkspaceDb::selectInstance($inst);
+                WorkbenchDb::selectInstance($inst);
                 if ((int) R::getCell("SELECT id FROM workbenchtask WHERE id = ?", [$taskId]) === $taskId) {
                     return $inst;
                 }
@@ -76,19 +76,19 @@ class WorkspaceAccess {
     /** Accessible instances (list), each [{id,slug,app,name,owned}]. */
     public function accessibleInstances(): array { return array_values($this->instances); }
 
-    /** Select an instance as current AND point RedBean at its workspace.db (self-consistent). */
+    /** Select an instance as current AND point RedBean at its workbench.db (self-consistent). */
     public function setCurrent(?array $inst): void {
         $this->current = $inst;
-        if ($inst) WorkspaceDb::selectInstance($inst);
+        if ($inst) WorkbenchDb::selectInstance($inst);
     }
     public function current(): ?array { return $this->current; }
 
     /** Re-select the current instance's DB after a helper scanned other instances' DBs. */
     private function restoreCurrent(): void {
-        if ($this->current) WorkspaceDb::selectInstance($this->current);
+        if ($this->current) WorkbenchDb::selectInstance($this->current);
     }
 
-    // ---- identity / instance side (answered from core, never from workspace.db) ----
+    // ---- identity / instance side (answered from core, never from workbench.db) ----
 
     public function getAccessibleInstanceIds(int $memberId): array {
         return array_values(array_map('intval', array_keys($this->instances)));
@@ -109,7 +109,7 @@ class WorkspaceAccess {
 
     /**
      * Left-nav workspace tabs: one per accessible instance, with a plan count read from
-     * that instance's own workspace.db. Scans each DB then restores the current selection.
+     * that instance's own workbench.db. Scans each DB then restores the current selection.
      */
     public function getInstanceTags(int $memberId): array {
         $out = [];
@@ -117,7 +117,7 @@ class WorkspaceAccess {
             $tag = $inst['slug'] . '.' . ($inst['app'] !== '' ? $inst['app'] : 'tiknix');
             $n = 0;
             try {
-                WorkspaceDb::selectInstance($inst);
+                WorkbenchDb::selectInstance($inst);
                 $n = (int) R::getCell(
                     "SELECT COUNT(*) FROM workbenchtask WHERE parent_task_id IS NULL");
             } catch (\Throwable $e) { $n = 0; }   // table absent until first task
@@ -131,7 +131,7 @@ class WorkspaceAccess {
         return $out;
     }
 
-    // ---- task side (answered from the CURRENTLY selected instance's workspace.db) ----
+    // ---- task side (answered from the CURRENTLY selected instance's workbench.db) ----
 
     /**
      * Tasks in the selected instance. Instance access already gates visibility, so this

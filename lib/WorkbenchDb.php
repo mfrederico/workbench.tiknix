@@ -1,7 +1,7 @@
 <?php
 /**
- * WorkspaceDb — point RedBean at an instance's OWN workspace.db (per-instance, fluid).
- * The workspace sidecar owns this data; the file lives with the instance (gitignored) so
+ * WorkbenchDb — point RedBean at an instance's OWN workbench.db (per-instance, fluid).
+ * The workbench sidecar owns this data; the file lives with the instance (gitignored) so
  * it travels on eject. No Workbench data-access rewrite — just select, then run the code.
  */
 namespace app;
@@ -9,7 +9,7 @@ namespace app;
 use \Flight as Flight;
 use RedBeanPHP\R;
 
-class WorkspaceDb {
+class WorkbenchDb {
 
     /** The instance's app root on disk (…/<slug>.<app>), mirroring PipeFiles::instanceDir. */
     public static function instanceDir(array $inst): string {
@@ -18,19 +18,19 @@ class WorkspaceDb {
         return $parent . '/' . $inst['slug'] . '.' . $app;
     }
 
-    /** Select this instance's workspace.db (creates dir + DB + tables on first use). */
+    /** Select this instance's workbench.db (creates dir + DB + tables on first use). */
     public static function select(string $instanceDir, string $slug): void {
         $key = 'ws:' . $slug;
         $dir = rtrim($instanceDir, '/') . '/data';
         if (!is_dir($dir)) @mkdir($dir, 0775, true);
-        if (!R::hasDatabase($key)) R::addDatabase($key, 'sqlite:' . $dir . '/workspace.db');
+        if (!R::hasDatabase($key)) R::addDatabase($key, 'sqlite:' . $dir . '/workbench.db');
         R::selectDatabase($key);
         R::freeze(false);   // fluid: auto-create workbenchtask/taskcomment/… on first store
     }
 
-    /** The instance's workspace.db file path (for the TIKNIX_WORKSPACE_DB env of children). */
+    /** The instance's workbench.db file path (for the TIKNIX_WORKSPACE_DB env of children). */
     public static function path(array $inst): string {
-        return rtrim(self::instanceDir($inst), '/') . '/data/workspace.db';
+        return rtrim(self::instanceDir($inst), '/') . '/data/workbench.db';
     }
 
     /** Convenience: resolve dir from an instance row and select it. Returns the dir. */

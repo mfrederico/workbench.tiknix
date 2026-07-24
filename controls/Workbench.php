@@ -27,9 +27,9 @@ use app\BaseControls\Control;
 
 class Workbench extends Control {
 
-    /** @var WorkspaceAccess instance-scoped access (replaces core TaskAccessControl) */
+    /** @var WorkbenchAccess instance-scoped access (replaces core TaskAccessControl) */
     private $access;
-    /** @var array|null the instance whose workspace.db is selected for this request */
+    /** @var array|null the instance whose workbench.db is selected for this request */
     private $selected = null;
     /** @var bool did SSO establish a session? */
     private $authed = false;
@@ -37,7 +37,7 @@ class Workbench extends Control {
     public function __construct() {
         // Do NOT call parent::__construct(): it pulls the member from CORE's session and
         // loads core's nav menu. In the sidecar, identity comes from the SSO session and
-        // task data lives in the SELECTED instance's workspace.db.
+        // task data lives in the SELECTED instance's workbench.db.
         $this->logger = Flight::get('log');
 
         $s = \app\Sidecar\Sso::session();
@@ -50,17 +50,17 @@ class Workbench extends Control {
             $this->member = $this->loadMember($core, $mid, $s);
 
             // Instance-scoped access + which instances this member may reach.
-            $this->access = new WorkspaceAccess($mid, $core);
+            $this->access = new WorkbenchAccess($mid, $core);
 
             // Resolve the selected instance (?instance_tag=slug.app or ?inst=slug; else
             // the first accessible). A slug is a lookup hint — only accessible ones match.
             $this->selected = $this->resolveSelected();
             if ($this->selected) {
-                $this->access->setCurrent($this->selected);   // selects its workspace.db (this process)
+                $this->access->setCurrent($this->selected);   // selects its workbench.db (this process)
                 // Children (PlanRunner/ClaudeRunner/plan-orchestrate) inherit this so their
-                // bootstrap writes task state to the SAME per-instance workspace.db. INERT for
+                // bootstrap writes task state to the SAME per-instance workbench.db. INERT for
                 // core (only the sidecar sets it). See bootstrap.php TIKNIX_WORKSPACE_DB hook.
-                putenv('TIKNIX_WORKSPACE_DB=' . WorkspaceDb::path($this->selected));
+                putenv('TIKNIX_WORKSPACE_DB=' . WorkbenchDb::path($this->selected));
             }
         } else {
             $this->member = (object) ['id' => 0, 'level' => LEVELS['PUBLIC'], 'email' => '',
@@ -97,7 +97,7 @@ class Workbench extends Control {
     }
 
     /**
-     * The instance whose workspace.db this request targets. Priority:
+     * The instance whose workbench.db this request targets. Priority:
      *   1. explicit ?inst=<slug> / ?instance_tag=<slug.app>
      *   2. self-locate: a task id (?id / POST id) → scan accessible DBs for its owner
      *      instance (so every existing task link works WITHOUT threading ?inst everywhere)
@@ -117,7 +117,7 @@ class Workbench extends Control {
         }
 
         // store()/create() carry the target instance as instance_id — select ITS db so a
-        // new task lands in the right workspace.db (not the first-accessible default).
+        // new task lands in the right workbench.db (not the first-accessible default).
         $iid = (int) ($this->getParam('instance_id') ?? 0);
         if ($iid > 0) {
             foreach ($insts as $i) if ((int) $i['id'] === $iid) return $i;
@@ -234,7 +234,7 @@ class Workbench extends Control {
         $prefix = 'tiknix-' . (int)$this->member->id . '-plan-';
         $active = \app\TmuxManager::list($prefix);
         if ($active) {
-            // Accessible instances come from core (Sidecar\Access), never from workspace.db.
+            // Accessible instances come from core (Sidecar\Access), never from workbench.db.
             foreach ($this->access->accessibleInstances() as $inst) {
                 if (in_array($prefix . $inst['slug'], $active, true)) {
                     $decomposing[] = ['id' => (int)$inst['id'], 'tag' => $inst['slug'] . '.' . ($inst['app'] ?: 'tiknix')];
@@ -644,7 +644,7 @@ class Workbench extends Control {
         $ab = $dir . '/.aibuilder';
         @mkdir($ab, 0775, true);
         $scriptFile = $ab . '/run-orchestrator.sh';
-        // Propagate the per-instance workspace.db so plan-orchestrate's bootstrap writes there.
+        // Propagate the per-instance workbench.db so plan-orchestrate's bootstrap writes there.
         $wsDbEnv  = getenv('TIKNIX_WORKSPACE_DB');
         $wsExport = ($wsDbEnv !== false && $wsDbEnv !== '')
             ? 'export TIKNIX_WORKSPACE_DB=' . escapeshellarg($wsDbEnv) . "\n" : '';
