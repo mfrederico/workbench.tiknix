@@ -129,8 +129,13 @@ is solved with ONE inert keystone + env propagation (no rewrite of the runners' 
   `plan-ingest.php` (decomposed plan), `cli/task-complete.php` (status + tasklog on completion),
   `plan-orchestrate.php` + its per-task agents. All land in the instance's workspace.db.
 
-### Residual (documented, not blocking)
-- **Live progress stream:** ClaudeRunner sets `TIKNIX_HOOK_URL → localhost:8080/mcp/message`
+### Residual RESOLVED (core 24302d0)
+- **Live progress stream** now lands in the workspace.db: `ClaudeRunner::getHookUrl` targets the
+  INSTANCE own /mcp/message in sidecar regime (env set) instead of core localhost:8080, and
+  the workbench MCP tools (`AddTaskLog`/`UpdateTask`/`CompleteTask`/`UploadScreenshot`/`AskQuestion`)
+  `selectWorkspaceDb()` the instance data/workspace.db when `!is_control_plane()`. INERT for core
+  (env unset -> localhost:8080; control-plane -> ambient core db). Both proven. Kills the core coupling.
+- ~~**Live progress stream:**~~ ClaudeRunner sets `TIKNIX_HOOK_URL → localhost:8080/mcp/message`
   (core web). In-run progress hooks POST there and write CORE's db, so live tasklog streaming
   won't appear in the sidecar's workspace.db view (final state via task-complete.php IS correct).
   Fix later: make the progress hook instance-aware (carry slug/ws path → select workspace.db),
