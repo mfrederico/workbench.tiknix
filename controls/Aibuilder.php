@@ -62,6 +62,12 @@ class Aibuilder extends BuildControl {
         return @parse_ini_file($coreRoot . '/conf/aibuilder.ini', true) ?: [];
     }
 
+    /** wss/ws base for CORE's host (where the PTY node bridge runs), from [sidecar] core_url. */
+    private function coreWsBase(): string {
+        $u = rtrim((string) (\Flight::get('sidecar.core_url') ?: 'https://tiknix.com'), '/');
+        return (strpos($u, 'https://') === 0) ? 'wss://' . substr($u, 8) : 'ws://' . preg_replace('#^ws?://|^http://#', '', $u);
+    }
+
     private function minLevel(): int {
         // Floor to REACH AI Builder. Members (100) may use instances shared with
         // their team; per-instance authorization is enforced by accessibleInstance()
@@ -264,6 +270,9 @@ class Aibuilder extends BuildControl {
             'ab_token'       => $selected ? $this->mintToken($selected->slug, (int)$this->member->id) : '',
             'ab_wspath'      => (string)($cfg['bridge']['ws_path'] ?? '/aibuilder/ws'),
             'ab_chat_wspath' => (string)($cfg['bridge']['chat_ws_path'] ?? '/aibuilder/chat-ws'),
+            // The terminal/chat PTY bridge (node runner) lives on CORE, so the xterm must
+            // connect to core's host, not this sidecar's. wss://<core-host>. See coreWsBase().
+            'ab_ws_base'     => $this->coreWsBase(),
             'ab_hasInstance' => (bool)$selected,
             'ab_isDefault'   => $selected ? (bool)$selected->isDefault : false,
             'ab_isRoot'      => $this->hasLevel(LEVELS['ROOT']),

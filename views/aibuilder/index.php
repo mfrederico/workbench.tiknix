@@ -387,6 +387,7 @@ const AB = {
   csrf: <?= json_encode($csrfTok) ?>,
   has: <?= $ab_hasInstance ? 'true' : 'false' ?>,
   url: <?= json_encode($ab_url ?? '') ?>,
+  wsBase: <?= json_encode($ab_ws_base ?? '') ?>,
 };
 const esc = s => (s||'').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
 
@@ -427,7 +428,8 @@ if (AB.has) {
   const setStatus = t => { statusEl.textContent = '· ' + t; };
   const freshToken = () => fetch('/aibuilder/refresh?id='+AB.id, {headers:{'X-Requested-With':'XMLHttpRequest'}})
     .then(r=>r.json()).then(j=>(j.success&&j.data&&j.data.token)?j.data.token:AB.token).catch(()=>AB.token);
-  const wsBase = (location.protocol==='https:'?'wss':'ws') + '://' + location.host;
+  // The PTY bridge runs on CORE; connect there (ab_ws_base) when set (sidecar), else same-host (core's own /aibuilder).
+  const wsBase = AB.wsBase || ((location.protocol==='https:'?'wss':'ws') + '://' + location.host);
 
   // --- Terminal ---
   let term, termWs;
