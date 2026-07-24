@@ -279,64 +279,56 @@ class Aibuilder extends BuildControl {
         if (!$this->requireLevel(LEVELS['ADMIN'])) return;
         if (!$this->validateCSRF()) return;
 
-        $slug   = strtolower(trim((string)$this->getParam('slug', '')));
-        $name   = trim((string)$this->getParam('name', '')) ?: ucfirst($slug);
-        $engine = EngineRegistry::coerce($this->getParam('engine'), EngineRegistry::defaultEngine());
-
-        if (!preg_match(self::SLUG_RE, $slug)) {
-            Flight::jsonError('Invalid name: use 2-50 lowercase letters/numbers, starting with a letter.', 400);
-            return;
+        // Registry MUTATION: the sidecar is read-only to core, so provisioning goes through
+        // the HMAC-authed core /provision endpoint — ProvisionService owns the `instance`
+        // write + capricorn shell-out + broker-key mint. Writes/custody stay in core.
+        $res = $this->provisionCall('create', [
+            'slug'       => strtolower(trim((string) $this->getParam('slug', ''))),
+            'name'       => trim((string) $this->getParam('name', '')),
+            'engine'     => EngineRegistry::coerce($this->getParam('engine'), EngineRegistry::defaultEngine()),
+            'is_default' => filter_var($this->getParam('is_default', false), FILTER_VALIDATE_BOOLEAN),
+            'is_root'    => $this->hasLevel(LEVELS['ROOT']),
+        ]);
+        if (!empty($res['success'])) {
+            $d = (array) ($res['data'] ?? []);
+            // The new instance's per-instance workbench.db + oauth capture are set up lazily
+            // on first open() (co-located, sidecar-writable) — no core write needed here.
+            Flight::jsonSuccess(['id' => (int) ($d['id'] ?? 0), 'slug' => (string) ($d['slug'] ?? '')], 'Instance created');
+        } else {
+            Flight::jsonError((string) ($res['message'] ?? 'Provisioning failed'), (int) ($res['code'] ?? 500));
         }
-        if (R::count('instance', 'slug = ?', [$slug]) > 0 || is_dir($this->instanceDir($slug))) {
-            Flight::jsonError('That name is already taken.', 409);
-            return;
-        }
+    }
 
-        // Provision: capricorn clones the app, seeds an isolated sqlite db + guardrails.
-        $out = $this->runScript('provision-instance.sh',
-            [$this->appNamespace(), $slug, '--admin', (string)$this->member->email, '--name', $name]);
+    /**
+     * Perform a registry MUTATION in core. The sidecar can't write core, so it signs
+     * {member_id, op, params, exp} with the shared sidecar secret and POSTs to core's
+     * HMAC-authed /provision/call, which dispatches to ProvisionService. Returns the
+     * decoded core envelope {success, data|message, code}. (No curl_close — it throws in
+     * the PHP 8.5 web handler.)
+     */
+    private function provisionCall(string $op, array $params): array {
+        $cfg     = @parse_ini_file(dirname(__DIR__) . '/conf/config.ini', true) ?: [];
+        $secret  = (string) ($cfg['sidecar']['sso_secret'] ?? '');
+        $coreUrl = rtrim((string) ($cfg['sidecar']['core_url'] ?? 'https://tiknix.com'), '/');
+        if ($secret === '') return ['success' => false, 'message' => 'Provisioning not configured (no shared secret).'];
+        $payload = json_encode(['member_id' => (int) $this->member->id, 'op' => $op, 'params' => $params, 'exp' => time() + 60]);
+        $sig     = hash_hmac('sha256', $payload, $secret);
 
-        if (!is_file($this->instanceDir($slug) . '/public/index.php')) {
-            $this->logger->error('aibuilder provision failed', ['slug' => $slug, 'out' => $out['out']]);
-            Flight::jsonError('Provisioning failed. ' . substr(trim($out['out']), -300), 500);
-            return;
-        }
-
-        // Honor the chosen engine (provision wrote the conf default; override if needed).
-        @file_put_contents($this->instanceDir($slug) . '/.aibuilder/engine', $engine . "\n");
-
-        // Neutralize Claude's browser-open in the jail (no GUI there) so its first
-        // sign-in falls to the in-terminal URL + paste prompt the gate drives.
-        $this->ensureOAuthCapture($slug);
-
-        // Record ownership via the association (sets member_id automatically).
-        $member = R::load('member', (int)$this->member->id);
-        $inst = R::dispense('instance');
-        $inst->slug        = $slug;
-        $inst->app         = $this->appNamespace();
-        $inst->displayName = $name;
-        $inst->engine      = $engine;
-        $inst->status      = 'active';
-        // Root may flag one instance as the "(default)" tiknix-core sandbox that
-        // publishes back to main. Only root; other members' instances are never default.
-        $inst->isDefault   = (Flight::hasLevel(LEVELS['ROOT'])
-                              && filter_var($this->getParam('is_default', false), FILTER_VALIDATE_BOOLEAN)) ? 1 : 0;
-        $inst->createdAt   = date('Y-m-d H:i:s');
-        $member->ownInstanceList[] = $inst;
-        R::store($member);
-
-        // Give the instance its OWN broker-key identity, bound to THIS instance's id,
-        // so it can reach its (future) connections and drive the connect flow from its
-        // own /connections page. Safe — its own key, written to its own broker.ini
-        // (provisioning already reset any inherited one to the empty template).
-        try {
-            BrokerService::ensureInstanceConfig((int)$inst->id, (int)$this->member->id, $this->instanceDir($slug));
-        } catch (\Throwable $e) {
-            $this->logger->warning('aibuilder broker-key mint failed', ['slug' => $slug, 'err' => $e->getMessage()]);
-        }
-
-        $this->logger->info('aibuilder instance created', ['slug' => $slug, 'by' => $this->member->id]);
-        Flight::jsonSuccess(['id' => $inst->id, 'slug' => $slug], 'Instance created');
+        $ch = curl_init($coreUrl . '/provision/call');
+        curl_setopt_array($ch, [
+            CURLOPT_POST           => true,
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_POSTFIELDS     => http_build_query(['payload' => $payload, 'sig' => $sig]),
+            CURLOPT_TIMEOUT        => 180,
+        ]);
+        $body = curl_exec($ch);
+        $code = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+        $err  = curl_error($ch);
+        if ($body === false) return ['success' => false, 'message' => 'Could not reach core provisioning: ' . $err];
+        $d = json_decode((string) $body, true);
+        if (!is_array($d)) return ['success' => false, 'message' => 'Bad response from core provisioning (HTTP ' . $code . ')'];
+        if (empty($d['success']) && !isset($d['code'])) $d['code'] = $code;   // carry HTTP status (e.g. 409)
+        return $d;
     }
 
     /** GET /aibuilder/refresh?id= — re-mint a token (AJAX reconnect). JSON. */
