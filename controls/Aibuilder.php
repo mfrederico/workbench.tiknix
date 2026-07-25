@@ -28,7 +28,9 @@ use app\BrokerService;
 
 class Aibuilder extends BuildControl {
 
-    private const SLUG_RE = '/^[a-z][a-z0-9]{1,49}$/';
+    // Stored slug is the immutable {base}-{hash} identity (e.g. "towels-a1b2c3"):
+    // lowercase, starts with a letter, internal single hyphens only — path-safe.
+    private const SLUG_RE = '/^[a-z][a-z0-9]*(-[a-z0-9]+)*$/';
     private const APP     = 'tiknix';
 
     /**
