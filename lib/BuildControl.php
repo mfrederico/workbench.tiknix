@@ -126,8 +126,14 @@ abstract class BuildControl extends Control {
     /** SSO-session login gate (replaces core's session/redirect-to-/auth/login). */
     protected function requireLogin() {
         if ($this->authed) return true;
-        if (Flight::request()->ajax) { Flight::jsonError('Login required', 401); }
-        else { Flight::redirect('/sso/logout'); }   // Kit clears + bounces to launch
+        if (Flight::request()->ajax) { Flight::jsonError('Login required', 401); return false; }
+        // Recover an expired session by bouncing to CORE's launch, which re-mints the SSO
+        // handoff and drops the member back here — same as the pipelines sidecar. (The old
+        // /sso/logout just clears + lands on '/', dead-ending anyone whose session lapsed.)
+        $coreUrl = rtrim((string) (Flight::get('sidecar.core_url') ?? ''), '/');
+        $name    = \app\Sidecar\Kernel::name();
+        if ($coreUrl !== '' && $name !== '') { Flight::redirect($coreUrl . '/sidecar/launch/' . $name); }
+        else { Flight::redirect('/sso/logout'); }
         return false;
     }
 
