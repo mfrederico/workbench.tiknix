@@ -189,7 +189,7 @@ foreach ($instances as $__i) { if (!empty($__i->isDefault)) { $hasDefault = true
             <span class="fw-semibold"><i class="bi bi-terminal me-1"></i>Terminal</span>
             <span class="d-flex align-items-center gap-2">
               <span class="text-body-secondary small d-none d-md-inline"><i class="bi bi-shield-lock me-1"></i>Sandboxed to <?= htmlspecialchars(($selected->slug) ?? '') ?>.tiknix</span>
-              <button id="ab-restart" class="btn btn-outline-secondary btn-sm" type="button" title="Restart the jailed session (applies updated sandbox settings)"><i class="bi bi-arrow-repeat me-1"></i>Restart</button>
+              <?php if (!$ab_isDefault): ?><button id="ab-restart" class="btn btn-outline-secondary btn-sm" type="button" title="Restart the jailed session (applies updated sandbox settings)"><i class="bi bi-arrow-repeat me-1"></i>Restart</button><?php endif; ?>
               <button id="ab-delete" class="btn btn-outline-danger btn-sm" type="button" title="Delete this instance (danger zone)"><i class="bi bi-trash me-1"></i>Delete</button>
             </span>
           </div>
@@ -217,12 +217,14 @@ foreach ($instances as $__i) { if (!empty($__i->isDefault)) { $hasDefault = true
               </div>
             </div>
 
+            <?php if (!$ab_isDefault): ?>
             <p class="text-body-secondary small mt-2 mb-1">
               Type <code>claude</code> to start the agent. If it needs to sign in, this panel locks until you connect it.
               Hold <kbd>Shift</kbd> and drag to select/copy; right-click to paste.
             </p>
             <button id="ab-test" class="btn btn-outline-secondary btn-sm" type="button" title="Copy a browser-test prompt for the agent (uses the playwright MCP)"><i class="bi bi-bug me-1"></i>Copy browser-test prompt</button>
             <span id="ab-test-msg" class="small text-body-secondary ms-2"></span>
+            <?php endif; ?>
           </div>
         </div>
       </div>
@@ -386,6 +388,7 @@ const AB = {
   wsPath: <?= json_encode($ab_wspath) ?>,
   csrf: <?= json_encode($csrfTok) ?>,
   has: <?= $ab_hasInstance ? 'true' : 'false' ?>,
+  isDefault: <?= $ab_isDefault ? 'true' : 'false' ?>,
   url: <?= json_encode($ab_url ?? '') ?>,
   wsBase: <?= json_encode($ab_ws_base ?? '') ?>,
 };
@@ -759,8 +762,19 @@ if (AB.has) {
     navigator.clipboard.writeText(t.textContent||'').then(()=>{ rdCopy.innerHTML='<i class="bi bi-check2 me-1"></i>Copied'; setTimeout(()=>{ rdCopy.innerHTML='<i class="bi bi-clipboard me-1"></i>Copy'; },1500); });
   });
 
-  // init
-  setStatus('connecting…'); initTerminal(); refreshChanges(); loadCheckpoints(); loadGhStatus(); loadUploads();
+  // init — the "(default)" core instance IS the live control plane (core.tiknix is a symlink
+  // to the running app), so jail-run.sh refuses it. Don't fake a dead terminal; explain it.
+  if (AB.isDefault) {
+    setStatus('control plane — terminal disabled');
+    const t = document.getElementById('ab-terminal');
+    if (t) t.innerHTML = '<div style="color:#cfcfcf;padding:1.75rem;font-family:ui-monospace,Menlo,monospace;font-size:13px;line-height:1.65">'
+      + '<div style="font-size:1.25rem;margin-bottom:.6rem">&#128274; Core control plane</div>'
+      + 'This instance is the <b>live Tiknix core</b> (<code style="color:#9fd">core.tiknix</code> is a symlink to the running app), so it can’t be opened in a sandboxed terminal — that’s deliberate, an AI shell into the live core could break every instance.<br><br>'
+      + 'Open or create a <b>separate instance</b> to build with AI. You can still use <b>Connections</b> and <b>Publish&nbsp;to&nbsp;main</b> above.</div>';
+  } else {
+    setStatus('connecting…'); initTerminal();
+  }
+  refreshChanges(); loadCheckpoints(); loadGhStatus(); loadUploads();
   setInterval(refreshChanges, 4000);
 
 }
