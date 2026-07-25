@@ -105,6 +105,30 @@ class Aibuilder extends BuildControl {
         return '/var/www/html/default/' . $sub . '.' . $this->appNamespace();
     }
 
+    /**
+     * Has this instance's own web app finished setup? Mirrors the instance's
+     * Install::isInstalled() — a level-1 admin whose password is no longer the seed hash.
+     * Read-only peek at the instance's own sqlite; on any uncertainty return true so we
+     * never nag. (A freshly provisioned instance is NOT installed until the operator sets
+     * the admin password at /install.)
+     */
+    private function instanceInstalled(string $instanceDir): bool {
+        $ini   = @parse_ini_file($instanceDir . '/conf/config.ini', true) ?: [];
+        $dbRel = (string) ($ini['database']['path'] ?? '');
+        if ($dbRel === '') return true;
+        $dbAbs = ($dbRel[0] ?? '') === '/' ? $dbRel : $instanceDir . '/' . $dbRel;
+        if (!is_file($dbAbs)) return true;
+        // The default admin hash is a stable constant in the app's controls/Install.php.
+        $seed = '$2y$10$jVz654DI7bX8e1Dh32O9suFcMW4x1V.0SrniJNpDyknwkzc6gM20a';
+        try {
+            $pdo = new \PDO('sqlite:' . $dbAbs);
+            $pdo->setAttribute(\PDO::ATTR_ERRMODE, \PDO::ERRMODE_SILENT);
+            $st = $pdo->prepare("SELECT COUNT(*) FROM member WHERE level = 1 AND password != ? AND password != ''");
+            $st->execute([$seed]);
+            return (int) $st->fetchColumn() > 0;
+        } catch (\Throwable $e) { return true; }
+    }
+
     /** base64url(payload) + "." + hex(HMAC-SHA256(payload, secret)) — mirrors the bridges. */
     private function mintToken(string $sub, int $memberId): string {
         $cfg    = $this->cfg();
@@ -264,6 +288,11 @@ class Aibuilder extends BuildControl {
         $instSharedIds    = [];   // TODO write-seam: which displayed instances have any share
         $selSharedTeamIds = $selected ? $this->teamIdsForInstance((int) $selected->id) : [];
 
+        // Flag a selected instance whose web app hasn't finished its own /install (admin
+        // password still the seed) so the view can nudge the operator to complete setup.
+        $needsInstall = ($selected && empty($selected->isDefault))
+            ? !$this->instanceInstalled($this->instanceDir($selected->slug)) : false;
+
         $cfg = $this->cfg();
         $this->render('aibuilder/index', [
             'title'            => 'Advanced Builder',
@@ -274,6 +303,7 @@ class Aibuilder extends BuildControl {
             'ab_sharedTeamIds' => array_values($selSharedTeamIds),
             'ab_instSharedIds' => array_values($instSharedIds),
             'selected'       => $selected,
+            'ab_needsInstall' => $needsInstall,
             'ab_sub'         => $selected ? $selected->slug : '',
             'ab_token'       => $selected ? $this->mintToken($selected->slug, (int)$this->member->id) : '',
             'ab_wspath'      => (string)($cfg['bridge']['ws_path'] ?? '/aibuilder/ws'),
