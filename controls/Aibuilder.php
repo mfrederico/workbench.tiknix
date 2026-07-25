@@ -90,7 +90,12 @@ class Aibuilder extends BuildControl {
      * each managed instance's stored ->app — safe to use for existing ones too.
      */
     private function appNamespace(): string {
-        $host = strtolower((string)(parse_url((string)Flight::get('app.baseurl'), PHP_URL_HOST) ?: ''));
+        // Instances live under CORE's app namespace (e.g. "tiknix"), NOT this sidecar's own
+        // host. Derive from [sidecar] core_url (https://tiknix.com -> tiknix); app.baseurl here
+        // is workbench.tiknix.com, which would wrongly yield "workbench.tiknix" and point
+        // instanceDir()/ab_url at <slug>.workbench.tiknix (nonexistent) -> terminal never opens.
+        $src  = (string) (Flight::get('sidecar.core_url') ?: Flight::get('app.baseurl'));
+        $host = strtolower((string)(parse_url($src, PHP_URL_HOST) ?: ''));
         $ns   = preg_replace('/\.com$/', '', $host);
         return ($ns !== '' && preg_match('/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/', $ns))
             ? $ns : self::APP;
