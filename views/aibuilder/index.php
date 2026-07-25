@@ -164,12 +164,6 @@ foreach ($instances as $__i) { if (!empty($__i->isDefault)) { $hasDefault = true
         </div>
         <?php endif; ?>
         <div class="list-group list-group-flush">
-          <?php if ($ab_isRoot && !$hasDefault): ?>
-            <button id="ab-create-core" type="button" class="list-group-item list-group-item-action list-group-item-warning">
-              <span class="fw-semibold"><i class="bi bi-star-fill me-1"></i>Set up tiknix core (default)</span>
-              <div class="small text-body-secondary">A sandboxed clone of main you publish back via PR.</div>
-            </button>
-          <?php endif; ?>
           <?php if (empty($instances)): ?>
             <div class="list-group-item text-body-secondary small"><?= $ab_canCreate ? 'No instances yet. Create one above.' : 'No instances shared with you yet. Ask an instance owner to share one with your team.' ?></div>
           <?php else: foreach ($instances as $inst): $isSel = ($selId === (int)$inst->id); ?>
@@ -426,22 +420,6 @@ if (createForm) createForm.addEventListener('submit', function (e) {
     if (j.success && j.data && j.data.id) window.location = '/aibuilder/open/' + j.data.id;
     else { msg.textContent = j.message || 'Failed.'; btn.disabled = false; }
   }).catch(()=>{ msg.textContent='Network error.'; btn.disabled=false; });
-});
-
-// --- root: provision the "(default)" tiknix-core instance (a clone of main) ---
-const coreBtn = document.getElementById('ab-create-core');
-if (coreBtn) coreBtn.addEventListener('click', function () {
-  if (!confirm('Provision a sandboxed clone of tiknix main as your (default) core instance? This can take a minute.')) return;
-  this.disabled = true;
-  this.insertAdjacentHTML('beforeend', '<div class="small text-body-secondary">Provisioning…</div>');
-  fetch('/aibuilder/create', {
-    method:'POST',
-    headers:{'Content-Type':'application/x-www-form-urlencoded','X-CSRF-TOKEN':AB.csrf,'X-Requested-With':'XMLHttpRequest'},
-    body:new URLSearchParams({slug:'core', name:'(default)', engine:'claude', is_default:'1', csrf_token:AB.csrf}).toString()
-  }).then(r=>r.json()).then(j=>{
-    if (j.success && j.data && j.data.id) window.location = '/aibuilder/open/' + j.data.id;
-    else { alert(j.message || 'Failed to provision core.'); this.disabled = false; }
-  }).catch(()=>{ alert('Network error.'); this.disabled = false; });
 });
 
 if (AB.has) {

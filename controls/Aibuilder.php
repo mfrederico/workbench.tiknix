@@ -161,7 +161,10 @@ class Aibuilder extends BuildControl {
         $id = (int) $id;
         if (!$id) return null;
         $inst = $this->access->instanceMeta($id);   // null unless accessible (owned ∪ team-shared)
-        if (!$inst || !is_file($this->instanceDir($inst->slug) . '/public/index.php')) return null;
+        // The "(default)" core instance is the live control plane (core.tiknix symlinks to the
+        // running app) — not a buildable instance. It's excluded from the AI Builder entirely.
+        if (!$inst || !empty($inst->isDefault)) return null;
+        if (!is_file($this->instanceDir($inst->slug) . '/public/index.php')) return null;
         return $inst;
     }
 
