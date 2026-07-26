@@ -72,34 +72,23 @@ foreach ($instances as $__i) { if (!empty($__i->isDefault)) { $hasDefault = true
         <span id="ab-publish-msg" class="small"></span>
         <?php if ($ab_isOwner): ?>
           <div class="vr d-none d-sm-block mx-1"></div>
-          <a href="<?= htmlspecialchars((string)Flight::get('sidecar.core_url')) ?>/connections?id=<?= (int)$selected->id ?>" target="_top" target="_blank" rel="noopener"
+          <a href="<?= htmlspecialchars((string)Flight::get('sidecar.core_url')) ?>/connections?id=<?= (int)$selected->id ?>" target="_top" rel="noopener"
              class="btn btn-outline-secondary btn-sm" title="Store &amp; service connections for this instance (Shopify, GitHub, …)">
             <i class="bi bi-plug me-1"></i>Connections
           </a>
         <?php endif; ?>
+        <?php
+        /* Sharing is a TEAMS concern, and Teams already owns it in core — this dropdown
+           was a second place to grant access, writing through the sidecar to reach data
+           core owns. One link out, and the rule that a sidecar is read-only to core holds
+           without an exception. */
+        ?>
         <?php if ($ab_isOwner && !$ab_isDefault): $sharedCount = count($ab_sharedTeamIds); ?>
           <div class="vr d-none d-sm-block mx-1"></div>
-          <div class="dropdown" id="ab-share-wrap">
-            <button class="btn btn-outline-secondary btn-sm dropdown-toggle" type="button" data-bs-toggle="dropdown" data-bs-auto-close="outside" aria-expanded="false" title="Share this instance with one or more teams">
-              <i class="bi bi-people me-1"></i><span id="ab-share-label"><?= $sharedCount ? ('Shared · ' . $sharedCount) : 'Share' ?></span>
-            </button>
-            <ul class="dropdown-menu dropdown-menu-end shadow-sm p-2" style="min-width:15rem;">
-              <li><h6 class="dropdown-header px-1">Share with teams</h6></li>
-              <?php if (empty($shareTeams)): ?>
-                <li><span class="dropdown-item-text small text-body-secondary">You're not on any team yet.</span></li>
-              <?php else: foreach ($shareTeams as $__t): $on = in_array((int)$__t->id, $ab_sharedTeamIds, true); ?>
-                <li>
-                  <label class="dropdown-item d-flex align-items-center gap-2 rounded">
-                    <input type="checkbox" class="form-check-input mt-0 ab-share-team" value="<?= (int)$__t->id ?>" <?= $on ? 'checked' : '' ?>>
-                    <span><?= htmlspecialchars(($__t->name) ?? '') ?></span>
-                  </label>
-                </li>
-              <?php endforeach; endif; ?>
-              <li><hr class="dropdown-divider"></li>
-              <li><span class="dropdown-item-text small text-body-secondary">Members of any checked team get full use (build, run, checkpoint) and see its Task Board tasks. Only you can share, unshare, or delete.</span></li>
-            </ul>
-          </div>
-          <span id="ab-share-msg" class="small"></span>
+          <a href="<?= htmlspecialchars((string) Flight::get('sidecar.core_url')) ?>/teams" target="_top"
+             class="btn btn-outline-secondary btn-sm" title="Share this project with a team">
+            <i class="bi bi-people me-1"></i><?= $sharedCount ? ('Shared · ' . $sharedCount) : 'Share' ?>
+          </a>
         <?php endif; ?>
       </div>
     <?php endif; ?>
@@ -440,25 +429,6 @@ if (AB.has) {
   const post=(url,extra)=>fetch(url,{method:'POST',
     headers:{'Content-Type':'application/x-www-form-urlencoded','X-CSRF-TOKEN':AB.csrf,'X-Requested-With':'XMLHttpRequest'},
     body:new URLSearchParams(Object.assign({csrf_token:AB.csrf,id:AB.id},extra||{})).toString()}).then(r=>r.json());
-
-  // --- Share instance with teams (owner only, many-to-many) ------------------
-  document.querySelectorAll('.ab-share-team').forEach(cb=>cb.addEventListener('change',function(){
-    const teamId=this.value, shared=this.checked?1:0;
-    const msg=document.getElementById('ab-share-msg'), lbl=document.getElementById('ab-share-label');
-    if(msg) msg.textContent='saving…';
-    this.disabled=true;
-    post('/aibuilder/share',{team_id:teamId,shared:shared}).then(j=>{
-      this.disabled=false;
-      if(j&&j.success){
-        const n=(j.data&&j.data.shared_team_ids?j.data.shared_team_ids.length:0);
-        if(lbl) lbl.textContent = n ? ('Shared · '+n) : 'Share';
-        if(msg){ msg.textContent=j.message||''; setTimeout(()=>{ if(msg) msg.textContent=''; },2500); }
-      } else {
-        this.checked=!this.checked; // revert
-        if(msg) msg.textContent=(j&&j.message)||'Share failed';
-      }
-    }).catch(()=>{ this.disabled=false; this.checked=!this.checked; if(msg) msg.textContent='Share failed'; });
-  }));
 
   document.getElementById('ab-ckpt-form').addEventListener('submit',function(e){
     e.preventDefault(); const inp=document.getElementById('ab-ckpt-desc'); const btn=this.querySelector('button'); btn.disabled=true;
