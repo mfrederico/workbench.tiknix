@@ -54,7 +54,10 @@ class Aibuilder extends BuildControl {
             $found = $this->access->findTaskInstance($plan);
             if ($found) return $found;
         }
-        return null;   // no default: the landing is an instance picker
+        // Nothing addressed explicitly → the project chosen in CORE. Never guess: the
+        // landing used to be a local instance picker, which is how opening AI Builder
+        // could put you in a different project than the one you had selected.
+        return $this->projectInstance($insts);
     }
 
     private function cfg(): array {
@@ -271,8 +274,16 @@ class Aibuilder extends BuildControl {
         $this->renderHome((int)($params['operation']->name ?? $this->getParam('id', 0)));
     }
 
-    /** Render the instance picker plus, if one is selected, its Terminal/Chat. */
+    /** Render the selected project's Terminal/Chat. */
     private function renderHome(int $selId): void {
+        // With no explicit id, work on the project chosen in CORE. This sidecar never
+        // picks one itself: the old behaviour (fall back to the first accessible
+        // instance) is what let a page opened from elsewhere silently edit a different
+        // project than the one you had selected. No project at all → back to core's
+        // picker, not a second picker here.
+        if ($selId <= 0 && $this->selected) $selId = (int) $this->selected['id'];
+        if ($selId <= 0) { $this->requireProject(); return; }
+
         // Accessible instances (owned ∪ team-shared) from CORE via WorkbenchAccess, as
         // read-only meta objects (drop-in for the old instance beans on read paths).
         $mid       = (int) $this->member->id;
@@ -302,6 +313,9 @@ class Aibuilder extends BuildControl {
             'instances'        => array_values($instances),
             'shareTeams'       => array_values($shareTeams),
             'ab_memberId'      => $mid,
+            // Core's picker: the ONE place a project is chosen. The view links back here
+            // instead of offering a local list.
+            'ab_projectsUrl'   => \app\Sidecar\Sso::projectPickerUrl(),
             'ab_isOwner'       => $selected ? $this->isInstanceOwner($selected) : false,
             'ab_sharedTeamIds' => array_values($selSharedTeamIds),
             'ab_instSharedIds' => array_values($instSharedIds),

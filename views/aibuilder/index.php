@@ -137,7 +137,7 @@ foreach ($instances as $__i) { if (!empty($__i->isDefault)) { $hasDefault = true
     <div class="col-lg-3">
       <div class="card shadow-sm">
         <div class="card-header d-flex justify-content-between align-items-center">
-          <span class="fw-semibold">Your Instances</span>
+          <span class="fw-semibold">Project</span>
           <?php if ($ab_canCreate): ?><button class="btn btn-primary btn-sm" data-bs-toggle="collapse" data-bs-target="#ab-new-form"><i class="bi bi-plus-lg"></i></button><?php endif; ?>
         </div>
         <?php if ($ab_canCreate): ?>
@@ -163,25 +163,27 @@ foreach ($instances as $__i) { if (!empty($__i->isDefault)) { $hasDefault = true
           </div>
         </div>
         <?php endif; ?>
-        <div class="list-group list-group-flush">
-          <?php if (empty($instances)): ?>
-            <div class="list-group-item text-body-secondary small"><?= $ab_canCreate ? 'No instances yet. Create one above.' : 'No instances shared with you yet. Ask an instance owner to share one with your team.' ?></div>
-          <?php else: foreach ($instances as $inst): $isSel = ($selId === (int)$inst->id); ?>
-            <a href="/aibuilder/open/<?= (int)$inst->id ?>"
-               class="list-group-item list-group-item-action <?= $isSel ? 'active' : '' ?>">
-              <div class="d-flex justify-content-between">
-                <span class="fw-semibold"><i class="bi bi-caret-right-fill ab-caret me-1"></i><?= htmlspecialchars(($inst->displayName ?: $inst->slug) ?? '') ?></span>
-                <span>
-                  <?php if (!empty($inst->isDefault)): ?><span class="badge text-bg-warning">default</span> <?php endif; ?>
-                  <?php $__mine = (int)$inst->memberId === (int)($ab_memberId ?? 0); $__shared = in_array((int)$inst->id, $ab_instSharedIds, true); ?>
-                  <?php if (!$__mine): ?><span class="badge text-bg-info" title="Shared with your team"><i class="bi bi-people-fill"></i></span> <?php endif; ?>
-                  <?php if ($__mine && $__shared): ?><span class="badge text-bg-info" title="You shared this with a team"><i class="bi bi-share-fill"></i></span> <?php endif; ?>
-                  <span class="badge text-bg-dark"><?= htmlspecialchars(($inst->engine) ?? '') ?></span>
-                </span>
-              </div>
-              <small class="<?= $isSel ? '' : 'text-body-secondary' ?>"><?= htmlspecialchars(($inst->slug) ?? '') ?>.tiknix</small>
-            </a>
-          <?php endforeach; endif; ?>
+        <?php
+        /* NO INSTANCE LIST HERE. The project is chosen once, in core, and every surface
+           follows that choice — a second picker is what let you cross from one tool to
+           another and silently end up editing something else. This shows what you are
+           working on and sends you back to core to change it. */
+        ?>
+        <div class="card-body">
+          <?php if ($selected): ?>
+            <div class="text-body-secondary small text-uppercase" style="letter-spacing:.06em">Working on</div>
+            <div class="fw-semibold fs-6 mt-1"><?= htmlspecialchars(($selected->displayName ?: $selected->slug) ?? '') ?></div>
+            <div class="text-body-secondary small"><code><?= htmlspecialchars(($selected->slug) ?? '') ?>.tiknix</code></div>
+            <div class="mt-2">
+              <?php if (!empty($selected->isDefault)): ?><span class="badge text-bg-warning">default</span> <?php endif; ?>
+              <span class="badge text-bg-dark"><?= htmlspecialchars(($selected->engine) ?? '') ?></span>
+            </div>
+          <?php else: ?>
+            <div class="text-body-secondary small">No project selected.</div>
+          <?php endif; ?>
+          <a href="<?= htmlspecialchars($ab_projectsUrl) ?>" class="btn btn-outline-secondary btn-sm w-100 mt-3">
+            <i class="bi bi-grid-3x3-gap me-1"></i>Change project
+          </a>
         </div>
       </div>
     </div>

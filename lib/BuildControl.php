@@ -100,11 +100,58 @@ abstract class BuildControl extends Control {
         return null;
     }
 
-    /** Pick the instance this request targets. Default = hint or first accessible. */
+    /**
+     * The instance this request works on.
+     *
+     * PROJECT AFFINITY: core owns the choice. This sidecar must never pick one on the
+     * member's behalf — the old fallback to $insts[0] is exactly what made the surface
+     * flip: open AI Builder after choosing a project elsewhere and you silently landed
+     * on whichever instance happened to sort first, editing something you had not asked
+     * for.
+     *
+     * Order: an explicit URL hint (deep links must keep working), then the project core
+     * says you are working on. Never a guess. If the chosen project is not accessible
+     * here we return null rather than falling through to another instance, because
+     * quietly substituting a different project is the failure this exists to prevent.
+     */
     protected function resolveSelected(): ?array {
         $insts = $this->access->accessibleInstances();
         if (!$insts) return null;
-        return $this->resolveByInstanceHint($insts) ?? $insts[0];
+
+        if ($hit = $this->resolveByInstanceHint($insts)) return $hit;
+
+        $project = \app\Sidecar\Sso::project();
+        if (!$project) return null;                       // nothing chosen → core's picker
+        foreach ($insts as $i) if ((int) $i['id'] === $project['id']) return $i;
+        return null;                                      // chosen project not available here
+    }
+
+    /**
+     * Send a member with no usable project back to core to choose one, rather than
+     * offering a second picker here. Controllers call this before rendering anything
+     * that needs an instance.
+     */
+    protected function requireProject(): bool {
+        if ($this->selected) return true;
+        Flight::redirect(\app\Sidecar\Sso::projectPickerUrl());
+        return false;
+    }
+
+    /**
+     * The accessible instance matching the project chosen in CORE, or null.
+     *
+     * Every resolveSelected() override ends here instead of defaulting to the first
+     * accessible instance. That default was the bug: with no explicit id in the URL the
+     * sidecar silently picked for you, so arriving from another surface could land you
+     * in a different project than the one you had selected. If the chosen project is not
+     * accessible here, return null rather than substituting another — quietly swapping
+     * projects is exactly what this prevents.
+     */
+    protected function projectInstance(array $insts): ?array {
+        $project = \app\Sidecar\Sso::project();
+        if (!$project) return null;
+        foreach ($insts as $i) if ((int) $i['id'] === $project['id']) return $i;
+        return null;
     }
 
     /** Level check against the SSO'd member (NOT Flight::hasLevel, which reads core's session). */

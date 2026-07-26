@@ -46,7 +46,9 @@ class Workbench extends BuildControl {
             if ($found) return $found;
         }
 
-        return $insts[0];   // default: first accessible
+        // The project chosen in CORE — never "first accessible". That fallback is what
+        // made the board show one project's tasks while you believed you were in another.
+        return $this->projectInstance($insts);
     }
 
     /**
