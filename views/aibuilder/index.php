@@ -57,29 +57,14 @@ foreach ($instances as $__i) { if (!empty($__i->isDefault)) { $hasDefault = true
       <p class="text-body-secondary mb-0">Build software with AI. Every instance is sandboxed — checkpoint and roll back any change.</p>
     </div>
     <?php if ($ab_hasInstance): ?>
+      <?php
+      /* WHICH project you are in is the shell's job — core's topbar shows it, with the
+         live link and a Change control, on every page including this one. Repeating it
+         here made two chips that could disagree, which is the whole failure this was
+         meant to end. What stays is what only THIS page can do: publish, share, and the
+         connections for the instance it is building. */
+      ?>
       <div class="ab-working d-flex align-items-center gap-2 px-3 py-2 rounded-3 bg-primary-subtle flex-wrap">
-        <i class="bi bi-hdd-network-fill text-primary fs-5"></i>
-        <div class="lh-sm">
-          <div class="lbl text-uppercase text-body-secondary fw-semibold">Working on</div>
-          <div class="fw-bold">
-            <?php $abName = htmlspecialchars(($selected->slug ?? '') . '.tiknix'); $abUrl = (string)($ab_url ?? ''); ?>
-            <?php if ($abUrl !== ''): ?>
-              <a href="<?= htmlspecialchars($abUrl) ?>" target="_blank" rel="noopener"
-                 class="ab-open link-body-emphasis text-decoration-none"
-                 title="Open live preview — <?= htmlspecialchars($abUrl) ?>"><?= $abName ?><i class="bi bi-box-arrow-up-right ms-1 small opacity-75"></i></a>
-            <?php else: ?>
-              <?= $abName ?>
-            <?php endif; ?>
-            <?php if ($ab_isDefault): ?><span class="badge text-bg-warning">default · core</span><?php endif; ?>
-            <?php /* Changing project belongs on the chip that names it — one control,
-                     next to the thing it changes, instead of a picker panel. */ ?>
-            <a href="<?= htmlspecialchars($ab_projectsUrl) ?>" target="_top"
-               class="link-body-emphasis text-decoration-none ms-1"
-               title="Change project — choose another on tiknix.com"><i class="bi bi-grid-3x3-gap"></i></a>
-            <span id="ab-status" class="fw-normal text-body-secondary small">· connecting…</span>
-          </div>
-        </div>
-        <div class="vr d-none d-sm-block mx-1"></div>
         <button id="ab-publish" class="btn btn-dark btn-sm" type="button">
           <i class="bi bi-cloud-upload me-1"></i><?= $ab_isDefault ? 'Publish to main' : 'Publish' ?>
         </button>
@@ -151,7 +136,13 @@ foreach ($instances as $__i) { if (!empty($__i->isDefault)) { $hasDefault = true
       <div class="col-lg-8">
         <div class="card shadow-sm">
           <div class="card-header d-flex justify-content-between align-items-center">
-            <span class="fw-semibold"><i class="bi bi-terminal me-1"></i>Terminal</span>
+            <span class="fw-semibold">
+              <i class="bi bi-terminal me-1"></i>Terminal
+              <?php /* Connection state belongs on the thing it describes. In the project
+                       chip it read as a property of the PROJECT — "test1 · terminal
+                       disconnected" — when it is only ever about this panel's socket. */ ?>
+              <span id="ab-status" class="fw-normal text-body-secondary small">· connecting…</span>
+            </span>
             <span class="d-flex align-items-center gap-2">
               <span class="text-body-secondary small d-none d-md-inline"><i class="bi bi-shield-lock me-1"></i>Sandboxed to <?= htmlspecialchars(($selected->slug) ?? '') ?>.tiknix</span>
               <?php if (!$ab_isDefault): ?><button id="ab-restart" class="btn btn-outline-secondary btn-sm" type="button" title="Restart the jailed session (applies updated sandbox settings)"><i class="bi bi-arrow-repeat me-1"></i>Restart</button><?php endif; ?>
