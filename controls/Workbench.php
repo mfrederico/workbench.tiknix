@@ -33,23 +33,9 @@ class Workbench extends BuildControl {
      * (so every existing task link works WITHOUT threading ?inst everywhere). Falls back to
      * ?instance_id (store/create) via the base hint, then the first accessible (board).
      */
-    protected function resolveSelected(): ?array {
-        $insts = $this->access->accessibleInstances();
-        if (!$insts) return null;
-
-        $i = $this->resolveByInstanceHint($insts);   // ?inst / ?instance_tag / ?instance_id
-        if ($i) return $i;
-
-        $taskId = (int) ($this->getParam('id') ?? $this->getParam('task_id') ?? 0);
-        if ($taskId > 0) {
-            $found = $this->access->findTaskInstance($taskId);
-            if ($found) return $found;
-        }
-
-        // The project chosen in CORE — never "first accessible". That fallback is what
-        // made the board show one project's tasks while you believed you were in another.
-        return $this->projectInstance($insts);
-    }
+    // Instance selection is inherited from BuildControl: the selected project, only.
+    // ?inst / ?instance_id / ?task_id are gone — the board shows the project you are on,
+    // so a task link that implies a different one would contradict the shell's chip.
 
     /**
      * Base URL for the test-server proxy domain. The capricorn proxy router that serves the

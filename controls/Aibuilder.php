@@ -38,27 +38,10 @@ class Aibuilder extends BuildControl {
      * is a leaf and must not run the instance tooling (no nested instances until
      * host-aware nesting exists). Gate every route in one place.
      */
-    // Constructor is inherited from BuildControl (SSO member + WorkbenchAccess + instance
-    // selection). AI Builder routes address instances by ?id, or a plan (workbenchtask) id.
-    protected function resolveSelected(): ?array {
-        $insts = $this->access->accessibleInstances();
-        if (!$insts) return null;
-        $id = (int) ($this->getParam('id') ?? 0);           // /aibuilder/open/<id> — instance id
-        if ($id > 0) {
-            foreach ($insts as $i) if ((int) $i['id'] === $id) return $i;
-        }
-        $i = $this->resolveByInstanceHint($insts);           // ?inst / ?instance_tag / ?instance_id
-        if ($i) return $i;
-        $plan = (int) ($this->getParam('plan') ?? 0);        // a workbenchtask id → its instance
-        if ($plan > 0) {
-            $found = $this->access->findTaskInstance($plan);
-            if ($found) return $found;
-        }
-        // Nothing addressed explicitly → the project chosen in CORE. Never guess: the
-        // landing used to be a local instance picker, which is how opening AI Builder
-        // could put you in a different project than the one you had selected.
-        return $this->projectInstance($insts);
-    }
+    // Instance selection is inherited from BuildControl: the project selected in core,
+    // and nothing else. The old ?id / ?plan / ?inst routes are gone — a link carrying an
+    // instance id is a second way to say which project, and a stale one moved you
+    // silently. A plan belongs to a project; open the project, then the plan.
 
     private function cfg(): array {
         // Read CORE's aibuilder.ini (token secret + bridge ws paths) via core_root, so the
@@ -265,24 +248,24 @@ class Aibuilder extends BuildControl {
     /** GET /aibuilder — list instances (optionally ?id= to open one inline). */
     public function index($params = []): void {
         if (!$this->requireLevel($this->minLevel())) return;
-        $this->renderHome((int)$this->getParam('id', 0));
+        $this->renderHome();
     }
 
     /** GET /aibuilder/open/<id> — open a specific instance's terminal + chat. */
     public function open($params = []): void {
         if (!$this->requireLevel($this->minLevel())) return;
-        $this->renderHome((int)($params['operation']->name ?? $this->getParam('id', 0)));
+        // Kept so existing /aibuilder/open/<id> links do not 404, but the id is ignored:
+        // the project you are on decides what opens. Switch project in core to change it.
+        $this->renderHome();
     }
 
     /** Render the selected project's Terminal/Chat. */
-    private function renderHome(int $selId): void {
-        // With no explicit id, work on the project chosen in CORE. This sidecar never
-        // picks one itself: the old behaviour (fall back to the first accessible
-        // instance) is what let a page opened from elsewhere silently edit a different
-        // project than the one you had selected. No project at all → back to core's
-        // picker, not a second picker here.
-        if ($selId <= 0 && $this->selected) $selId = (int) $this->selected['id'];
-        if ($selId <= 0) { $this->requireProject(); return; }
+    private function renderHome(): void {
+        // ONE input: the project selected in core (resolved in BuildControl). No id from
+        // the URL — a link carrying one is a second way to say which project, and a stale
+        // one moved you without the UI ever showing it.
+        if (!$this->requireProject()) return;
+        $selId = (int) $this->selected['id'];
 
         // Accessible instances (owned ∪ team-shared) from CORE via WorkbenchAccess, as
         // read-only meta objects (drop-in for the old instance beans on read paths).

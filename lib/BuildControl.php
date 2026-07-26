@@ -87,23 +87,6 @@ abstract class BuildControl extends Control {
         ];
     }
 
-    /** Shared hint resolution: ?inst=<slug> / ?instance_tag=<slug.app> / ?instance_id → instance|null. */
-    protected function resolveByInstanceHint(array $insts): ?array {
-        $hint = (string) ($this->getParam('inst') ?? '');
-        if ($hint === '') {
-            $tag = (string) ($this->getParam('instance_tag') ?? '');
-            if ($tag !== '') $hint = explode('.', $tag)[0];   // "slug.app" → "slug"
-        }
-        if ($hint !== '') {
-            foreach ($insts as $i) if ($i['slug'] === $hint) return $i;
-        }
-        $iid = (int) ($this->getParam('instance_id') ?? 0);
-        if ($iid > 0) {
-            foreach ($insts as $i) if ((int) $i['id'] === $iid) return $i;
-        }
-        return null;
-    }
-
     /**
      * The instance this request works on.
      *
@@ -113,18 +96,14 @@ abstract class BuildControl extends Control {
      * on whichever instance happened to sort first, editing something you had not asked
      * for.
      *
-     * Order: an explicit URL hint (deep links must keep working), then the project core
-     * says you are working on. Never a guess. If the chosen project is not accessible
-     * here we return null rather than falling through to another instance, because
-     * quietly substituting a different project is the failure this exists to prevent.
+     * There is ONE input: the project selected in core. URL hints (?inst, ?instance_id,
+     * ?id) are gone deliberately — a second way to say which project is a second thing
+     * that can disagree with the chip in the shell, and a link carrying a stale id would
+     * silently move you without the UI ever showing it. No project → the picker.
      */
     protected function resolveSelected(): ?array {
         $insts = $this->access->accessibleInstances();
-        if (!$insts) return null;
-
-        if ($hit = $this->resolveByInstanceHint($insts)) return $hit;
-
-        return $this->projectInstance($insts);            // else the selected project, or null
+        return $insts ? $this->projectInstance($insts) : null;
     }
 
     /**
