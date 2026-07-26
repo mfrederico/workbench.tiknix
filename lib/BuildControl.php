@@ -54,6 +54,10 @@ abstract class BuildControl extends Control {
             'title'      => 'Task Board',
             'csrf'       => SimpleCsrf::getTokenArray(),
             'selected'   => $this->selected,
+            // A project IS chosen but is not usable here (the control plane is excluded
+            // from this sidecar). Distinct from "nothing chosen": telling someone to
+            // select a project they have already selected is its own small madness.
+            'projectUnavailable' => !$this->selected && \app\Sidecar\Sso::project() !== null,
         ];
     }
 
@@ -120,10 +124,7 @@ abstract class BuildControl extends Control {
 
         if ($hit = $this->resolveByInstanceHint($insts)) return $hit;
 
-        $project = \app\Sidecar\Sso::project();
-        if (!$project) return null;                       // nothing chosen → core's picker
-        foreach ($insts as $i) if ((int) $i['id'] === $project['id']) return $i;
-        return null;                                      // chosen project not available here
+        return $this->projectInstance($insts);            // else the selected project, or null
     }
 
     /**
@@ -149,9 +150,7 @@ abstract class BuildControl extends Control {
      */
     protected function projectInstance(array $insts): ?array {
         $project = \app\Sidecar\Sso::project();
-        if (!$project) return null;
-        foreach ($insts as $i) if ((int) $i['id'] === $project['id']) return $i;
-        return null;
+        return $project ? ($insts[$project['id']] ?? null) : null;
     }
 
     /** Level check against the SSO'd member (NOT Flight::hasLevel, which reads core's session). */

@@ -75,6 +75,11 @@
                         <div class="text-body-secondary small text-uppercase" style="letter-spacing:.06em">Working on</div>
                         <div class="fw-semibold fs-6 mt-1"><?= htmlspecialchars(($selected['name'] ?? $selected['slug']) ?? '') ?></div>
                         <div class="text-body-secondary small"><code><?= htmlspecialchars(($selected['slug']) ?? '') ?></code></div>
+                    <?php elseif (!empty($projectUnavailable)): ?>
+                        <div class="text-body-secondary small">
+                            Your selected project can't be built here — the control plane
+                            isn't a buildable instance. Pick another.
+                        </div>
                     <?php else: ?>
                         <div class="text-body-secondary small">No project selected.</div>
                     <?php endif; ?>

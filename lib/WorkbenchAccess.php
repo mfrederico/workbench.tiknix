@@ -96,7 +96,17 @@ class WorkbenchAccess {
     }
 
     /** Accessible instances (list), each [{id,slug,app,name,owned}]. */
-    public function accessibleInstances(): array { return array_values($this->instances); }
+    /**
+     * Accessible instances KEYED BY ID. Not a list: array_values() here is what handed
+     * every caller an `[0]` to use as a default, and a default is how a surface ends up
+     * addressing an instance the member never chose. Name one, or ask for the project.
+     *
+     * @return array<int,array>
+     */
+    public function accessibleInstances(): array { return $this->instances; }
+
+    /** One accessible instance by id, or null. */
+    public function instance(int $id): ?array { return $this->instances[$id] ?? null; }
 
     /** Select an instance as current AND point RedBean at its workbench.db (self-consistent). */
     public function setCurrent(?array $inst): void {
