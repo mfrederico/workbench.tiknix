@@ -37,7 +37,7 @@ class WorkbenchAccess {
         foreach ($this->core->instances($memberId) as $i) $this->instances[$i['id']] = $i;
         // The "(default)" core instance is the live control plane (core.tiknix symlinks to the
         // running app), not a buildable instance — real core changes go through a normal
-        // instance + PR. Exclude it from the ENTIRE sidecar (AI Builder + AI Projects) here,
+        // instance + PR. Exclude it from the ENTIRE sidecar (AI Builder + Task Board) here,
         // at the source, so no picker, board, or open path ever surfaces it.
         try {
             $st = $this->pdo->query('SELECT id FROM instance WHERE is_default = 1');

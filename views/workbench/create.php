@@ -3,7 +3,7 @@
         <div class="col-lg-8">
             <div class="mb-4">
                 <a href="/workbench" class="text-decoration-none">
-                    <i class="bi bi-arrow-left"></i> Back to AI Projects
+                    <i class="bi bi-arrow-left"></i> Back to Task Board
                 </a>
             </div>
 

@@ -5,7 +5,7 @@
  * workbench views' markup and scripts run unchanged. postMessage the height so the parent
  * shell can size the frame (Kit convention).
  */
-$title = htmlspecialchars($title ?? 'AI Projects');
+$title = htmlspecialchars($title ?? 'Task Board');
 // Which of the sidecar's two facets is active (board vs AI Builder), for the tab bar.
 $__p = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/';
 $__onBuilder = strpos($__p, '/aibuilder') === 0;
@@ -23,7 +23,7 @@ $__onBuilder = strpos($__p, '/aibuilder') === 0;
 <nav class="navbar navbar-expand bg-body-tertiary border-bottom px-3 py-1">
   <span class="navbar-brand fw-semibold d-flex align-items-center gap-1" style="font-size:.95rem"><i class="bi bi-hammer"></i> Build</span>
   <ul class="nav nav-pills ms-2 gap-1">
-    <li class="nav-item"><a class="nav-link py-1 px-2 <?= $__onBuilder ? '' : 'active' ?>" href="/workbench"><i class="bi bi-kanban me-1"></i>AI Projects</a></li>
+    <li class="nav-item"><a class="nav-link py-1 px-2 <?= $__onBuilder ? '' : 'active' ?>" href="/workbench"><i class="bi bi-kanban me-1"></i>Task Board</a></li>
     <li class="nav-item"><a class="nav-link py-1 px-2 <?= $__onBuilder ? 'active' : '' ?>" href="/aibuilder"><i class="bi bi-robot me-1"></i>AI Builder</a></li>
   </ul>
 </nav>

@@ -68,7 +68,7 @@ class Workbench extends BuildControl {
     public function index($params = []) {
         if (!$this->requireLogin()) return;
 
-        $this->viewData['title'] = 'AI Projects';
+        $this->viewData['title'] = 'Task Board';
 
         // Freshly-ingested tasks (written by the headless plan-ingest.php CLI, which
         // has its own DB connection) don't invalidate this web process's query cache,

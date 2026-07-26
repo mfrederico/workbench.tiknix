@@ -1,5 +1,5 @@
 <?php
-/** AI Projects (Workbench) — front controller on the Sidecar Kit. Task board + AI Builder (terminal, plan pipeline). */
+/** Task Board (Workbench) — front controller on the Sidecar Kit. Task board + AI Builder (terminal, plan pipeline). */
 if (php_sapi_name() === 'cli-server') {
     $f = __DIR__ . urldecode(parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/');
     if (is_file($f)) return false;

@@ -1,7 +1,7 @@
 <?php
 /**
  * migrate-from-core.php — one-time, NON-DESTRUCTIVE copy of workbench task data out of
- * core's db into each instance's per-instance workbench.db (the AI Projects sidecar model).
+ * core's db into each instance's per-instance workbench.db (the Task Board sidecar model).
  *
  *   php scripts/migrate-from-core.php            # dry-run: report what WOULD copy
  *   php scripts/migrate-from-core.php --apply     # copy

@@ -1,6 +1,6 @@
 <div class="container-fluid py-4">
     <div class="d-flex justify-content-between align-items-center mb-4">
-        <h1 class="h2">AI Projects</h1>
+        <h1 class="h2">Task Board</h1>
         <div>
             <a href="<?= htmlspecialchars((string)Flight::get('sidecar.core_url')) ?>/firehose" class="btn btn-outline-danger me-2" title="Errors captured live from your instances">
                 <i class="bi bi-fire"></i> Firehose
@@ -62,56 +62,26 @@
     ];
     ?>
     <div class="row">
-        <!-- Left nav: instance picker (mirrors /aibuilder) -->
+        <!--
+          NO INSTANCE PICKER. The project is chosen once, in core, and this board shows
+          that project's tasks. A second picker here is how the board could show one
+          project's work while you believed you were in another.
+        -->
         <div class="col-lg-3 col-md-4 mb-4">
             <div class="card shadow-sm">
-                <div class="card-header d-flex justify-content-between align-items-center">
-                    <span class="fw-semibold">Your Instances</span>
-                    <?php if (!empty($canCreate)): ?><button class="btn btn-primary btn-sm" data-bs-toggle="collapse" data-bs-target="#wb-new-form" title="New instance"><i class="bi bi-plus-lg"></i></button><?php endif; ?>
-                </div>
-                <?php if (!empty($canCreate)): ?>
-                <div class="collapse <?= empty($instanceTags) ? 'show' : '' ?>" id="wb-new-form">
-                    <div class="card-body border-bottom">
-                        <form id="wb-create-form">
-                            <div class="mb-2">
-                                <label class="form-label small mb-1">Name (slug)</label>
-                                <input name="slug" class="form-control form-control-sm" placeholder="myapp" pattern="[a-z][a-z0-9]{1,49}" required>
-                                <div class="form-text">Becomes <code>&lt;slug&gt;.tiknix</code>.</div>
-                            </div>
-                            <div class="mb-2">
-                                <label class="form-label small mb-1">Engine</label>
-                                <select name="engine" class="form-select form-select-sm">
-                                    <?php foreach (($engines ?? []) as $engName => $engLabel): ?>
-                                    <option value="<?= htmlspecialchars($engName) ?>"><?= htmlspecialchars($engLabel) ?></option>
-                                    <?php endforeach; ?>
-                                </select>
-                            </div>
-                            <button type="submit" class="btn btn-success btn-sm w-100"><i class="bi bi-hammer me-1"></i>Create instance</button>
-                            <div id="wb-create-msg" class="form-text"></div>
-                        </form>
-                    </div>
-                </div>
-                <?php endif; ?>
-                <div class="list-group list-group-flush">
-                    <a href="<?= htmlspecialchars($tagLink('')) ?>" class="list-group-item list-group-item-action d-flex justify-content-between align-items-center <?= $tagQ === '' ? 'active' : '' ?>">
-                        <span><i class="bi bi-grid-1x2 me-1"></i>All Tasks</span>
-                        <span class="badge bg-secondary rounded-pill"><?= (int)($counts['total'] ?? 0) ?></span>
+                <div class="card-header"><span class="fw-semibold">Project</span></div>
+                <div class="card-body">
+                    <?php if (!empty($selected)): ?>
+                        <div class="text-body-secondary small text-uppercase" style="letter-spacing:.06em">Working on</div>
+                        <div class="fw-semibold fs-6 mt-1"><?= htmlspecialchars(($selected['name'] ?? $selected['slug']) ?? '') ?></div>
+                        <div class="text-body-secondary small"><code><?= htmlspecialchars(($selected['slug']) ?? '') ?></code></div>
+                    <?php else: ?>
+                        <div class="text-body-secondary small">No project selected.</div>
+                    <?php endif; ?>
+                    <a href="<?= htmlspecialchars(\app\Sidecar\Sso::projectPickerUrl()) ?>"
+                       class="btn btn-outline-secondary btn-sm w-100 mt-3">
+                        <i class="bi bi-grid-3x3-gap me-1"></i>Change project
                     </a>
-                    <?php if (empty($instanceTags)): ?>
-                        <div class="list-group-item text-body-secondary small"><?= !empty($canCreate) ? 'No instances yet. Create one above.' : 'No instances shared with you yet.' ?></div>
-                    <?php else: foreach ($instanceTags as $it): $isSel = ($tagQ === $it['tag']); ?>
-                        <a href="<?= htmlspecialchars($tagLink($it['tag'])) ?>" class="list-group-item list-group-item-action <?= $isSel ? 'active' : '' ?>">
-                            <div class="d-flex justify-content-between align-items-center">
-                                <span class="fw-semibold text-truncate"><i class="bi bi-hdd-network me-1"></i><?= htmlspecialchars($it['name'] ?? $it['slug'] ?? $it['tag']) ?></span>
-                                <span class="badge bg-info rounded-pill ms-1"><?= (int)$it['n'] ?></span>
-                            </div>
-                            <small class="<?= $isSel ? '' : 'text-body-secondary' ?>">
-                                <?= htmlspecialchars($it['tag']) ?>
-                                <?php if (!empty($it['is_default'])): ?><span class="badge text-bg-warning ms-1">default</span><?php endif; ?>
-                                <?php if (isset($it['owned']) && !$it['owned']): ?><span class="badge text-bg-info ms-1" title="Shared with your team"><i class="bi bi-people-fill"></i></span><?php endif; ?>
-                            </small>
-                        </a>
-                    <?php endforeach; endif; ?>
                 </div>
             </div>
         </div>

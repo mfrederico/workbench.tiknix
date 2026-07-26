@@ -71,6 +71,11 @@ foreach ($instances as $__i) { if (!empty($__i->isDefault)) { $hasDefault = true
               <?= $abName ?>
             <?php endif; ?>
             <?php if ($ab_isDefault): ?><span class="badge text-bg-warning">default · core</span><?php endif; ?>
+            <?php /* Changing project belongs on the chip that names it — one control,
+                     next to the thing it changes, instead of a picker panel. */ ?>
+            <a href="<?= htmlspecialchars($ab_projectsUrl) ?>"
+               class="link-body-emphasis text-decoration-none ms-1"
+               title="Change project — choose another on tiknix.com"><i class="bi bi-grid-3x3-gap"></i></a>
             <span id="ab-status" class="fw-normal text-body-secondary small">· connecting…</span>
           </div>
         </div>
@@ -106,7 +111,7 @@ foreach ($instances as $__i) { if (!empty($__i->isDefault)) { $hasDefault = true
                 </li>
               <?php endforeach; endif; ?>
               <li><hr class="dropdown-divider"></li>
-              <li><span class="dropdown-item-text small text-body-secondary">Members of any checked team get full use (build, run, checkpoint) and see its AI Projects tasks. Only you can share, unshare, or delete.</span></li>
+              <li><span class="dropdown-item-text small text-body-secondary">Members of any checked team get full use (build, run, checkpoint) and see its Task Board tasks. Only you can share, unshare, or delete.</span></li>
             </ul>
           </div>
           <span id="ab-share-msg" class="small"></span>
@@ -133,71 +138,17 @@ foreach ($instances as $__i) { if (!empty($__i->isDefault)) { $hasDefault = true
   <?php endif; ?>
 
   <div class="row g-3">
-    <!-- Instance picker -->
-    <div class="col-lg-3">
-      <div class="card shadow-sm">
-        <div class="card-header d-flex justify-content-between align-items-center">
-          <span class="fw-semibold">Project</span>
-          <?php if ($ab_canCreate): ?><button class="btn btn-primary btn-sm" data-bs-toggle="collapse" data-bs-target="#ab-new-form"><i class="bi bi-plus-lg"></i></button><?php endif; ?>
-        </div>
-        <?php if ($ab_canCreate): ?>
-        <div class="collapse <?= empty($instances) ? 'show' : '' ?>" id="ab-new-form">
-          <div class="card-body border-bottom">
-            <form id="ab-create-form">
-              <div class="mb-2">
-                <label class="form-label small mb-1">Name (slug)</label>
-                <input name="slug" class="form-control form-control-sm" placeholder="myapp" pattern="[a-z][a-z0-9]{1,49}" required>
-                <div class="form-text">Becomes <code>&lt;slug&gt;.tiknix</code>.</div>
-              </div>
-              <div class="mb-2">
-                <label class="form-label small mb-1">Engine</label>
-                <select name="engine" class="form-select form-select-sm">
-                  <?php foreach (\app\EngineRegistry::menu() as $engName => $engLabel): ?>
-                  <option value="<?= htmlspecialchars($engName) ?>"><?= htmlspecialchars($engLabel) ?></option>
-                  <?php endforeach; ?>
-                </select>
-              </div>
-              <button type="submit" class="btn btn-success btn-sm w-100"><i class="bi bi-hammer me-1"></i>Create instance</button>
-              <div id="ab-create-msg" class="form-text"></div>
-            </form>
-          </div>
-        </div>
-        <?php endif; ?>
-        <?php
-        /* NO INSTANCE LIST HERE. The project is chosen once, in core, and every surface
-           follows that choice — a second picker is what let you cross from one tool to
-           another and silently end up editing something else. This shows what you are
-           working on and sends you back to core to change it. */
-        ?>
-        <div class="card-body">
-          <?php if ($selected): ?>
-            <div class="text-body-secondary small text-uppercase" style="letter-spacing:.06em">Working on</div>
-            <div class="fw-semibold fs-6 mt-1"><?= htmlspecialchars(($selected->displayName ?: $selected->slug) ?? '') ?></div>
-            <div class="text-body-secondary small"><code><?= htmlspecialchars(($selected->slug) ?? '') ?>.tiknix</code></div>
-            <div class="mt-2">
-              <?php if (!empty($selected->isDefault)): ?><span class="badge text-bg-warning">default</span> <?php endif; ?>
-              <span class="badge text-bg-dark"><?= htmlspecialchars(($selected->engine) ?? '') ?></span>
-            </div>
-          <?php else: ?>
-            <div class="text-body-secondary small">No project selected.</div>
-          <?php endif; ?>
-          <a href="<?= htmlspecialchars($ab_projectsUrl) ?>" class="btn btn-outline-secondary btn-sm w-100 mt-3">
-            <i class="bi bi-grid-3x3-gap me-1"></i>Change project
-          </a>
-        </div>
-      </div>
-    </div>
 
     <?php if (!$ab_hasInstance): ?>
-      <div class="col-lg-9">
+      <div class="col-12">
         <div class="card shadow-sm"><div class="card-body text-center text-body-secondary py-5">
-          <i class="bi bi-arrow-left-circle fs-1 d-block mb-3"></i>
-          Select an instance to open its sandboxed Terminal, or create a new one.
+          <i class="bi bi-grid-3x3-gap fs-1 d-block mb-3"></i>
+          No project selected — <a href="<?= htmlspecialchars($ab_projectsUrl) ?>">choose one</a> to open its sandboxed Terminal.
         </div></div>
       </div>
     <?php else: ?>
       <!-- Builder surface: Terminal -->
-      <div class="col-lg-6">
+      <div class="col-lg-8">
         <div class="card shadow-sm">
           <div class="card-header d-flex justify-content-between align-items-center">
             <span class="fw-semibold"><i class="bi bi-terminal me-1"></i>Terminal</span>
@@ -244,7 +195,7 @@ foreach ($instances as $__i) { if (!empty($__i->isDefault)) { $hasDefault = true
       </div>
 
       <!-- Changes + checkpoints + plan -->
-      <div class="col-lg-3">
+      <div class="col-lg-4">
         <!-- Save your work: changes + uploads + checkpoint, in one place -->
         <div class="card shadow-sm">
           <div class="card-header d-flex justify-content-between align-items-center">
@@ -289,12 +240,12 @@ foreach ($instances as $__i) { if (!empty($__i->isDefault)) { $hasDefault = true
         <div class="card shadow-sm mt-3">
           <div class="card-header fw-semibold"><i class="bi bi-diagram-3 me-1"></i>Plan &amp; build</div>
           <div class="card-body">
-            <p class="text-body-secondary small mb-2">Decompose a goal into a multi-agent plan for this instance — grounded on its reuse inventory so tasks build on what already exists. Planning, review, approve &amp; build all live in AI Projects.</p>
+            <p class="text-body-secondary small mb-2">Decompose a goal into a multi-agent plan for this instance — grounded on its reuse inventory so tasks build on what already exists. Planning, review, approve &amp; build all live in the Task Board.</p>
             <div class="d-flex gap-2">
-              <a href="/workbench/create?instance_id=<?= (int)$selId ?>" class="btn btn-info btn-sm flex-fill"><i class="bi bi-diagram-3 me-1"></i>Plan &amp; build in AI Projects</a>
+              <a href="/workbench/create?instance_id=<?= (int)$selId ?>" class="btn btn-info btn-sm flex-fill"><i class="bi bi-diagram-3 me-1"></i>Plan &amp; build in Task Board</a>
               <button id="ab-reuse-digest" class="btn btn-outline-secondary btn-sm text-nowrap" type="button" title="Preview the reuse inventory the planner is grounded on for this instance"><i class="bi bi-recycle me-1"></i>Reuse digest</button>
             </div>
-            <div class="text-body-secondary mt-2" style="font-size:.72rem">Preview this instance's <a href="#" id="ab-reuse-digest-link">reuse inventory</a>, or review generated plans in <a href="/workbench" target="_blank">AI Projects</a>, tagged to this instance.</div>
+            <div class="text-body-secondary mt-2" style="font-size:.72rem">Preview this instance's <a href="#" id="ab-reuse-digest-link">reuse inventory</a>, or review generated plans in <a href="/workbench" target="_blank">the Task Board</a>, tagged to this instance.</div>
           </div>
         </div>
       </div>

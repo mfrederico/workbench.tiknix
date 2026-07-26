@@ -51,7 +51,7 @@ abstract class BuildControl extends Control {
             'member'     => $this->member,
             'isLoggedIn' => $this->authed,
             'menu'       => [],
-            'title'      => 'AI Projects',
+            'title'      => 'Task Board',
             'csrf'       => SimpleCsrf::getTokenArray(),
             'selected'   => $this->selected,
         ];
