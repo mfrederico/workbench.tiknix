@@ -47,7 +47,7 @@ $baseDomain = preg_replace('#^https?://#', '', $baseUrl);
                                 Created by <?= htmlspecialchars($creator->displayName ?? $creator->email) ?>
                                 on <?= date('M j, Y', strtotime($task->createdAt)) ?>
                                 <?php if ($team): ?>
-                                    &bull; <a href="<?= htmlspecialchars((string)Flight::get('sidecar.core_url')) ?>/teams/view?id=<?= $team->id ?>"><?= htmlspecialchars(($team->name) ?? '') ?></a>
+                                    &bull; <a href="<?= htmlspecialchars((string)Flight::get('sidecar.core_url')) ?>/teams/view?id=<?= $team->id ?>" target="_top"><?= htmlspecialchars(($team->name) ?? '') ?></a>
                                 <?php endif; ?>
                             </div>
                         </div>

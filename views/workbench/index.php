@@ -2,10 +2,10 @@
     <div class="d-flex justify-content-between align-items-center mb-4">
         <h1 class="h2">Task Board</h1>
         <div>
-            <a href="<?= htmlspecialchars((string)Flight::get('sidecar.core_url')) ?>/firehose" class="btn btn-outline-danger me-2" title="Errors captured live from your instances">
+            <a href="<?= htmlspecialchars((string)Flight::get('sidecar.core_url')) ?>/firehose" target="_top" class="btn btn-outline-danger me-2" title="Errors captured live from your instances">
                 <i class="bi bi-fire"></i> Firehose
             </a>
-            <a href="<?= htmlspecialchars((string)Flight::get('sidecar.core_url')) ?>/teams" class="btn btn-outline-secondary me-2">
+            <a href="<?= htmlspecialchars((string)Flight::get('sidecar.core_url')) ?>/teams" target="_top" class="btn btn-outline-secondary me-2">
                 <i class="bi bi-people"></i> Teams
             </a>
             <?php

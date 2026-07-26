@@ -87,7 +87,7 @@ foreach ($instances as $__i) { if (!empty($__i->isDefault)) { $hasDefault = true
         <span id="ab-publish-msg" class="small"></span>
         <?php if ($ab_isOwner): ?>
           <div class="vr d-none d-sm-block mx-1"></div>
-          <a href="<?= htmlspecialchars((string)Flight::get('sidecar.core_url')) ?>/connections?id=<?= (int)$selected->id ?>" target="_blank" rel="noopener"
+          <a href="<?= htmlspecialchars((string)Flight::get('sidecar.core_url')) ?>/connections?id=<?= (int)$selected->id ?>" target="_top" target="_blank" rel="noopener"
              class="btn btn-outline-secondary btn-sm" title="Store &amp; service connections for this instance (Shopify, GitHub, …)">
             <i class="bi bi-plug me-1"></i>Connections
           </a>
