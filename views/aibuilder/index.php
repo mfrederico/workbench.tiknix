@@ -13,7 +13,6 @@ $ab_isRoot    = $ab_isRoot ?? false;
 $ab_canCreate = $ab_canCreate ?? false;
 $ab_isOwner       = $ab_isOwner ?? false;
 $shareTeams       = $shareTeams ?? [];
-$ab_sharedTeamIds = array_map('intval', $ab_sharedTeamIds ?? []);
 $ab_instSharedIds = array_map('intval', $ab_instSharedIds ?? []);
 $hasDefault = false;
 foreach ($instances as $__i) { if (!empty($__i->isDefault)) { $hasDefault = true; break; } }
@@ -21,10 +20,6 @@ foreach ($instances as $__i) { if (!empty($__i->isDefault)) { $hasDefault = true
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
 <style>
   #ab-terminal { height: 70vh; width: 100%; background:#1e1e1e; border-radius:.375rem; padding:8px; }
-  /* Loud "which instance am I in" banner */
-  .ab-working { border:2px solid var(--bs-primary); }
-  .ab-working .lbl { font-size:.6rem; letter-spacing:.06em; }
-  .ab-working .ab-open:hover { text-decoration:underline !important; }
   /* Active instance in the left nav */
   .list-group-item.active .ab-caret { display:inline; }
   .ab-caret { display:none; }
@@ -56,42 +51,12 @@ foreach ($instances as $__i) { if (!empty($__i->isDefault)) { $hasDefault = true
       <h1 class="h3 fw-bold mb-0"><i class="bi bi-robot me-2"></i>Advanced Builder</h1>
       <p class="text-body-secondary mb-0">Build software with AI. Every instance is sandboxed — checkpoint and roll back any change.</p>
     </div>
-    <?php if ($ab_hasInstance): ?>
-      <?php
-      /* WHICH project you are in is the shell's job — core's topbar shows it, with the
-         live link and a Change control, on every page including this one. Repeating it
-         here made two chips that could disagree, which is the whole failure this was
-         meant to end. What stays is what only THIS page can do: publish, share, and the
-         connections for the instance it is building. */
-      ?>
-      <div class="ab-working d-flex align-items-center gap-2 px-3 py-2 rounded-3 bg-primary-subtle flex-wrap">
-        <button id="ab-publish" class="btn btn-dark btn-sm" type="button">
-          <i class="bi bi-cloud-upload me-1"></i><?= $ab_isDefault ? 'Publish to main' : 'Publish' ?>
-        </button>
-        <span id="ab-gh-state" class="small text-body-secondary"></span>
-        <span id="ab-publish-msg" class="small"></span>
-        <?php if ($ab_isOwner): ?>
-          <div class="vr d-none d-sm-block mx-1"></div>
-          <a href="<?= htmlspecialchars((string)Flight::get('sidecar.core_url')) ?>/connections?id=<?= (int)$selected->id ?>" target="_top" rel="noopener"
-             class="btn btn-outline-secondary btn-sm" title="Store &amp; service connections for this instance (Shopify, GitHub, …)">
-            <i class="bi bi-plug me-1"></i>Connections
-          </a>
-        <?php endif; ?>
-        <?php
-        /* Sharing is a TEAMS concern, and Teams already owns it in core — this dropdown
-           was a second place to grant access, writing through the sidecar to reach data
-           core owns. One link out, and the rule that a sidecar is read-only to core holds
-           without an exception. */
-        ?>
-        <?php if ($ab_isOwner && !$ab_isDefault): $sharedCount = count($ab_sharedTeamIds); ?>
-          <div class="vr d-none d-sm-block mx-1"></div>
-          <a href="<?= htmlspecialchars((string) Flight::get('sidecar.core_url')) ?>/teams" target="_top"
-             class="btn btn-outline-secondary btn-sm" title="Share this project with a team">
-            <i class="bi bi-people me-1"></i><?= $sharedCount ? ('Shared · ' . $sharedCount) : 'Share' ?>
-          </a>
-        <?php endif; ?>
-      </div>
-    <?php endif; ?>
+    <?php
+    /* Nothing about the PROJECT belongs here. Which one you are in, where it goes live
+       and who it is shared with are the shell's job — core's topbar carries the chip
+       with Publish, Connections, Share and Change on every page, this one included.
+       This page is the builder; it says so above and does nothing else in this header. */
+    ?>
   </div>
 
   <?php if ($ab_needsInstall && $ab_hasInstance): ?>
@@ -206,14 +171,14 @@ foreach ($instances as $__i) { if (!empty($__i->isDefault)) { $hasDefault = true
             </form>
             <div id="ab-upload-list" class="small mb-3"></div>
 
-            <!-- 3) Checkpoint (commits everything above; auto-publishes if connected) -->
+            <!-- 3) Checkpoint (commits everything above; local only — publishing is the Publisher's) -->
             <hr class="my-2">
             <div class="text-uppercase text-body-secondary fw-semibold mb-1" style="font-size:.68rem;letter-spacing:.04em"><i class="bi bi-bookmark-plus me-1"></i>Checkpoint</div>
             <form id="ab-ckpt-form" class="d-flex gap-2 mb-1">
               <input id="ab-ckpt-desc" class="form-control form-control-sm" placeholder="Describe this checkpoint…" maxlength="200">
               <button class="btn btn-success btn-sm text-nowrap" type="submit" title="Save checkpoint"><i class="bi bi-save me-1"></i>Save</button>
             </form>
-            <div class="text-body-secondary mb-2" style="font-size:.72rem">Commits all changes &amp; uploads above as a restore point — and publishes to GitHub if this instance auto-publishes.</div>
+            <div class="text-body-secondary mb-2" style="font-size:.72rem">Commits all changes &amp; uploads above as a restore point. Going live is separate — use <strong>Publish</strong> in the top bar.</div>
             <div id="ab-ckpt-list" class="small"></div>
           </div>
         </div>
@@ -434,10 +399,6 @@ if (AB.has) {
     e.preventDefault(); const inp=document.getElementById('ab-ckpt-desc'); const btn=this.querySelector('button'); btn.disabled=true;
     post('/aibuilder/checkpoint',{label:inp.value.trim()}).then(j=>{
       inp.value=''; loadCheckpoints(); refreshChanges();
-      const p=j.data&&j.data.publish; if(p){ const m=ghMsg();
-        if(p.ok&&p.pr&&p.pr.url){ m.className='small mt-2 text-success'; m.innerHTML='<i class="bi bi-check-circle me-1"></i>Auto-published — <a href="'+esc(p.pr.url)+'" target="_blank" rel="noopener">PR #'+esc(String(p.pr.number||''))+'</a>'; }
-        else if(p.ok){ m.className='small mt-2 text-success'; m.innerHTML='<i class="bi bi-check-circle me-1"></i>'+esc(p.message||'Auto-pushed'); }
-        else { m.className='small mt-2 text-danger'; m.textContent='Auto-publish failed: '+(p.error||''); } }
     }).finally(()=>btn.disabled=false);
   });
   let _ckpt=null;
@@ -475,44 +436,9 @@ if (AB.has) {
     }).catch(()=>{ this.disabled=false; msg.className='form-text mt-2 text-danger'; msg.textContent='Fork failed'; });
   });
 
-  // --- Publish to GitHub (push + PR; first-time opens setup in a new tab) ---
-  let ghConnected=false, ghRepo='';
-  function loadGhStatus(){
-    fetch('/connections/status?id='+AB.id,{headers:{'X-Requested-With':'XMLHttpRequest'}})
-      .then(r=>r.json()).then(j=>{
-        const st=document.getElementById('ab-gh-state');
-        ghConnected=!!(j.data&&j.data.connected);
-        if(ghConnected&&j.data.connection){ const c=j.data.connection; ghRepo=c.repo||'';
-          st.innerHTML='<i class="bi bi-check-circle text-success me-1"></i>Connected: <strong>'+esc(ghRepo)+'</strong>'
-            +(c.autoPublish?' <span class="badge text-bg-info">auto-publish</span>':''); }
-        else st.innerHTML='<i class="bi bi-plug me-1"></i>Not connected. Publish will open GitHub setup.';
-      }).catch(()=>{});
-  }
-  const ghMsg=()=>document.getElementById('ab-publish-msg');
-  document.getElementById('ab-publish').addEventListener('click',function(){
-    if(!ghConnected){
-      window.open('/connections/setup?id='+AB.id,'_blank');
-      ghMsg().className='small mt-2 text-body-secondary';
-      ghMsg().innerHTML='Complete GitHub setup in the new tab, then click <strong>Publish</strong> again.';
-      return;
-    }
-    const btn=this; btn.disabled=true;
-    ghMsg().className='small mt-2 text-body-secondary'; ghMsg().textContent='Pushing & opening PR…';
-    post('/connections/publish',{}).then(j=>{
-      const m=ghMsg(); const pr=j.data&&j.data.pr;
-      if(j.success&&pr&&pr.url){ m.className='small mt-2 text-success';
-        m.innerHTML='<i class="bi bi-check-circle me-1"></i>'+esc(j.message||'Published')+' — <a href="'+esc(pr.url)+'" target="_blank" rel="noopener">PR #'+esc(String(pr.number||''))+'</a>'; }
-      else if(j.success){ m.className='small mt-2 text-success';
-        m.innerHTML='<i class="bi bi-check-circle me-1"></i>'+esc(j.message||'Pushed')+(j.data&&j.data.note?' — '+esc(j.data.note):''); }
-      else { m.className='small mt-2 text-danger'; m.textContent=j.message||'Publish failed.'; }
-    }).catch(()=>{ const m=ghMsg(); m.className='small mt-2 text-danger'; m.textContent='Network error.'; })
-      .finally(()=>btn.disabled=false);
-  });
-  window.addEventListener('message',function(ev){
-    if(ev.origin===location.origin&&ev.data&&ev.data.type==='gh-connected'){
-      loadGhStatus(); const m=ghMsg(); m.className='small mt-2 text-success';
-      m.innerHTML='<i class="bi bi-check-circle me-1"></i>GitHub connected. Click <strong>Publish</strong>.'; }
-  });
+  // Publishing lives in the Publisher (the topbar chip), not here. What stood in this
+  // spot posted to /connections/publish and polled /connections/status — core routes with
+  // no counterpart in this sidecar, so both had been 404ing since the extraction.
 
   // --- Uploads (both published; secure = outside docroot/not web-served, public = web-served) ---
   function humanSize(n){ n=+n||0; return n>1048576?(n/1048576).toFixed(1)+'MB':(n>1024?(n/1024).toFixed(0)+'KB':n+'B'); }
@@ -687,7 +613,7 @@ if (AB.has) {
   } else {
     setStatus('connecting…'); initTerminal();
   }
-  refreshChanges(); loadCheckpoints(); loadGhStatus(); loadUploads();
+  refreshChanges(); loadCheckpoints(); loadUploads();
   setInterval(refreshChanges, 4000);
 
 }

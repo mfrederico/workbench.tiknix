@@ -159,11 +159,6 @@ class Aibuilder extends BuildControl {
         return $inst && $this->access->ownsInstance((int) $this->member->id, (int) $inst->id);
     }
 
-    /** Team ids a given instance is currently shared with. */
-    private function teamIdsForInstance(int $instanceId): array {
-        return $this->access->teamIdsForInstance($instanceId);
-    }
-
     /** Run git inside an instance's directory (read/write its own repo only). */
     private function gitInstance(string $slug, array $args): array {
         if (!preg_match(self::SLUG_RE, $slug)) return ['ok' => false, 'out' => '', 'code' => 1];
@@ -283,7 +278,6 @@ class Aibuilder extends BuildControl {
         // the read/terminal/plan path works without it. Selected instance's shares are read-only.
         $shareTeams       = [];   // TODO write-seam: teams the member can share INTO
         $instSharedIds    = [];   // TODO write-seam: which displayed instances have any share
-        $selSharedTeamIds = $selected ? $this->teamIdsForInstance((int) $selected->id) : [];
 
         // Flag a selected instance whose web app hasn't finished its own /install (admin
         // password still the seed) so the view can nudge the operator to complete setup.
@@ -300,7 +294,6 @@ class Aibuilder extends BuildControl {
             // instead of offering a local list.
             'ab_projectsUrl'   => \app\Sidecar\Sso::projectPickerUrl(),
             'ab_isOwner'       => $selected ? $this->isInstanceOwner($selected) : false,
-            'ab_sharedTeamIds' => array_values($selSharedTeamIds),
             'ab_instSharedIds' => array_values($instSharedIds),
             'selected'       => $selected,
             'ab_needsInstall' => $needsInstall,
@@ -315,7 +308,6 @@ class Aibuilder extends BuildControl {
             'ab_isDefault'   => $selected ? (bool)$selected->isDefault : false,
             'ab_isRoot'      => $this->hasLevel(LEVELS['ROOT']),
             'ab_canCreate'   => $this->hasLevel(LEVELS['ADMIN']),
-            'ab_mainRepo'    => GitHubPublisher::mainGithubRepo(),
             'ab_url'         => $selected ? 'https://' . $selected->slug . '.' . $this->appNamespace() . '.com' : '',
         ]);
     }
@@ -513,26 +505,13 @@ class Aibuilder extends BuildControl {
             $this->gitInstance($inst->slug, ['tag', '-f', '-a', $tag, '-m', $desc]);
         }
 
-        // Auto-publish: if this instance has a GitHub connection with auto-publish on,
-        // push HEAD + open/refresh a PR right after the checkpoint lands.
-        $publish = null;
-        $conn = Bean::findOne('connections',
-            'member_id = ? AND instance_id = ? AND connector_type = ? AND enabled = 1',
-            [(int)$this->member->id, (int)$inst->id, 'github']);
-        if ($conn && $conn->id) {
-            $meta = json_decode(($conn->metadataJson ?: '{}') ?? '', true) ?: [];
-            if (!empty($meta['autoPublish'])) {
-                $res = GitHubPublisher::publish($inst, $conn);
-                $conn->lastUsedAt = date('Y-m-d H:i:s');
-                $conn->lastError  = $res['ok'] ? ($res['note'] ?? null) : ($res['error'] ?? 'publish failed');
-                Bean::store($conn);
-                $publish = $res['ok']
-                    ? ['ok' => true, 'pr' => $res['pr'], 'message' => $res['message'], 'note' => $res['note'] ?? null]
-                    : ['ok' => false, 'error' => $res['error'] ?? 'publish failed'];
-            }
-        }
-
-        Flight::jsonSuccess(['checkpoint' => $tag, 'description' => $desc, 'publish' => $publish], 'Checkpoint saved');
+        // A checkpoint is a local git tag and nothing more. Auto-publish used to ride
+        // here, reading a `connections` bean and calling GitHubPublisher — both of which
+        // resolve against THIS SIDECAR's database and class path, not core's, so it had
+        // been dead since the extraction. Publishing on a schedule is now a cron on the
+        // project's publish pipeline, which is visible, debuggable and owned by the
+        // project rather than hidden inside a save.
+        Flight::jsonSuccess(['checkpoint' => $tag, 'description' => $desc], 'Checkpoint saved');
     }
 
     /** GET /aibuilder/checkpoints?id= — list checkpoints with descriptions. JSON. */
