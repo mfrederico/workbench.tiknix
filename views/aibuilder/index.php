@@ -73,7 +73,7 @@ foreach ($instances as $__i) { if (!empty($__i->isDefault)) { $hasDefault = true
             <?php if ($ab_isDefault): ?><span class="badge text-bg-warning">default · core</span><?php endif; ?>
             <?php /* Changing project belongs on the chip that names it — one control,
                      next to the thing it changes, instead of a picker panel. */ ?>
-            <a href="<?= htmlspecialchars($ab_projectsUrl) ?>"
+            <a href="<?= htmlspecialchars($ab_projectsUrl) ?>" target="_top"
                class="link-body-emphasis text-decoration-none ms-1"
                title="Change project — choose another on tiknix.com"><i class="bi bi-grid-3x3-gap"></i></a>
             <span id="ab-status" class="fw-normal text-body-secondary small">· connecting…</span>
@@ -143,7 +143,7 @@ foreach ($instances as $__i) { if (!empty($__i->isDefault)) { $hasDefault = true
       <div class="col-12">
         <div class="card shadow-sm"><div class="card-body text-center text-body-secondary py-5">
           <i class="bi bi-grid-3x3-gap fs-1 d-block mb-3"></i>
-          No project selected — <a href="<?= htmlspecialchars($ab_projectsUrl) ?>">choose one</a> to open its sandboxed Terminal.
+          No project selected — <a href="<?= htmlspecialchars($ab_projectsUrl) ?>" target="_top">choose one</a> to open its sandboxed Terminal.
         </div></div>
       </div>
     <?php else: ?>

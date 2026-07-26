@@ -83,7 +83,7 @@
                     <?php else: ?>
                         <div class="text-body-secondary small">No project selected.</div>
                     <?php endif; ?>
-                    <a href="<?= htmlspecialchars(\app\Sidecar\Sso::projectPickerUrl()) ?>"
+                    <a href="<?= htmlspecialchars(\app\Sidecar\Sso::projectPickerUrl()) ?>" target="_top"
                        class="btn btn-outline-secondary btn-sm w-100 mt-3">
                         <i class="bi bi-grid-3x3-gap me-1"></i>Change project
                     </a>
