@@ -27,20 +27,28 @@
                             <input type="hidden" name="<?= $name ?>" value="<?= $value ?>">
                         <?php endforeach; ?>
 
-                        <!-- Instance (tenant) — required -->
+                        <?php
+                        /* Which project this task is for is NOT a question this form asks.
+                           It is the project you chose in Projects and that the shell has
+                           been naming all along; a chooser here could disagree with it,
+                           and the one that disagreed would silently win. Shown, not
+                           offered — with the way to change it being the way you set it. */
+                        ?>
                         <div class="mb-3">
-                            <label for="instance_id" class="form-label">Instance <span class="text-danger">*</span></label>
-                            <select class="form-select" id="instance_id" name="instance_id" required>
-                                <option value="" <?= (($preselectInstanceId ?? 0) === 0) ? 'selected' : '' ?> disabled>— Select an instance —</option>
-                                <?php foreach (($instances ?? []) as $inst): ?>
-                                    <option value="<?= (int)$inst['id'] ?>" <?= (($preselectInstanceId ?? 0) === (int)$inst['id']) ? 'selected' : '' ?>><?= htmlspecialchars(($inst['label']) ?? '') ?></option>
-                                <?php endforeach; ?>
-                            </select>
-                            <?php if (empty($instances)): ?>
-                                <div class="form-text text-warning"><i class="bi bi-exclamation-triangle"></i> You have no instances yet — provision one in the <a href="/aibuilder">Advanced Builder</a> first.</div>
-                            <?php else: ?>
-                                <div class="form-text">Which Advanced Builder instance this task targets.</div>
-                            <?php endif; ?>
+                            <label class="form-label">Project</label>
+                            <div class="d-flex align-items-center gap-2 flex-wrap">
+                                <span class="badge text-bg-primary-subtle text-primary-emphasis border border-primary-subtle py-2 px-3">
+                                    <i class="bi bi-hdd-network-fill me-1"></i>
+                                    <?php if (!empty($instance['name'])): ?>
+                                        <?= htmlspecialchars($instance['name']) ?>
+                                        <span class="text-body-secondary">— <?= htmlspecialchars($instance['tag']) ?></span>
+                                    <?php else: ?>
+                                        <?= htmlspecialchars($instance['tag']) ?>
+                                    <?php endif; ?>
+                                </span>
+                                <a href="<?= htmlspecialchars($projectPickerUrl) ?>" target="_top" class="small">Work on a different project</a>
+                            </div>
+                            <div class="form-text">This task will be built against the project you are working on.</div>
                         </div>
 
                         <!-- Title -->
@@ -176,7 +184,7 @@
                                 <i class="bi bi-plus-lg"></i> Create Task
                             </button>
                             <button type="submit" class="btn btn-info" formaction="/workbench/decompose"
-                                    title="Treat the Description as a goal document and decompose it into a multi-agent plan for the selected instance">
+                                    title="Treat the Description as a goal document and decompose it into a multi-agent plan for the project you are working on">
                                 <i class="bi bi-diagram-3"></i> Decompose into plan &rarr;
                             </button>
                             <a href="/workbench" class="btn btn-outline-secondary">Cancel</a>

@@ -187,7 +187,11 @@ foreach ($instances as $__i) { if (!empty($__i->isDefault)) { $hasDefault = true
           <div class="card-body">
             <p class="text-body-secondary small mb-2">Decompose a goal into a multi-agent plan for this instance — grounded on its reuse inventory so tasks build on what already exists. Planning, review, approve &amp; build all live in the Task Board.</p>
             <div class="d-flex gap-2">
-              <a href="/workbench/create?instance_id=<?= (int)$selId ?>" class="btn btn-info btn-sm flex-fill"><i class="bi bi-diagram-3 me-1"></i>Plan &amp; build in Task Board</a>
+              <?php /* No ?instance_id: the task board builds against the selected project,
+                       the same one this page is editing. Passing an id would imply the two
+                       could differ, and a stale one in a bookmarked link would look like it
+                       still worked. */ ?>
+              <a href="/workbench/create" class="btn btn-info btn-sm flex-fill"><i class="bi bi-diagram-3 me-1"></i>Plan &amp; build in Task Board</a>
               <button id="ab-reuse-digest" class="btn btn-outline-secondary btn-sm text-nowrap" type="button" title="Preview the reuse inventory the planner is grounded on for this instance"><i class="bi bi-recycle me-1"></i>Reuse digest</button>
             </div>
             <div class="text-body-secondary mt-2" style="font-size:.72rem">Preview this instance's <a href="#" id="ab-reuse-digest-link">reuse inventory</a>, or review generated plans in <a href="/workbench" target="_blank">the Task Board</a>, tagged to this instance.</div>

@@ -148,6 +148,8 @@ class Workbench extends BuildControl {
      */
     public function create($params = []) {
         if (!$this->requireLogin()) return;
+        // No project selected → back to core's picker, not a second one here.
+        if (!$this->requireProject()) return;
 
         $this->viewData['title'] = 'Create Task';
 
@@ -177,31 +179,17 @@ class Workbench extends BuildControl {
         $this->viewData['branches'] = $remoteBranches;
         $this->viewData['currentBranch'] = in_array($currentBranch, $remoteBranches) ? $currentBranch : 'main';
 
-        // AI Builder instances (tenants) a task can target: ones this member OWNS
-        // plus ones shared with their teams. A shared workspace is labelled so.
-        $instances = [];
-        foreach ($this->access->accessibleInstances() as $inst) {
-            $tag      = $inst['slug'] . '.' . ($inst['app'] ?: 'tiknix');
-            $isShared = empty($inst['owned']);
-            $instances[] = [
-                'id'    => (int)$inst['id'],
-                'tag'   => $tag,
-                'label' => ($inst['name'] ? $inst['name'] . ' — ' : '') . $tag . ($isShared ? ' (shared)' : ''),
-            ];
-        }
-        $this->viewData['instances'] = $instances;
-        // Pre-select an instance: by id (AI Builder "Plan & build in the Workbench") or
-        // by tag (New Task from a filtered /workbench?instance_tag=... view).
-        $preselectInstanceId = (int)$this->getParam('instance_id', 0);
-        if (!$preselectInstanceId) {
-            $tag = (string)$this->getParam('instance_tag', '');
-            if ($tag !== '') {
-                foreach ($instances as $inst) {
-                    if (($inst['tag'] ?? '') === $tag) { $preselectInstanceId = (int)$inst['id']; break; }
-                }
-            }
-        }
-        $this->viewData['preselectInstanceId'] = $preselectInstanceId;
+        // The task targets THE SELECTED PROJECT — the one chosen in core's picker and
+        // named by the chip in the shell. There is no chooser here: a second place to
+        // say which project is a second thing that can disagree with the first, which is
+        // the flip/flop this sidecar was untangled to stop. The form shows what it will
+        // build against; changing it means going back to Projects.
+        $this->viewData['instance'] = [
+            'id'  => (int) $this->selected['id'],
+            'tag' => $this->selected['slug'] . '.' . ($this->selected['app'] ?: 'tiknix'),
+            'name' => (string) ($this->selected['name'] ?? ''),
+        ];
+        $this->viewData['projectPickerUrl'] = \app\Sidecar\Sso::projectPickerUrl();
 
         $this->render('workbench/create', $this->viewData);
     }
@@ -252,13 +240,14 @@ class Workbench extends BuildControl {
             $authcontrolLevel = $this->member->level; // Can't assign higher privilege than you have
         }
 
-        // Instance (tenant) is required — must be one the member owns OR one shared
-        // with their teams (mirrors the create-form picker and getVisibleTasks).
-        $instanceId = (int)$this->getParam('instance_id', 0);
-        $instance = $instanceId ? $this->access->instanceMeta((int)$instanceId) : null;
+        // The instance comes from the SELECTED PROJECT, never from the request. Taking it
+        // from a posted field would leave the create form's chooser alive in everything
+        // but appearance — a form could still be aimed at a project you are not on, and
+        // the task would land somewhere the shell never said you were.
+        $instance = $this->selected ? $this->access->instanceMeta((int) $this->selected['id']) : null;
         if (!$instance || !$instance->id || !$this->access->canAccessInstance((int)$this->member->id, (int)$instance->id)) {
-            $this->flash('error', 'Please select a valid instance for this task');
-            Flight::redirect('/workbench/create');
+            $this->flash('error', 'Choose a project to work on before creating a task.');
+            Flight::redirect(\app\Sidecar\Sso::projectPickerUrl());
             return;
         }
 
@@ -326,13 +315,13 @@ class Workbench extends BuildControl {
             return;
         }
 
-        // Instance (tenant) is required — one the member owns OR one shared with
-        // their teams (mirrors the create picker and store/getVisibleTasks).
-        $instanceId = (int)$this->getParam('instance_id', 0);
-        $instance = $instanceId ? $this->access->instanceMeta((int)$instanceId) : null;
+        // Same rule as store(): the plan is decomposed for the SELECTED project, not for
+        // whatever a posted field names. Both submit paths hang off the one form, so
+        // fixing only one would leave the chooser alive on the other.
+        $instance = $this->selected ? $this->access->instanceMeta((int) $this->selected['id']) : null;
         if (!$instance || !$instance->id || !$this->access->canAccessInstance((int)$this->member->id, (int)$instance->id)) {
-            $this->flash('error', 'Please select a valid instance to decompose for');
-            Flight::redirect('/workbench/create');
+            $this->flash('error', 'Choose a project to work on before planning against it.');
+            Flight::redirect(\app\Sidecar\Sso::projectPickerUrl());
             return;
         }
 
