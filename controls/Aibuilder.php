@@ -4,12 +4,16 @@
  *
  * A member (admin) provisions one or more isolated "<slug>.tiknix" instances —
  * each an independent git clone with its own SQLite DB. Opening an instance mints
- * a short-lived HMAC token and renders a terminal (xterm) + chat UI that connect,
- * same-origin, to the aibuilder bridges:
- *   - terminal: wss://<host>/aibuilder/ws       -> node bridge (127.0.0.1:3990)
- *   - chat:     wss://<host>/aibuilder/chat-ws    -> php bridge  (127.0.0.1:3991)
- * Both spawn a bubblewrap-jailed agent confined to THAT instance. Checkpoint /
+ * a short-lived HMAC token and renders a terminal (xterm) that connects, same-origin,
+ * to the aibuilder terminal bridge:
+ *   - terminal: wss://<host>/aibuilder/ws  -> node bridge (127.0.0.1:3990)
+ * It spawns a bubblewrap-jailed agent confined to THAT instance. Checkpoint /
  * Rollback shell out to the capricorn instance scripts so any change is reversible.
+ *
+ * There was a second, separate chat bridge on 3991 (/aibuilder/chat-ws). Nothing opens
+ * it any more — the terminal is the whole interface — so it is gone from here rather
+ * than lingering as a socket that looks broken because no service and no proxy block
+ * back it.
  *
  * Security: the bubblewrap jail (capricorn/bin/jail-run.sh) is the real boundary.
  * This controller gates access (ADMIN), mints the token, validates instance
@@ -300,8 +304,7 @@ class Aibuilder extends BuildControl {
             'ab_sub'         => $selected ? $selected->slug : '',
             'ab_token'       => $selected ? $this->mintToken($selected->slug, (int)$this->member->id) : '',
             'ab_wspath'      => (string)($cfg['bridge']['ws_path'] ?? '/aibuilder/ws'),
-            'ab_chat_wspath' => (string)($cfg['bridge']['chat_ws_path'] ?? '/aibuilder/chat-ws'),
-            // The terminal/chat PTY bridge (node runner) lives on CORE, so the xterm must
+            // The terminal PTY bridge (node runner) lives on CORE, so the xterm must
             // connect to core's host, not this sidecar's. wss://<core-host>. See coreWsBase().
             'ab_ws_base'     => $this->coreWsBase(),
             'ab_hasInstance' => (bool)$selected,
