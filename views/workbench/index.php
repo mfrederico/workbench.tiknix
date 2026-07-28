@@ -321,6 +321,11 @@
                                                 'running' => 'primary',
                                                 'completed' => 'success',
                                                 'merged' => 'success',
+                                                // Terminal and fine, but not the same as
+                                                // merged: nothing changed because nothing
+                                                // needed to. Distinct colour so a reader
+                                                // can tell "done" from "already done".
+                                                'resolved' => 'info',
                                                 'failed' => 'danger',
                                                 'paused' => 'warning',
                                                 'awaiting', 'waiting' => 'warning',
