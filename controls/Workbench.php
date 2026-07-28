@@ -521,10 +521,32 @@ class Workbench extends BuildControl {
         Flight::jsonSuccess(['plan_status' => 'building'], 'Build started — up to ' . PlanExecutor::MAX_CONCURRENT . ' agents running.');
     }
 
-    /** Launch the detached worktree orchestrator for a plan. Returns true on success. */
+    /**
+     * Launch the detached worktree orchestrator for a plan. Returns true on success.
+     *
+     * The orchestrator CLI lives in CORE, not in this sidecar — the controller moved out
+     * during the extraction and this path did not, so it pointed at
+     * workbench.tiknix/scripts/plan-orchestrate.php, which does not exist. tmux started
+     * happily, php said "Could not open input file", the session ended in under a second,
+     * and the plan sat at "building" with nine pending subtasks and no explanation.
+     *
+     * Hence the existence check: a launcher that reports success for a command that
+     * cannot run is worse than one that fails, because the failure is recorded as
+     * progress.
+     */
     private function startOrchestrator($plan, $inst): bool {
         $dir = '/var/www/html/default/' . $inst->slug . '.' . ($inst->app ?: 'tiknix');
-        $cmd = 'php ' . escapeshellarg(dirname(__DIR__) . '/scripts/plan-orchestrate.php')
+
+        $coreRoot = rtrim((string) Flight::get('sidecar.core_root'), '/');
+        $orchestrator = $coreRoot . '/scripts/plan-orchestrate.php';
+        if ($coreRoot === '' || !is_file($orchestrator)) {
+            $this->logger->error('orchestrator script missing', [
+                'looked_for' => $orchestrator, 'core_root' => $coreRoot, 'plan' => (int) $plan->id,
+            ]);
+            return false;
+        }
+
+        $cmd = 'php ' . escapeshellarg($orchestrator)
              . ' --plan=' . (int)$plan->id
              . ' --slug=' . escapeshellarg((string)$inst->slug)
              . ' --dir='  . escapeshellarg($dir)
