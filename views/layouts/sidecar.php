@@ -31,14 +31,14 @@ $__onBuilder = strpos($__p, '/aibuilder') === 0;
 <script src="https://cdn.jsdelivr.net/npm/jquery@3.7.1/dist/jquery.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 <script>
-// Size the parent shell iframe (Kit convention).
-(function () {
-  function report() {
-    try { parent.postMessage({ tiknixHeight: document.body.scrollHeight }, '*'); } catch (e) {}
-  }
-  window.addEventListener('load', report);
-  new ResizeObserver(report).observe(document.body);
-})();
+// The task board is a FULL-HEIGHT app: the shell already sizes the frame to
+// calc(100vh - topbar) and the board scrolls inside it. Reporting a content height on
+// top of that made the parent resize the frame, which changed this document's viewport,
+// which changed body.scrollHeight, which reported again — the frame flickered several
+// times a second with the scrollbar appearing and disappearing.
+//
+// So this deliberately does NOT report. The postMessage channel remains for short plugin
+// pages that genuinely want to grow to their content; a full-height app is not one.
 </script>
 </body>
 </html>
