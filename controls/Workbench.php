@@ -122,23 +122,24 @@ class Workbench extends BuildControl {
         $this->viewData['engines']   = \app\EngineRegistry::menu();
         $this->viewData['planMeta'] = $planMeta;
         $this->viewData['parentIdsWithChildren'] = array_keys($childParentIds);
-        $this->viewData['decomposingInstance'] = (int)$this->getParam('decomposing', 0);
-
-        // Persistent "decomposing…" indicator: find planner sessions still alive for
-        // THIS member so the banner shows even after they navigate away from the
-        // create page. Session name mirrors PlanRunner: tiknix-<memberId>-plan-<slug>.
-        $decomposing = [];
-        $prefix = 'tiknix-' . (int)$this->member->id . '-plan-';
-        $active = \app\TmuxManager::list($prefix);
-        if ($active) {
-            // Accessible instances come from core (Sidecar\Access), never from workbench.db.
-            foreach ($this->access->accessibleInstances() as $inst) {
-                if (in_array($prefix . $inst['slug'], $active, true)) {
-                    $decomposing[] = ['id' => (int)$inst['id'], 'tag' => $inst['slug'] . '.' . ($inst['app'] ?: 'tiknix')];
-                }
-            }
+        // Persistent "decomposing…" indicator, for THE SELECTED PROJECT only.
+        //
+        // It used to scan every accessible instance for a live planner session, which
+        // meant the board reported on work in projects you were not on — the same
+        // "other projects are in play here" implication a second picker makes. The board
+        // shows the project you are on; if you want to watch another one decompose, that
+        // is what selecting it is for.
+        //
+        // Armed by ?decomposing=1 as well as by a live session, because the redirect
+        // straight after kicking a planner off can beat tmux to the punch.
+        $decomposing = false;
+        if ($this->selected) {
+            $session = 'tiknix-' . (int)$this->member->id . '-plan-' . $this->selected['slug'];
+            $decomposing = \app\TmuxManager::exists($session);
         }
-        $this->viewData['decomposingInstances'] = $decomposing;
+        $this->viewData['decomposing'] = $decomposing || $this->getParam('decomposing', '') !== '';
+        $this->viewData['decomposingTag'] = $this->selected
+            ? $this->selected['slug'] . '.' . ($this->selected['app'] ?: 'tiknix') : '';
 
         $this->render('workbench/index', $this->viewData);
     }
@@ -361,7 +362,9 @@ class Workbench extends BuildControl {
         // (scripts/plan-ingest.php), so the plan appears here automatically. The
         // decomposing banner polls and refreshes the list when it lands.
         $this->flash('info', 'Decomposing your goal for ' . $slug . '.' . $app . ' — the plan will appear here shortly.');
-        Flight::redirect('/workbench?instance_tag=' . urlencode($slug . '.' . $app) . '&decomposing=' . (int)$instance->id);
+        // Just ?decomposing=1: the board is already the selected project's board, so
+        // naming an instance here would be repeating the selection back at it.
+        Flight::redirect('/workbench?decomposing=1');
     }
 
     /**
@@ -609,13 +612,19 @@ class Workbench extends BuildControl {
         Flight::jsonSuccess(['plan_status' => $plan->planStatus ?: 'draft', 'status' => $plan->status, 'tasks' => $tasks]);
     }
 
-    /** GET /workbench/decomposestatus — is the planner still decomposing for an instance? JSON. */
+    /**
+     * GET /workbench/decomposestatus — is the planner still decomposing? JSON.
+     *
+     * Answers for THE SELECTED PROJECT. It used to take an ?instance_id, which was
+     * access-checked and so never unsafe, but it did let the board ask about a project
+     * the member was not on — and an endpoint that will answer for any project is how a
+     * caller ends up quietly reporting on one.
+     */
     public function decomposestatus($params = []) {
         if (!$this->requireLogin()) return;
-        $instanceId = (int)$this->getParam('instance_id', 0);
-        $inst = $instanceId ? $this->access->instanceMeta((int)$instanceId) : null;
+        $inst = $this->selected ? $this->access->instanceMeta((int) $this->selected['id']) : null;
         if (!$inst || !$inst->id || !$this->access->canAccessInstance((int)$this->member->id, (int)$inst->id)) {
-            Flight::jsonError('No such instance', 404);
+            Flight::jsonError('No project selected', 409);
             return;
         }
         $session = 'tiknix-' . (int)$this->member->id . '-plan-' . $inst->slug;

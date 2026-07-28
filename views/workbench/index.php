@@ -128,25 +128,17 @@
             })();
             </script>
 
-            <?php
-            // Show a decomposing banner for every instance with a live planner
-            // session (detected server-side, so it survives navigating away), unioned
-            // with the ?decomposing=<id> hint from the just-submitted redirect.
-            $wbDecomposing = $decomposingInstances ?? [];
-            $wbSeen = array_map(fn($d) => (int)$d['id'], $wbDecomposing);
-            if (!empty($decomposingInstance) && !in_array((int)$decomposingInstance, $wbSeen, true)) {
-                $wbDecomposing[] = ['id' => (int)$decomposingInstance, 'tag' => ''];
-            }
-            ?>
-            <?php if (!empty($wbDecomposing)): ?>
-                <div id="wbDecomposeBanner" class="alert alert-info d-flex align-items-center"
-                     data-instance-ids="<?= htmlspecialchars(implode(',', array_map(fn($d) => (int)$d['id'], $wbDecomposing))) ?>">
+            <?php /* Decomposing banner for THE SELECTED PROJECT — detected server-side
+                     from a live planner session, so it survives navigating away, and
+                     armed by ?decomposing=1 for the moment right after submitting, before
+                     tmux has the session. */ ?>
+            <?php if (!empty($decomposing)): ?>
+                <div id="wbDecomposeBanner" class="alert alert-info d-flex align-items-center">
                     <span class="spinner-border spinner-border-sm me-2" role="status"></span>
                     <div>
-                        <strong>Decomposing your goal into a plan<?= count($wbDecomposing) > 1 ? 's' : '' ?>…</strong>
-                        <?php $wbTags = array_filter(array_map(fn($d) => (string)($d['tag'] ?? ''), $wbDecomposing)); ?>
-                        <?php if ($wbTags): ?>
-                            <span class="ui-mono small">(<?= htmlspecialchars(implode(', ', $wbTags)) ?>)</span>
+                        <strong>Decomposing your goal into a plan…</strong>
+                        <?php if (!empty($decomposingTag)): ?>
+                            <span class="ui-mono small">(<?= htmlspecialchars($decomposingTag) ?>)</span>
                         <?php endif; ?>
                         <div class="small text-muted">The planner is grounding itself in the codebase and drafting tasks. This page refreshes automatically when the plan is ready — you can browse away and it'll keep working.</div>
                     </div>
@@ -155,32 +147,26 @@
                 (function(){
                     var el = document.getElementById('wbDecomposeBanner');
                     if (!el) return;
-                    var ids = (el.getAttribute('data-instance-ids') || '').split(',').filter(Boolean);
-                    if (!ids.length) return;
-                    var baseline = {}, tries = 0;
+                    var baseline = null, tries = 0;
                     function done(){
                         var u = new URL(window.location.href);
                         u.searchParams.delete('decomposing');   // drop so the banner does not re-arm
                         window.location.href = u.toString();
                     }
                     function poll(){
-                        Promise.all(ids.map(function(iid){
-                            return fetch('/workbench/decomposestatus?instance_id=' + encodeURIComponent(iid), {headers:{'X-Requested-With':'XMLHttpRequest'}})
-                                .then(function(r){ return r.json(); })
-                                .then(function(j){ return {iid: iid, d: (j && j.data) ? j.data : j}; })
-                                .catch(function(){ return {iid: iid, d: null}; });
-                        })).then(function(results){
-                            var anyDone = false, allStopped = true;
-                            results.forEach(function(res){
-                                var d = res.d; if (!d) { return; }
+                        // No instance id: the endpoint answers for the project you are on,
+                        // which is the only one this banner speaks for.
+                        fetch('/workbench/decomposestatus', {headers:{'X-Requested-With':'XMLHttpRequest'}})
+                            .then(function(r){ return r.json(); })
+                            .then(function(j){
+                                var d = (j && j.data) ? j.data : j;
+                                if (!d) { if (++tries < 240) setTimeout(poll, 3000); return; }
                                 var newest = d.newest_plan_id || 0;
-                                if (baseline[res.iid] === undefined) baseline[res.iid] = newest;
-                                if (newest > baseline[res.iid]) anyDone = true;   // a new plan landed
-                                if (d.running !== false) allStopped = false;      // still decomposing
-                            });
-                            if (anyDone || allStopped) return done();
-                            if (++tries < 240) setTimeout(poll, 3000);            // ~12 min cap
-                        });
+                                if (baseline === null) baseline = newest;
+                                if (newest > baseline || d.running === false) return done();
+                                if (++tries < 240) setTimeout(poll, 3000);   // ~12 min cap
+                            })
+                            .catch(function(){ if (++tries < 240) setTimeout(poll, 3000); });
                     }
                     setTimeout(poll, 3000);
                 })();
@@ -534,8 +520,9 @@
                             body: 'task_ids=' + encodeURIComponent(Array.from(selected).join(',')) + '&_csrf_token=' + encodeURIComponent(window.WB_CSRF || '')
                         }).then(function(r){ return r.json(); }).then(function(j){
                             if (j && j.success) {
-                                var tag = (j.data && j.data.instance_tag) ? j.data.instance_tag : '';
-                                window.location = '/workbench' + (tag ? '?instance_tag=' + encodeURIComponent(tag) + '&decomposing=' + encodeURIComponent((j.data && j.data.instance_id) || '') : '');
+                                // The board is the selected project's board; no need to
+                                // tell it which instance it is already on.
+                                window.location = '/workbench?decomposing=1';
                             } else {
                                 window.alert((j && j.message) || 'Consolidation failed');
                                 btn.disabled = false; btn.innerHTML = BTN_HTML;
