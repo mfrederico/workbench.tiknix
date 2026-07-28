@@ -49,6 +49,17 @@
                                 <a href="<?= htmlspecialchars($projectPickerUrl) ?>" target="_top" class="small">Work on a different project</a>
                             </div>
                             <div class="form-text">This task will be built against the project you are working on.</div>
+                            <?php if (isset($agentSignedIn) && !$agentSignedIn): ?>
+                                <?php /* The one thing that stops a new project building, said where
+                                         the spec is being written rather than five minutes later. */ ?>
+                                <div class="alert alert-warning mt-2 mb-0 py-2 small">
+                                    <i class="bi bi-exclamation-triangle me-1"></i>
+                                    <strong>This project has not signed in to Claude yet.</strong>
+                                    Agents run inside this project's own jail with its own credentials, so
+                                    open the <a href="/aibuilder">Advanced Builder</a> and run <code>/login</code>
+                                    in its terminal once. Until then a plan cannot be decomposed or built.
+                                </div>
+                            <?php endif; ?>
                         </div>
 
                         <!-- Title -->

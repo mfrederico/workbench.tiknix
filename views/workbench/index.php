@@ -142,6 +142,12 @@
                         <?php endif; ?>
                         <div class="small text-muted">The planner is grounding itself in the codebase and drafting tasks. This page refreshes automatically when the plan is ready — you can browse away and it'll keep working.</div>
                     </div>
+                    <?php /* Cancelling used to mean killing a tmux session from a shell. The
+                             moment you need it is the moment you realise it is planning the
+                             wrong thing, so it belongs right here on the banner. */ ?>
+                    <button id="wbDecomposeStop" class="btn btn-outline-secondary btn-sm ms-auto" type="button">
+                        <i class="bi bi-stop-circle me-1"></i>Stop
+                    </button>
                 </div>
                 <script>
                 (function(){
@@ -169,6 +175,24 @@
                             .catch(function(){ if (++tries < 240) setTimeout(poll, 3000); });
                     }
                     setTimeout(poll, 3000);
+
+                    var stopBtn = document.getElementById('wbDecomposeStop');
+                    if (stopBtn) stopBtn.addEventListener('click', function () {
+                        if (!window.confirm('Stop decomposing? The planner run so far is discarded.')) return;
+                        stopBtn.disabled = true;
+                        stopBtn.textContent = 'Stopping…';
+                        fetch('/workbench/decomposestop', {
+                            method: 'POST',
+                            headers: {'Content-Type': 'application/x-www-form-urlencoded',
+                                      'X-CSRF-TOKEN': window.WB_CSRF || '',
+                                      'X-Requested-With': 'XMLHttpRequest'},
+                            body: '_csrf_token=' + encodeURIComponent(window.WB_CSRF || '')
+                        }).then(function (r) { return r.json(); }).then(function (j) {
+                            window.location = '/workbench';   // banner clears with the session
+                        }).catch(function () {
+                            stopBtn.disabled = false; stopBtn.textContent = 'Stop';
+                        });
+                    });
                 })();
                 </script>
             <?php endif; ?>

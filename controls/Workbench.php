@@ -191,6 +191,12 @@ class Workbench extends BuildControl {
             'name' => (string) ($this->selected['name'] ?? ''),
         ];
         $this->viewData['projectPickerUrl'] = \app\Sidecar\Sso::projectPickerUrl();
+        // A project nobody has signed in for cannot build. Say so on the form, where the
+        // decision to write a spec is being made, rather than after it is submitted.
+        $this->viewData['agentSignedIn'] = $this->agentSignedIn(
+            '/var/www/html/default/' . $this->selected['slug'] . '.' . ($this->selected['app'] ?: 'tiknix'),
+            (string) ($this->selected['engine'] ?? 'claude')
+        );
 
         $this->render('workbench/create', $this->viewData);
     }
@@ -341,6 +347,14 @@ class Workbench extends BuildControl {
         if (!is_file($instanceDir . '/public/index.php')) {
             $this->flash('error', 'That instance is not available on disk.');
             Flight::redirect('/workbench/create');
+            return;
+        }
+
+        // Say it BEFORE spending five minutes failing at it.
+        if (!$this->agentSignedIn($instanceDir, (string) ($instance->engine ?: 'claude'))) {
+            $this->flash('error', 'This project has not signed in to Claude yet, so the planner cannot run. '
+                . 'Open the Advanced Builder with this project selected and run /login in its terminal, then try again.');
+            Flight::redirect('/aibuilder');
             return;
         }
 
@@ -632,6 +646,63 @@ class Workbench extends BuildControl {
             $tasks[] = ['id' => (int)$s->id, 'title' => $s->title, 'status' => $s->status];
         }
         Flight::jsonSuccess(['plan_status' => $plan->planStatus ?: 'draft', 'status' => $plan->status, 'tasks' => $tasks]);
+    }
+
+    /**
+     * Has anyone signed the agent in for this project yet?
+     *
+     * Claude credentials are stored PER PROJECT — jail-run.sh binds
+     * <instance>/.aibuilder/state/<engine> as the agent's ~/.claude — so a freshly
+     * created project cannot plan or build until someone opens ITS terminal and logs in.
+     * Without this check the planner starts, dies in about a second with "Not logged in",
+     * and the board sits on "Decomposing…" until the poll gives up: a five-minute wait
+     * for a failure that was knowable before the click.
+     */
+    private function agentSignedIn(string $dir, string $engine): bool {
+        $engine = preg_replace('/[^a-z0-9_-]/i', '', $engine) ?: 'claude';
+        return is_file(rtrim($dir, '/') . '/.aibuilder/state/' . $engine . '/.credentials.json');
+    }
+
+    /**
+     * POST /workbench/decomposestop — cancel the planner running for this project.
+     *
+     * A decompose is a five-minute frontier model run that, once started, could only be
+     * stopped by killing its tmux session from a shell. That is not an operation a user
+     * can be expected to have — and the case that needs it is not rare: you realise it is
+     * grounded on the wrong project, or you spot a mistake in the goal the moment after
+     * you click.
+     *
+     * Stops only THIS project's planner: the session name is derived from the selected
+     * instance, never from the request, so this cannot cancel someone else's run.
+     */
+    public function decomposestop($params = []) {
+        if (!$this->requireLogin()) return;
+        if (Flight::request()->method !== 'POST') { Flight::jsonError('POST required', 405); return; }
+        if (!Flight::csrf()->validateRequest()) { Flight::jsonError('Invalid CSRF token', 403); return; }
+
+        $instance = $this->selected ? $this->access->instanceMeta((int) $this->selected['id']) : null;
+        if (!$instance || !$instance->id || !$this->access->canAccessInstance((int)$this->member->id, (int)$instance->id)) {
+            Flight::jsonError('No project selected.', 409);
+            return;
+        }
+
+        $dir = '/var/www/html/default/' . $instance->slug . '.' . ($instance->app ?: 'tiknix');
+        $runner = new PlanRunner((string) $instance->slug, $dir, (int) $this->member->id,
+                                 (int) $this->member->level, (string) ($instance->engine ?: 'claude'));
+        if (!$runner->running()) {
+            Flight::jsonSuccess(['stopped' => false], 'No planner is running for this project.');
+            return;
+        }
+
+        $ok = $runner->stop();
+        // A half-written plan.json would be ingested as if it were finished. The planner
+        // writes it only on success, but a cancel is exactly when "only on success" is
+        // worth not betting on.
+        @unlink($dir . '/.aibuilder/plan.json');
+
+        $this->logger->info('decompose stopped', ['instance' => $instance->slug, 'member' => $this->member->id]);
+        Flight::jsonSuccess(['stopped' => $ok],
+            $ok ? 'Stopped decomposing. Nothing was ingested.' : 'Could not stop the planner.');
     }
 
     /**
