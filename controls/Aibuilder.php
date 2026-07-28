@@ -124,8 +124,16 @@ class Aibuilder extends BuildControl {
         $cfg    = $this->cfg();
         $secret = (string)($cfg['token']['secret'] ?? '');
         $ttl    = (int)($cfg['token']['ttl'] ?? 120);
+        // Where THIS member's agent credentials live. Decided here, in one place
+        // (app\AgentState), and carried in the signed payload so the terminal bridge
+        // binds the same store the planner and the build agents use. Without it the
+        // terminal fell back to the per-project dir and asked you to log in again for a
+        // project you had already signed in for elsewhere.
+        $dir    = '/var/www/html/default/' . $sub . '.' . $this->appNamespace();
+        $engine = trim((string) @file_get_contents($dir . '/.aibuilder/engine')) ?: 'claude';
         $payload = json_encode([
             'app' => $this->appNamespace(), 'sub' => $sub, 'member_id' => $memberId,
+            'agent_state' => \app\AgentState::resolve($memberId, $engine, $dir),
             'nonce' => bin2hex(random_bytes(8)),   // single-use: the bridge burns this on connect
             'exp' => time() + $ttl,
         ]);
