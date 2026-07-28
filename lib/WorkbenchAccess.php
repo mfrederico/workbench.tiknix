@@ -16,6 +16,7 @@
  */
 namespace app;
 
+use \Flight as Flight;
 use \app\Bean;
 use \app\Sidecar\Access;
 use RedBeanPHP\R;
@@ -181,7 +182,19 @@ class WorkbenchAccess {
         $orderBy = $filters['order_by'] ?? 'created_at DESC';
         try {
             return Bean::find('workbenchtask', "$where ORDER BY $orderBy", $params);
-        } catch (\Throwable $e) { return []; }   // fluid table not created yet
+        } catch (\Throwable $e) {
+            // An empty board is a legitimate state (a project with no tasks yet, before
+            // the fluid table exists), so we still return nothing rather than a 500. But
+            // it is NOT the same as a failed query, and swallowing the difference made a
+            // real fault — ten tasks in the database, "No Tasks Found" on screen while
+            // the counters said 10 — look exactly like an empty project.
+            Flight::get('log')->error('getVisibleTasks failed', [
+                'error' => $e->getMessage(),
+                'where' => $where,
+                'order' => $orderBy,
+            ]);
+            return [];
+        }
     }
 
     /** Status counts for the selected instance. */
