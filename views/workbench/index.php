@@ -153,13 +153,22 @@
                 (function(){
                     var el = document.getElementById('wbDecomposeBanner');
                     if (!el) return;
-                    var baseline = null, tries = 0;
-                    function done(){
+                    var baseline = null, tries = 0, stopPolling = false;
+                    // Reload ONLY when there is something new to show. The banner is armed
+                    // server-side by a live planner session, so an unconditional reload here
+                    // re-armed it, polled again, reloaded again — a refresh loop that ran for
+                    // as long as the session existed (and a finished session lingers in tmux
+                    // for a while after the planner exits). If the planner has simply stopped
+                    // with nothing new, clear the banner in place and stop.
+                    function done(landed){
+                        stopPolling = true;
+                        if (!landed) { el.remove(); return; }
                         var u = new URL(window.location.href);
                         u.searchParams.delete('decomposing');   // drop so the banner does not re-arm
                         window.location.href = u.toString();
                     }
                     function poll(){
+                        if (stopPolling) return;
                         // No instance id: the endpoint answers for the project you are on,
                         // which is the only one this banner speaks for.
                         fetch('/workbench/decomposestatus', {headers:{'X-Requested-With':'XMLHttpRequest'}})
@@ -169,7 +178,8 @@
                                 if (!d) { if (++tries < 240) setTimeout(poll, 3000); return; }
                                 var newest = d.newest_plan_id || 0;
                                 if (baseline === null) baseline = newest;
-                                if (newest > baseline || d.running === false) return done();
+                                if (newest > baseline) return done(true);    // a plan landed: show it
+                                if (d.running === false) return done(false); // stopped, nothing new
                                 if (++tries < 240) setTimeout(poll, 3000);   // ~12 min cap
                             })
                             .catch(function(){ if (++tries < 240) setTimeout(poll, 3000); });
