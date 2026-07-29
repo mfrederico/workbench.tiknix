@@ -243,6 +243,33 @@ $baseDomain = preg_replace('#^https?://#', '', $baseUrl);
                 </div>
             <?php endif; ?>
 
+            <!-- What this plan was decomposed FROM.
+                 A plan's subtasks are the planner's ANSWER; without the question next to
+                 them there is no way to tell a bad decomposition from a bad ask. Captured
+                 at ingest (scripts/plan-ingest.php) because the source files are
+                 per-instance and the next decompose overwrites them. -->
+            <?php if (empty($task->parentTaskId) && !empty($task->planGoal)): ?>
+                <?php $__briefFile = '.aibuilder/plans/' . (int)$task->id . '/plan-request.md'; ?>
+                <div class="card mb-4">
+                    <div class="card-header d-flex align-items-center justify-content-between">
+                        <h5 class="mb-0"><i class="bi bi-chat-left-quote"></i> Decomposed from this prompt</h5>
+                        <button class="btn btn-sm btn-outline-secondary" type="button"
+                                data-bs-toggle="collapse" data-bs-target="#planGoalBody">Show / hide</button>
+                    </div>
+                    <div class="collapse show" id="planGoalBody">
+                        <div class="card-body">
+                            <div class="wb-plan-goal"><?= \app\MarkdownParser::parseSafe($task->planGoal) ?></div>
+                            <div class="form-text mt-3 mb-0">
+                                This is the goal the planner was given. For a re-plan it also carries the
+                                failure report from the attempt before it.
+                                The full brief it read &mdash; this goal plus the instance's reuse inventory &mdash;
+                                is kept at <code><?= htmlspecialchars($__briefFile) ?></code>.
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            <?php endif; ?>
+
             <!-- Error (when failed) -->
             <?php if ($task->status === 'failed' && $task->errorMessage): ?>
                 <div class="card mb-4 border-danger">
