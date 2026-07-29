@@ -799,25 +799,13 @@ class Aibuilder extends BuildControl {
         // claude-valid model — resolve the member's CLAUDE worker override, default sonnet.
         // Per-task engine selection still happens inside PlanExecutor via the registry.
         $workerModel = MemberEnginePrefs::model((int)$this->member->id, 'claude', 'worker', 'sonnet');
-        $cmd = 'php ' . escapeshellarg(dirname(__DIR__) . '/scripts/plan-orchestrate.php')
-             . ' --plan=' . (int)$plan->id
-             . ' --slug=' . escapeshellarg((string)$inst->slug)
-             . ' --dir='  . escapeshellarg($dir)
-             . ' --model=' . escapeshellarg($workerModel)
-             . ' --level=' . (int)$this->member->level;
-        $ab = $dir . '/.aibuilder';
-        @mkdir($ab, 0775, true);
-        $scriptFile = $ab . '/run-orchestrator.sh';
-        // Propagate the per-instance workbench.db so plan-orchestrate's bootstrap (and the
-        // per-task agents it spawns) write plan/task state THERE, not core. The base ctor
-        // already putenv'd it for this instance; tmux won't inherit it, so export explicitly.
-        $wsDbEnv  = getenv('TIKNIX_WORKBENCH_DB');
-        $wsExport = ($wsDbEnv !== false && $wsDbEnv !== '')
-            ? 'export TIKNIX_WORKBENCH_DB=' . escapeshellarg($wsDbEnv) . "\n" : '';
-        file_put_contents($scriptFile, "#!/bin/bash\n" . $wsExport . $cmd . ' 2>&1 | tee ' . escapeshellarg($ab . '/orchestrator.log') . "\n");
-        @chmod($scriptFile, 0755);
-
-        if (!TmuxManager::create($session, $scriptFile, $dir)) {
+        // The launch block lives in core (app\PlanOrchestrator): it resolves the
+        // orchestrator script, exports the per-instance workbench.db so plan state is
+        // written where this plan actually lives, and refuses to report success for a
+        // command it cannot run.
+        if (!\app\PlanOrchestrator::launch(
+            (int)$plan->id, (string)$inst->slug, $dir, (int)$this->member->level, $workerModel
+        )) {
             Flight::jsonError('Could not start the orchestrator.', 500);
             return;
         }

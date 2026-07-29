@@ -190,6 +190,28 @@
                             <div class="form-text">Comma-separated tags for organization.</div>
                         </div>
 
+                        <!-- Straight-through. Deliberately unchecked on every load: it is a
+                             per-submission choice, not a preference, because it commits agent
+                             work without anyone reading the plan first. -->
+                        <div class="form-check mb-3 p-3 border rounded bg-body-tertiary">
+                            <input class="form-check-input" type="checkbox" value="1"
+                                   id="auto_build" name="auto_build">
+                            <label class="form-check-label" for="auto_build">
+                                <strong>Run it straight through</strong> &mdash; don't stop for my approval
+                            </label>
+                            <div class="form-text mb-0">
+                                <strong>Create Task</strong>: starts the agent the moment the task is saved.
+                                Its work still waits for you to approve the merge, so this only skips the Run click.
+                                <br>
+                                <strong>Decompose into plan</strong>: approves the plan as soon as it lands and starts
+                                the build. Plan subtasks merge into the project themselves as they pass &mdash;
+                                so ticking this means code lands in
+                                <strong><?= htmlspecialchars((string)($instance['tag'] ?? 'this project')) ?></strong>
+                                without anyone having read the plan first. Reviewing the plan is the only
+                                point at which you can stop it cheaply.
+                            </div>
+                        </div>
+
                         <div class="d-flex gap-2 align-items-center flex-wrap">
                             <button type="submit" class="btn btn-primary">
                                 <i class="bi bi-plus-lg"></i> Create Task

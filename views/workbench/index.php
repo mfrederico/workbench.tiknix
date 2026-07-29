@@ -241,6 +241,7 @@
                         'tag'         => $m['instanceTag'],
                         'status'      => $m['planStatus'] ?: $m['status'],
                         'plan_status' => $m['planStatus'] ?: '',
+                        'auto_build'  => !empty($m['autoBuild']),
                         'url'         => '/workbench/view?id=' . $pid,
                         'taskIds'     => $groupPendingIds['plan:' . $pid] ?? [],
                     ];
@@ -406,6 +407,11 @@
                                  + '<i class="bi bi-'+icon+'"></i>' + (label ? ' '+label : '') + '</button>';
                         };
                         var out = '';
+                        // Straight-through plans skipped the Approve/Build clicks, so mark
+                        // them: "building" alone reads as something you started.
+                        if (m.auto_build) out += '<span class="badge bg-warning-subtle text-warning-emphasis border border-warning-subtle ms-1"'
+                                              + ' title="Approved and started automatically — &quot;Run it straight through&quot; was ticked when this was decomposed">'
+                                              + '<i class="bi bi-lightning-charge-fill"></i> Auto</span>';
                         if (ps === 'draft')                             out += btn('btn-outline-info',   'wb-plan-approve', 'check2-circle', 'Approve');
                         else if (ps === 'approved' || ps === 'stalled') out += btn('btn-info',           'wb-plan-build',   'play-fill',     'Build');
                         else if (ps === 'building')                     out += '<span class="badge bg-primary ms-1"><span class="spinner-border spinner-border-sm me-1" role="status"></span>Building</span>';

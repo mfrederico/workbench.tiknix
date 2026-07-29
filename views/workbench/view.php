@@ -862,10 +862,14 @@ async function taskRetry(id, btn) {
 }
 
 // Task actions
-async function runTask(id) {
-    const btn = event.target;
-    btn.disabled = true;
-    btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Starting...';
+// btnEl is optional: the Run button passes nothing and we take it from the click event,
+// but the auto-run bootstrap at the bottom of this file calls it with no event at all.
+async function runTask(id, btnEl) {
+    const btn = btnEl || (typeof event !== 'undefined' && event ? event.target : null);
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Starting...';
+    }
 
     try {
         const formData = new FormData();
@@ -883,13 +887,17 @@ async function runTask(id) {
             location.reload();
         } else {
             alert('Error: ' + data.message);
-            btn.disabled = false;
-            btn.innerHTML = '<i class="bi bi-play-fill"></i> Run with Claude';
+            if (btn) {
+                btn.disabled = false;
+                btn.innerHTML = '<i class="bi bi-play-fill"></i> Run with Claude';
+            }
         }
     } catch (e) {
         alert('Error: ' + e.message);
-        btn.disabled = false;
-        btn.innerHTML = '<i class="bi bi-play-fill"></i> Run with Claude';
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = '<i class="bi bi-play-fill"></i> Run with Claude';
+        }
     }
 }
 
@@ -1617,6 +1625,30 @@ async function declineTask(id) {
         btn.innerHTML = originalHtml;
     }
 }
+
+// Straight-through: /workbench/store redirects here with ?autorun=1 when "Run it straight
+// through" was ticked. Firing the real Run path rather than duplicating it means the auto
+// start gets the same guards, the same workspace creation and the same failure messages as
+// the button — and if the task is not runnable, runTask says so out loud instead of the
+// page quietly doing nothing.
+//
+// The flag is stripped from the URL FIRST, so a refresh (or the reload runTask does on
+// success) cannot fire a second run.
+(function () {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('autorun') !== '1') return;
+    params.delete('autorun');
+    const clean = window.location.pathname + (params.toString() ? '?' + params.toString() : '');
+    window.history.replaceState({}, '', clean);
+
+    const status = <?= json_encode((string)$task->status) ?>;
+    const canRun = <?= $canRun ? 'true' : 'false' ?>;
+    if (!canRun || !['pending', 'failed'].includes(status)) {
+        alert('Auto-run was requested, but this task is "' + status + '" and cannot be started.');
+        return;
+    }
+    runTask(<?= (int)$task->id ?>, document.querySelector('button[onclick^="runTask("]'));
+})();
 </script>
 
 <!-- Decline Modal -->

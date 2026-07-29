@@ -19,6 +19,7 @@ use \app\PortManager;
 use \app\TmuxManager;
 use \app\PlanRunner;
 use \app\PlanExecutor;
+use \app\PlanOrchestrator;
 use \app\WorkspaceManager;
 use \app\EngineRegistry;
 use \app\MemberEnginePrefs;
@@ -104,6 +105,10 @@ class Workbench extends BuildControl {
                     'instanceTag' => $p->instanceTag,
                     'status'      => $p->status,
                     'planStatus'  => $p->planStatus,
+                    // A plan that approved itself and started building without anyone
+                    // clicking Build should say so on the board — otherwise the first
+                    // sign of it is code already landing in the project.
+                    'autoBuild'   => !empty($p->autoBuild),
                 ];
             }
         }
@@ -291,6 +296,19 @@ class Workbench extends BuildControl {
                 'member_id' => $this->member->id
             ]);
 
+            // Straight-through on a single task means "don't make me open it and press
+            // Run". The run itself is the existing /workbench/run path, fired by the task
+            // page on arrival — deliberately, so a single task starts through exactly the
+            // code the Run button uses, with the same guards, and nothing here has to
+            // duplicate workspace creation. (A plan differs: it is started server-side by
+            // the ingest step, because a decompose finishes minutes after you close the tab.)
+            if ($this->wantsAutoBuild()) {
+                $this->logTaskEvent($task->id, 'info', 'user', 'Auto-run requested at creation.');
+                $this->flash('success', 'Task created — starting the agent now.');
+                Flight::redirect('/workbench/view?id=' . $task->id . '&autorun=1');
+                return;
+            }
+
             $this->flash('success', 'Task created successfully');
             Flight::redirect('/workbench/view?id=' . $task->id);
 
@@ -299,6 +317,19 @@ class Workbench extends BuildControl {
             $this->flash('error', 'Failed to create task');
             Flight::redirect('/workbench/create');
         }
+    }
+
+    /**
+     * Did the member tick "approve and run straight through" on the create form?
+     *
+     * One checkbox serves both submit buttons — Create Task auto-runs the agent, Decompose
+     * auto-approves and builds the plan — because from where the member sits it is the same
+     * request: don't stop and ask me again. It waives the gate BEFORE work starts; it never
+     * waives the one after, so a finished task still waits for a human to approve the merge.
+     */
+    private function wantsAutoBuild(): bool {
+        $v = $this->getParam('auto_build', '');
+        return in_array((string)$v, ['1', 'on', 'true', 'yes'], true);
     }
 
     /**
@@ -358,12 +389,17 @@ class Workbench extends BuildControl {
             return;
         }
 
+        // Straight-through: skip the Approve + Build clicks and let the plan start itself
+        // the moment it is ingested. Opt-in per submission and deliberately not sticky —
+        // it lands agent-written code in the instance with nobody having read the plan.
+        $autoBuild = $this->wantsAutoBuild();
+
         try {
             $runner = new PlanRunner(
                 $slug, $instanceDir, (int)$this->member->id,
                 (int)$this->member->level, (string)($instance->engine ?: 'claude')
             );
-            $runner->start($goal);
+            $runner->start($goal, [], $autoBuild);
         } catch (\Throwable $e) {
             $this->logger->error('Workbench decompose failed', ['error' => $e->getMessage(), 'instance' => $slug]);
             $this->flash('error', 'Could not start the planner: ' . $e->getMessage());
@@ -371,11 +407,15 @@ class Workbench extends BuildControl {
             return;
         }
 
-        $this->logger->info('Workbench decompose started', ['instance' => $slug, 'member_id' => $this->member->id]);
+        $this->logger->info('Workbench decompose started', [
+            'instance' => $slug, 'member_id' => $this->member->id, 'auto_build' => $autoBuild,
+        ]);
         // Stay in the Workbench: the planner ingests itself when it finishes
         // (scripts/plan-ingest.php), so the plan appears here automatically. The
         // decomposing banner polls and refreshes the list when it lands.
-        $this->flash('info', 'Decomposing your goal for ' . $slug . '.' . $app . ' — the plan will appear here shortly.');
+        $this->flash('info', $autoBuild
+            ? 'Decomposing your goal for ' . $slug . '.' . $app . ' — it will approve itself and start building as soon as the plan lands.'
+            : 'Decomposing your goal for ' . $slug . '.' . $app . ' — the plan will appear here shortly.');
         // Just ?decomposing=1: the board is already the selected project's board, so
         // naming an instance here would be repeating the selection back at it.
         Flight::redirect('/workbench?decomposing=1');
@@ -538,44 +578,15 @@ class Workbench extends BuildControl {
     /**
      * Launch the detached worktree orchestrator for a plan. Returns true on success.
      *
-     * The orchestrator CLI lives in CORE, not in this sidecar — the controller moved out
-     * during the extraction and this path did not, so it pointed at
-     * workbench.tiknix/scripts/plan-orchestrate.php, which does not exist. tmux started
-     * happily, php said "Could not open input file", the session ended in under a second,
-     * and the plan sat at "building" with nine pending subtasks and no explanation.
-     *
-     * Hence the existence check: a launcher that reports success for a command that
-     * cannot run is worse than one that fails, because the failure is recorded as
-     * progress.
+     * The launch itself lives in core (app\PlanOrchestrator) because four copies of it
+     * existed and had drifted — see that class. This wrapper is just "which instance,
+     * which member level".
      */
     private function startOrchestrator($plan, $inst): bool {
         $dir = '/var/www/html/default/' . $inst->slug . '.' . ($inst->app ?: 'tiknix');
-
-        $coreRoot = rtrim((string) Flight::get('sidecar.core_root'), '/');
-        $orchestrator = $coreRoot . '/scripts/plan-orchestrate.php';
-        if ($coreRoot === '' || !is_file($orchestrator)) {
-            $this->logger->error('orchestrator script missing', [
-                'looked_for' => $orchestrator, 'core_root' => $coreRoot, 'plan' => (int) $plan->id,
-            ]);
-            return false;
-        }
-
-        $cmd = 'php ' . escapeshellarg($orchestrator)
-             . ' --plan=' . (int)$plan->id
-             . ' --slug=' . escapeshellarg((string)$inst->slug)
-             . ' --dir='  . escapeshellarg($dir)
-             . ' --model=sonnet'
-             . ' --level=' . (int)$this->member->level;
-        $ab = $dir . '/.aibuilder';
-        @mkdir($ab, 0775, true);
-        $scriptFile = $ab . '/run-orchestrator.sh';
-        // Propagate the per-instance workbench.db so plan-orchestrate's bootstrap writes there.
-        $wsDbEnv  = getenv('TIKNIX_WORKBENCH_DB');
-        $wsExport = ($wsDbEnv !== false && $wsDbEnv !== '')
-            ? 'export TIKNIX_WORKBENCH_DB=' . escapeshellarg($wsDbEnv) . "\n" : '';
-        file_put_contents($scriptFile, "#!/bin/bash\n" . $wsExport . $cmd . ' 2>&1 | tee ' . escapeshellarg($ab . '/orchestrator.log') . "\n");
-        @chmod($scriptFile, 0755);
-        return TmuxManager::create('tiknix-plan' . (int)$plan->id . '-orchestrator', $scriptFile, $dir);
+        return PlanOrchestrator::launch(
+            (int) $plan->id, (string) $inst->slug, $dir, (int) $this->member->level
+        );
     }
 
     /**
@@ -659,8 +670,10 @@ class Workbench extends BuildControl {
      * for a failure that was knowable before the click.
      */
     private function agentSignedIn(string $dir, string $engine): bool {
-        $engine = preg_replace('/[^a-z0-9_-]/i', '', $engine) ?: 'claude';
-        return is_file(rtrim($dir, '/') . '/.aibuilder/state/' . $engine . '/.credentials.json');
+        // One rule, in core: the member's own store first, the project's as the legacy
+        // fallback. Asking here in a different way than the runners answer it is how a
+        // form ends up promising a build that cannot start.
+        return \app\AgentState::signedIn((int) $this->member->id, $engine, $dir);
     }
 
     /**
