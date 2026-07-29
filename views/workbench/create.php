@@ -1,3 +1,37 @@
+<style>
+/* The straight-through opt-in: the whole panel is the control.
+   Colours come from Bootstrap 5.3's subtle/emphasis variables rather than fixed
+   hex, so the checked state reads correctly in both the light and dark themes
+   instead of being a green that only works in one of them. */
+.wb-straight {
+    cursor: pointer;
+    transition: background-color .15s ease-in-out, border-color .15s ease-in-out;
+}
+.wb-straight:hover { border-color: var(--bs-secondary-border-subtle); }
+
+/* :has() lets the panel react to its own checkbox with no JS to fall out of sync
+   with the input's real state. */
+.wb-straight:has(#auto_build:checked) {
+    background-color: var(--bs-success-bg-subtle) !important;
+    border-color: var(--bs-success-border-subtle) !important;
+}
+.wb-straight:has(#auto_build:checked) .wb-straight-title { color: var(--bs-success-text-emphasis); }
+
+/* Match the tick to the panel — the Bootstrap default is primary blue, which
+   would be the one blue thing inside a green box. */
+.wb-straight .form-check-input:checked {
+    background-color: var(--bs-success);
+    border-color: var(--bs-success);
+}
+/* Keyboard users get the focus ring on the PANEL, since that is what now reads as
+   the control; the input's own ring would be a 16px halo inside a 700px target. */
+.wb-straight:has(#auto_build:focus-visible) {
+    box-shadow: 0 0 0 .25rem rgba(var(--bs-success-rgb), .25);
+    border-color: var(--bs-success-border-subtle);
+}
+.wb-straight .form-check-input:focus { box-shadow: none; }
+</style>
+
 <div class="container py-4">
     <div class="row justify-content-center">
         <div class="col-lg-8">
@@ -192,25 +226,35 @@
 
                         <!-- Straight-through. Deliberately unchecked on every load: it is a
                              per-submission choice, not a preference, because it commits agent
-                             work without anyone reading the plan first. -->
-                        <div class="form-check mb-3 p-3 border rounded bg-body-tertiary">
-                            <input class="form-check-input" type="checkbox" value="1"
+                             work without anyone reading the plan first.
+
+                             The whole panel is the control: a <label> wrapping the input, so
+                             every pixel of it toggles. NOTE it is deliberately NOT .form-check
+                             — that class pairs padding-left:1.5rem on the container with
+                             margin-left:-1.5rem on the input, so adding p-3 (padding:1rem)
+                             overrode the padding but not the negative margin and the box
+                             floated 7px outside its own left border. Flex does the layout
+                             here instead, which cannot drift the same way. -->
+                        <label class="wb-straight d-flex gap-3 mb-3 p-3 border rounded bg-body-tertiary">
+                            <input class="form-check-input flex-shrink-0 mt-1" type="checkbox" value="1"
                                    id="auto_build" name="auto_build">
-                            <label class="form-check-label" for="auto_build">
-                                <strong>Run it straight through</strong> &mdash; don't stop for my approval
-                            </label>
-                            <div class="form-text mb-0">
-                                <strong>Create Task</strong>: starts the agent the moment the task is saved.
-                                Its work still waits for you to approve the merge, so this only skips the Run click.
-                                <br>
-                                <strong>Decompose into plan</strong>: approves the plan as soon as it lands and starts
-                                the build. Plan subtasks merge into the project themselves as they pass &mdash;
-                                so ticking this means code lands in
-                                <strong><?= htmlspecialchars((string)($instance['tag'] ?? 'this project')) ?></strong>
-                                without anyone having read the plan first. Reviewing the plan is the only
-                                point at which you can stop it cheaply.
-                            </div>
-                        </div>
+                            <span>
+                                <span class="wb-straight-title">
+                                    <strong>Run it straight through</strong> &mdash; don't stop for my approval
+                                </span>
+                                <span class="form-text d-block mb-0">
+                                    <strong>Create Task</strong>: starts the agent the moment the task is saved.
+                                    Its work still waits for you to approve the merge, so this only skips the Run click.
+                                    <br>
+                                    <strong>Decompose into plan</strong>: approves the plan as soon as it lands and starts
+                                    the build. Plan subtasks merge into the project themselves as they pass &mdash;
+                                    so ticking this means code lands in
+                                    <strong><?= htmlspecialchars((string)($instance['tag'] ?? 'this project')) ?></strong>
+                                    without anyone having read the plan first. Reviewing the plan is the only
+                                    point at which you can stop it cheaply.
+                                </span>
+                            </span>
+                        </label>
 
                         <div class="d-flex gap-2 align-items-center flex-wrap">
                             <button type="submit" class="btn btn-primary">
