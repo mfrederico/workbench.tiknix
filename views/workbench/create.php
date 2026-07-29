@@ -90,7 +90,7 @@
                                     <i class="bi bi-exclamation-triangle me-1"></i>
                                     <strong>This project has not signed in to Claude yet.</strong>
                                     Agents run inside this project's own jail with its own credentials, so
-                                    open the <a href="/aibuilder">Advanced Builder</a> and run <code>/login</code>
+                                    open the <a href="/aibuilder">Terminal</a> and run <code>/login</code>
                                     in its terminal once. Until then a plan cannot be decomposed or built.
                                 </div>
                             <?php endif; ?>
@@ -268,7 +268,7 @@
                         </div>
                         <div class="form-text mt-2">
                             <strong>Create Task</strong> saves a single task. <strong>Decompose into plan</strong>
-                            feeds the Description (e.g. your uploaded <code>.md</code> goal document) to the Advanced Builder
+                            feeds the Description (e.g. your uploaded <code>.md</code> goal document) to the Builder
                             planner, which breaks it into a multi-agent plan for the chosen instance to review, approve, and build.
                         </div>
                     </form>

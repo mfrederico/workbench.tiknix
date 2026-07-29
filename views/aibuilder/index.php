@@ -48,7 +48,7 @@ foreach ($instances as $__i) { if (!empty($__i->isDefault)) { $hasDefault = true
 <div class="container-fluid py-4">
   <div class="d-flex flex-wrap align-items-center justify-content-between gap-3 mb-3">
     <div>
-      <h1 class="h3 fw-bold mb-0"><i class="bi bi-robot me-2"></i>Advanced Builder</h1>
+      <h1 class="h3 fw-bold mb-0"><i class="bi bi-robot me-2"></i>Terminal</h1>
       <p class="text-body-secondary mb-0">Build software with AI. Every instance is sandboxed — checkpoint and roll back any change.</p>
     </div>
     <?php

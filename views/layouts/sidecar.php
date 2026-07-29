@@ -6,7 +6,10 @@
  * shell can size the frame (Kit convention).
  */
 $title = htmlspecialchars($title ?? 'Task Board');
-// Which of the sidecar's two facets is active (board vs AI Builder), for the tab bar.
+// Which of the sidecar's two facets is active (board vs Terminal), for the tab bar.
+// The route stays /aibuilder — this renames the LABEL only, because the plugin itself
+// is now called "Builder" in the nav and a tab inside it called "AI Builder" read as
+// though it were a different thing again.
 $__p = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/';
 $__onBuilder = strpos($__p, '/aibuilder') === 0;
 ?><!doctype html>
@@ -24,7 +27,7 @@ $__onBuilder = strpos($__p, '/aibuilder') === 0;
   <span class="navbar-brand fw-semibold d-flex align-items-center gap-1" style="font-size:.95rem"><i class="bi bi-hammer"></i> Build</span>
   <ul class="nav nav-pills ms-2 gap-1">
     <li class="nav-item"><a class="nav-link py-1 px-2 <?= $__onBuilder ? '' : 'active' ?>" href="/workbench"><i class="bi bi-kanban me-1"></i>Task Board</a></li>
-    <li class="nav-item"><a class="nav-link py-1 px-2 <?= $__onBuilder ? 'active' : '' ?>" href="/aibuilder"><i class="bi bi-robot me-1"></i>AI Builder</a></li>
+    <li class="nav-item"><a class="nav-link py-1 px-2 <?= $__onBuilder ? 'active' : '' ?>" href="/aibuilder"><i class="bi bi-robot me-1"></i>Terminal</a></li>
   </ul>
 </nav>
 <?= $ws_body ?? '' ?>

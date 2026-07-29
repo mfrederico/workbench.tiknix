@@ -384,7 +384,7 @@ class Workbench extends BuildControl {
         // Say it BEFORE spending five minutes failing at it.
         if (!$this->agentSignedIn($instanceDir, (string) ($instance->engine ?: 'claude'))) {
             $this->flash('error', 'This project has not signed in to Claude yet, so the planner cannot run. '
-                . 'Open the Advanced Builder with this project selected and run /login in its terminal, then try again.');
+                . 'Open the Terminal tab with this project selected and run /login there, then try again.');
             Flight::redirect('/aibuilder');
             return;
         }

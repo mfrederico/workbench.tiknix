@@ -298,7 +298,7 @@ class Aibuilder extends BuildControl {
 
         $cfg = $this->cfg();
         $this->render('aibuilder/index', [
-            'title'            => 'Advanced Builder',
+            'title'            => 'Terminal',
             'instances'        => array_values($instances),
             'shareTeams'       => array_values($shareTeams),
             'ab_memberId'      => $mid,
