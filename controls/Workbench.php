@@ -50,6 +50,20 @@ class Workbench extends BuildControl {
     }
 
     /**
+     * CORE's public URL — the opposite preference to serverBaseurl().
+     *
+     * Anything an agent must REACH over HTTP that is served by core (today: the MCP
+     * endpoint) has to be addressed at core's host. This sidecar's own app.baseurl is
+     * workbench.tiknix.com, which serves no /mcp/message, so using it wrote a workspace
+     * .mcp.json aimed at a 403.
+     */
+    protected function coreBaseUrl(): string {
+        return rtrim((string) (Flight::get('sidecar.core_url')
+            ?: Flight::get('app.baseurl')
+            ?: 'https://tiknix.com'), '/');
+    }
+
+    /**
      * Task dashboard
      */
     public function index($params = []) {
@@ -1430,7 +1444,11 @@ class Workbench extends BuildControl {
         if ($workspacePath && is_dir($workspacePath)) {
             try {
                 $apiKey = $this->getOrCreateWorkbenchApiKey($this->member->id);
-                $baseUrl = Flight::get('app.baseurl') ?? 'https://dev.tiknix.com';
+                // CORE's url, not this sidecar's. /mcp/message is served by core's
+                // controls/Mcp.php; the sidecar has no Mcp controller at all, so
+                // app.baseurl (workbench.tiknix.com) produced a .mcp.json pointing at
+                // an endpoint that answers 403 — every agent tool call dead on arrival.
+                $baseUrl = $this->coreBaseUrl();
                 $this->generateWorkspaceMcpConfig($workspacePath, $apiKey, $baseUrl);
                 $this->logTaskEvent($taskId, 'info', 'system', "Generated .mcp.json with baseurl: {$baseUrl}");
             } catch (Exception $e) {
@@ -1606,7 +1624,11 @@ class Workbench extends BuildControl {
         if ($workspacePath && is_dir($workspacePath)) {
             try {
                 $apiKey = $this->getOrCreateWorkbenchApiKey($this->member->id);
-                $baseUrl = Flight::get('app.baseurl') ?? 'https://dev.tiknix.com';
+                // CORE's url, not this sidecar's. /mcp/message is served by core's
+                // controls/Mcp.php; the sidecar has no Mcp controller at all, so
+                // app.baseurl (workbench.tiknix.com) produced a .mcp.json pointing at
+                // an endpoint that answers 403 — every agent tool call dead on arrival.
+                $baseUrl = $this->coreBaseUrl();
                 $this->generateWorkspaceMcpConfig($workspacePath, $apiKey, $baseUrl);
                 $this->logTaskEvent($taskId, 'info', 'system', "Regenerated .mcp.json for re-run");
             } catch (Exception $e) {
@@ -1785,7 +1807,11 @@ class Workbench extends BuildControl {
             if ($runner->exists()) { $runner->kill(); usleep(400000); }
             try {
                 $apiKey  = $this->getOrCreateWorkbenchApiKey($this->member->id);
-                $baseUrl = Flight::get('app.baseurl') ?? 'https://dev.tiknix.com';
+                // CORE's url, not this sidecar's. /mcp/message is served by core's
+                // controls/Mcp.php; the sidecar has no Mcp controller at all, so
+                // app.baseurl (workbench.tiknix.com) produced a .mcp.json pointing at
+                // an endpoint that answers 403 — every agent tool call dead on arrival.
+                $baseUrl = $this->coreBaseUrl();
                 $this->generateWorkspaceMcpConfig($ws, $apiKey, $baseUrl);
             } catch (Exception $e) { /* non-fatal */ }
 
@@ -3680,42 +3706,44 @@ class Workbench extends BuildControl {
     private function getOrCreateWorkbenchApiKey(int $memberId): ?string {
         $keyName = 'Workbench Auto-Key';
 
-        // Check for existing workbench key
-        $existingKey = Bean::findOne('apikey',
-            'member_id = ? AND name = ? AND is_active = 1 AND (expires_at IS NULL OR expires_at > ?)',
-            [$memberId, $keyName, date('Y-m-d H:i:s')]
-        );
+        // IN CORE'S DATABASE, not this sidecar's ambient one.
+        //
+        // This ran on the default connection, which in the sidecar is the INSTANCE's
+        // data/workbench.db — but /mcp/message lives in core and validates the bearer
+        // against CORE's apikey table. So every task agent was handed a token that existed
+        // nowhere the endpoint could see it: the key "created" fine, the config looked
+        // right, and every mcp__tiknix__* call failed with "Authentication required".
+        // Agents noticed and said so ("complete_task wasn't available in this session"),
+        // which is why finished tasks sat at 'running' forever.
+        return \app\CoreDb::with(function () use ($memberId, $keyName) {
+            $existing = \RedBeanPHP\R::findOne('apikey',
+                'member_id = ? AND name = ? AND is_active = 1 AND (expires_at IS NULL OR expires_at > ?)',
+                [$memberId, $keyName, date('Y-m-d H:i:s')]
+            );
+            if ($existing && $existing->id) return (string) $existing->token;
 
-        if ($existingKey) {
-            return $existingKey->token;
-        }
+            $key = \RedBeanPHP\R::dispense('apikey');
+            $key->memberId       = $memberId;
+            $key->name           = $keyName;
+            $key->token          = 'tk_' . bin2hex(random_bytes(32));
+            $key->scopes         = json_encode(['mcp:tools']);   // MCP tools only
+            $key->allowedServers = json_encode([]);              // all servers
+            $key->isActive       = 1;
+            $key->expiresAt      = date('Y-m-d H:i:s', strtotime('+1 year'));
+            $key->createdAt      = date('Y-m-d H:i:s');
+            $key->usageCount     = 0;
+            \RedBeanPHP\R::store($key);
 
-        // Create new workbench API key
-        try {
-            $key = Bean::dispense('apikey');
-            $key->memberId = $memberId;
-            $key->name = $keyName;
-            $key->token = 'tk_' . bin2hex(random_bytes(32));
-            $key->scopes = json_encode(['mcp:tools']); // Limited to MCP tools only
-            $key->allowedServers = json_encode([]); // All servers
-            $key->isActive = 1;
-            $key->expiresAt = date('Y-m-d H:i:s', strtotime('+1 year')); // 1 year expiry
-            $key->createdAt = date('Y-m-d H:i:s');
-            $key->usageCount = 0;
-            Bean::store($key);
-
-            $this->logger->info('Created workbench API key', [
-                'member_id' => $memberId,
-                'key_id' => $key->id
+            $this->logger->info('Created workbench API key in core db', [
+                'member_id' => $memberId, 'key_id' => $key->id,
             ]);
-
-            return $key->token;
-        } catch (Exception $e) {
-            $this->logger->error('Failed to create workbench API key', [
-                'member_id' => $memberId,
-                'error' => $e->getMessage()
+            return (string) $key->token;
+        }, null) ?: (function () use ($memberId) {
+            // Loud: without a key every agent tool call in the workspace will 401.
+            $this->logger->error('Could not mint a workbench API key', [
+                'member_id' => $memberId, 'error' => \app\CoreDb::lastError(),
             ]);
             return null;
-        }
+        })();
     }
 }
