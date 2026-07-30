@@ -6,12 +6,15 @@
  * shell can size the frame (Kit convention).
  */
 $title = htmlspecialchars($title ?? 'Task Board');
-// Which of the sidecar's two facets is active (board vs Terminal), for the tab bar.
-// The route stays /aibuilder — this renames the LABEL only, because the plugin itself
-// is now called "Builder" in the nav and a tab inside it called "AI Builder" read as
-// though it were a different thing again.
+// Which of the sidecar's facets is active, for the tab bar. The route stays /aibuilder —
+// the "Terminal" rename is a LABEL only, because the plugin itself is now called "Builder"
+// in the nav and a tab inside it called "AI Builder" read as though it were a different
+// thing again.
 $__p = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/';
 $__onBuilder = strpos($__p, '/aibuilder') === 0;
+// Prompts must be matched BEFORE the board: it lives under /workbench/… too, so a plain
+// prefix test would light up the Task Board tab while you are looking at prompts.
+$__facet = $__onBuilder ? 'builder' : (strpos($__p, '/workbench/prompts') === 0 ? 'prompts' : 'board');
 ?><!doctype html>
 <html lang="en" data-bs-theme="light">
 <head>
@@ -26,8 +29,12 @@ $__onBuilder = strpos($__p, '/aibuilder') === 0;
 <nav class="navbar navbar-expand bg-body-tertiary border-bottom px-3 py-1">
   <span class="navbar-brand fw-semibold d-flex align-items-center gap-1" style="font-size:.95rem"><i class="bi bi-hammer"></i> Build</span>
   <ul class="nav nav-pills ms-2 gap-1">
-    <li class="nav-item"><a class="nav-link py-1 px-2 <?= $__onBuilder ? '' : 'active' ?>" href="/workbench"><i class="bi bi-kanban me-1"></i>Task Board</a></li>
+    <li class="nav-item"><a class="nav-link py-1 px-2 <?= $__facet === 'board' ? 'active' : '' ?>" href="/workbench"><i class="bi bi-kanban me-1"></i>Task Board</a></li>
     <li class="nav-item"><a class="nav-link py-1 px-2 <?= $__onBuilder ? 'active' : '' ?>" href="/aibuilder"><i class="bi bi-robot me-1"></i>Terminal</a></li>
+    <?php /* The prompt log belongs beside the two surfaces that produce it — the board's
+             forms and the Terminal — rather than in core's nav, which is where you pick a
+             project rather than work on one. */ ?>
+    <li class="nav-item"><a class="nav-link py-1 px-2 <?= (($__facet ?? '') === 'prompts') ? 'active' : '' ?>" href="/workbench/prompts"><i class="bi bi-chat-left-quote me-1"></i>Prompts</a></li>
   </ul>
 </nav>
 <?= $ws_body ?? '' ?>

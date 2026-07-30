@@ -414,7 +414,7 @@ class Workbench extends BuildControl {
         // overwritten by the next decompose and the copy on the plan only exists if the
         // planner survived to be ingested — so a planner that dies used to take the thing
         // you wrote with it. This is the record that survives regardless.
-        \app\PromptLog::record([
+        $promptId = \app\PromptLog::record([
             'member_id'    => (int) $this->member->id,
             'source'       => \app\PromptLog::SOURCE_DECOMPOSE,
             'title'        => trim($this->getParam('title', '')) ?: 'Decompose',
@@ -428,7 +428,8 @@ class Workbench extends BuildControl {
                 $slug, $instanceDir, (int)$this->member->id,
                 (int)$this->member->level, (string)($instance->engine ?: 'claude')
             );
-            $runner->start($goal, [], $autoBuild);
+            // $promptId travels with it so ingest can link the plan back to this goal.
+            $runner->start($goal, [], $autoBuild, $promptId);
         } catch (\Throwable $e) {
             $this->logger->error('Workbench decompose failed', ['error' => $e->getMessage(), 'instance' => $slug]);
             $this->flash('error', 'Could not start the planner: ' . $e->getMessage());
@@ -3041,6 +3042,67 @@ class Workbench extends BuildControl {
     /**
      * View task logs
      */
+    /**
+     * GET /workbench/prompts — everything you have asked this system to build.
+     *
+     * Lives HERE rather than in core because all three things it records are build
+     * surfaces: the goal you decompose and the task you write are this sidecar's own
+     * forms, and the Terminal is its other tab. Core's nav is where you pick a project;
+     * this is where you work on one.
+     *
+     * It spans EVERY project, though, not just the selected one — a member's prompt
+     * history is theirs, and the moment you scope it to the current project it stops
+     * being the record of how the whole system got built. See app\PromptLog, which keeps
+     * the rows in core's db for exactly that reason.
+     */
+    public function prompts($params = []) {
+        if (!$this->requireLogin()) return;
+
+        $memberId = (int) $this->member->id;
+
+        // Pull in anything typed at the Terminal since the last look. Harvesting on view
+        // keeps it current with no cron, and it is idempotent (each turn carries a uuid).
+        try {
+            $h = \app\PromptLog::harvestTerminal($memberId);
+            // A write that FAILED is the case that matters: without saying so, the page
+            // shows a short list and reads as "you have not written many prompts".
+            if (!empty($h['failed'])) {
+                $this->logger->error('Terminal prompt harvest could not write', [
+                    'failed' => $h['failed'], 'error' => $h['error'], 'member_id' => $memberId,
+                ]);
+                $this->viewData['harvestError'] = $h['failed'] . ' terminal prompt(s) could not be saved: ' . $h['error'];
+            }
+        } catch (\Throwable $e) {
+            $this->logger->error('Terminal prompt harvest failed', ['error' => $e->getMessage(), 'member_id' => $memberId]);
+            $this->viewData['harvestError'] = $e->getMessage();
+        }
+
+        $source = (string) $this->getParam('source', '');
+        $q      = trim((string) $this->getParam('q', ''));
+
+        $rows = \app\PromptLog::forMember($memberId, $source, 500);
+        if ($q !== '') {
+            $needle = mb_strtolower($q);
+            $rows = array_values(array_filter($rows, function ($r) use ($needle) {
+                return mb_strpos(mb_strtolower((string) $r->body), $needle) !== false
+                    || mb_strpos(mb_strtolower((string) $r->title), $needle) !== false;
+            }));
+        }
+
+        $this->viewData['rows']    = $rows;
+        $this->viewData['counts']  = \app\PromptLog::countsForMember($memberId);
+        $this->viewData['sources'] = \app\PromptLog::sources();
+        $this->viewData['source']  = $source;
+        $this->viewData['q']       = $q;
+        // Which project you are on, so a prompt from THIS project can link straight to the
+        // plan it became — a plan id only resolves inside its own instance's db.
+        $inst = $this->selected ? $this->access->instanceMeta((int) $this->selected['id']) : null;
+        $this->viewData['selectedTag'] = ($inst && $inst->id)
+            ? $inst->slug . '.' . ($inst->app ?: 'tiknix') : '';
+
+        $this->render('workbench/prompts', ['title' => 'Prompts']);
+    }
+
     public function logs($params = []) {
         if (!$this->requireLogin()) return;
 
