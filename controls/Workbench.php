@@ -289,6 +289,22 @@ class Workbench extends BuildControl {
             // Log task creation
             $this->logTaskEvent($task->id, 'info', 'user', 'Task created');
 
+            // A task description is a prompt too — it is what the agent is handed. Kept in
+            // the member's prompt log so it is still findable after you have moved on to
+            // the next task, which is the point at which it used to disappear from view.
+            $body = trim($this->getParam('description', ''));
+            if ($body !== '') {
+                \app\PromptLog::record([
+                    'member_id'    => (int) $this->member->id,
+                    'source'       => \app\PromptLog::SOURCE_TASK,
+                    'title'        => $title,
+                    'body'         => $body,
+                    'instance_id'  => (int) $instance->id,
+                    'instance_tag' => (string) $task->instanceTag,
+                    'task_id'      => (int) $task->id,
+                ]);
+            }
+
             $this->logger->info('Task created', [
                 'task_id' => $task->id,
                 'title' => $title,
@@ -393,6 +409,19 @@ class Workbench extends BuildControl {
         // the moment it is ingested. Opt-in per submission and deliberately not sticky —
         // it lands agent-written code in the instance with nobody having read the plan.
         $autoBuild = $this->wantsAutoBuild();
+
+        // Keep the ask BEFORE running the planner, not after it succeeds. The goal file is
+        // overwritten by the next decompose and the copy on the plan only exists if the
+        // planner survived to be ingested — so a planner that dies used to take the thing
+        // you wrote with it. This is the record that survives regardless.
+        \app\PromptLog::record([
+            'member_id'    => (int) $this->member->id,
+            'source'       => \app\PromptLog::SOURCE_DECOMPOSE,
+            'title'        => trim($this->getParam('title', '')) ?: 'Decompose',
+            'body'         => $goal,
+            'instance_id'  => (int) $instance->id,
+            'instance_tag' => $slug . '.' . $app,
+        ]);
 
         try {
             $runner = new PlanRunner(
