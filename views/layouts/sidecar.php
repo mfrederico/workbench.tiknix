@@ -37,6 +37,42 @@ $__facet = $__onBuilder ? 'builder' : (strpos($__p, '/workbench/prompts') === 0 
     <li class="nav-item"><a class="nav-link py-1 px-2 <?= (($__facet ?? '') === 'prompts') ? 'active' : '' ?>" href="/workbench/prompts"><i class="bi bi-chat-left-quote me-1"></i>Prompts</a></li>
   </ul>
 </nav>
+<?php
+/* THE BIG ONE. A session/usage limit blocks every decompose, build and terminal for this
+   member until it resets, and it is the one failure a retry cannot fix — so it belongs
+   above everything, on every surface, not buried in one task's error field. It shows the
+   ENGINE'S OWN WORDS, which already carry the reset time and its timezone; reformatting
+   that into server time is how you end up telling someone "7pm" when their clock says 3. */
+/* $member comes from BuildControl's viewData. NOT Flight::getMember(): that helper is
+   mapped in core and does not exist in this sidecar, so calling it threw — and the
+   try/catch below turned that into a silently missing banner, which is precisely the
+   failure this banner exists to prevent. Hence the explicit log on the way past. */
+$__limit  = null;
+$__mid    = (int) ($member->id ?? 0);
+if ($__mid > 0 && class_exists('\app\AgentLimit')) {
+    try {
+        $__limit = \app\AgentLimit::active($__mid);
+    } catch (\Throwable $e) {
+        $__limit = null;
+        error_log('[sidecar] agent-limit banner could not be resolved: ' . $e->getMessage());
+    }
+}
+?>
+<?php if ($__limit): ?>
+  <div class="alert alert-danger border-danger border-3 rounded-0 mb-0 py-3" role="alert">
+    <div class="container-fluid d-flex align-items-start gap-3">
+      <i class="bi bi-exclamation-octagon-fill fs-3 lh-1"></i>
+      <div>
+        <div class="fw-bold fs-5">Your agent account has hit its limit — nothing will build until it resets.</div>
+        <div class="mt-1"><code><?= htmlspecialchars((string) $__limit['message']) ?></code></div>
+        <div class="small mt-2">
+          Decomposes, builds and terminal sessions will all fail until then, and retrying
+          sooner only spends attempts. Roughly <strong><?= (int) $__limit['minutes'] ?> minute(s)</strong> left by this server's clock.
+        </div>
+      </div>
+    </div>
+  </div>
+<?php endif; ?>
 <?= $ws_body ?? '' ?>
 <script src="https://cdn.jsdelivr.net/npm/jquery@3.7.1/dist/jquery.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
