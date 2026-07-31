@@ -112,12 +112,21 @@
                                 </span>
                             <?php elseif ($src === 'decompose'): ?>
                                 <?php /* Submitted here but never produced a plan. Almost always the refusal in
-                                         PlanRunner::start — a planner or ad-hoc task was already running for that
-                                         project — and nothing retried it afterwards. */ ?>
+                                         PlanRunner::start — a planner was already running for that project.
+                                         A straight-through goal is QUEUED and retries itself; anything else
+                                         waits for the button, because starting it unattended would be
+                                         inventing an instruction nobody gave. */ ?>
                                 <span class="small ms-auto d-flex align-items-center gap-2">
-                                    <span class="badge bg-warning-subtle text-warning-emphasis border border-warning-subtle">
-                                        <i class="bi bi-exclamation-triangle"></i> never ran
-                                    </span>
+                                    <?php if (!empty($r->queuedAt)): ?>
+                                        <span class="badge bg-info-subtle text-info-emphasis border border-info-subtle"
+                                              title="Queued <?= htmlspecialchars((string) $r->queuedAt) ?> — retries automatically when this project frees up (attempt <?= (int) $r->queueAttempts ?> of 3)">
+                                            <i class="bi bi-hourglass-split"></i> queued, retrying
+                                        </span>
+                                    <?php else: ?>
+                                        <span class="badge bg-warning-subtle text-warning-emphasis border border-warning-subtle">
+                                            <i class="bi bi-exclamation-triangle"></i> never ran
+                                        </span>
+                                    <?php endif; ?>
                                     <button type="button" class="btn btn-sm btn-outline-primary py-0 prompt-rerun"
                                             data-prompt="<?= (int) $r->id ?>"
                                             title="Decompose this goal again for <?= htmlspecialchars($tag) ?>">

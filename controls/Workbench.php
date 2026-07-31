@@ -448,6 +448,21 @@ class Workbench extends BuildControl {
             // $promptId travels with it so ingest can link the plan back to this goal.
             $runner->start($goal, [], $autoBuild, $promptId);
         } catch (\Throwable $e) {
+            // Busy project + straight-through = queue it. "Don't stop and ask me" is an
+            // instruction that outlives the moment the project happened to be occupied,
+            // so the retry finishes what was asked rather than inventing anything. A
+            // decompose without it produces a draft that waits for approval anyway, so
+            // starting one unattended would be inventing an instruction — those get the
+            // manual button on the Prompts page instead.
+            if ($promptId > 0 && \app\PromptQueue::enqueue($promptId, $autoBuild)) {
+                $this->logger->info('Decompose queued for retry', [
+                    'prompt' => $promptId, 'instance' => $slug, 'why' => $e->getMessage(),
+                ]);
+                $this->flash('info', 'That project is busy right now — this goal is queued and will '
+                    . 'decompose itself as soon as it frees up. You can also run it from Prompts.');
+                Flight::redirect('/workbench/prompts?source=decompose');
+                return;
+            }
             $this->logger->error('Workbench decompose failed', ['error' => $e->getMessage(), 'instance' => $slug]);
             $this->flash('error', 'Could not start the planner: ' . $e->getMessage());
             Flight::redirect('/workbench/create');

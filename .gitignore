@@ -11,3 +11,11 @@ data/workbench.db
 
 # sidecar error logs (per Kernel installLogger)
 logs/
+
+# Member-uploaded images attached to tasks and comments — content, not code.
+# 9.5MB of it was sitting untracked; one `git add -A` would have committed the lot.
+public/uploads/
+
+# Playwright output.
+test-results/
+playwright-report/
