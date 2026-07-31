@@ -72,6 +72,25 @@ class WorkbenchAccess {
         return $o;
     }
 
+    /**
+     * The same metadata, found by slug (+app) instead of id.
+     *
+     * Searches only the member's ACCESSIBLE instances, so it inherits instanceMeta's gate
+     * rather than adding a second, weaker way in. Needed because a prompt records what it
+     * was for as a tag ("<slug>.<app>") — the id would be meaningless if that project were
+     * ever rebuilt.
+     */
+    public function instanceBySlug(string $slug, string $app = 'tiknix'): ?object {
+        $slug = strtolower(trim($slug));
+        $app  = strtolower(trim($app)) ?: 'tiknix';
+        foreach ($this->instances as $id => $i) {
+            if (strtolower((string) $i['slug']) !== $slug) continue;
+            if (strtolower((string) ($i['app'] ?: 'tiknix')) !== $app) continue;
+            return $this->instanceMeta((int) $id);
+        }
+        return null;
+    }
+
     /** Team ids a given instance is shared with (core instance_team, read-only). */
     public function teamIdsForInstance(int $instanceId): array {
         if ($instanceId <= 0) return [];

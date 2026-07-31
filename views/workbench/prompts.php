@@ -103,10 +103,26 @@
                                         </span>
                                     <?php endif; ?>
                                 </span>
-                            <?php elseif ($src === 'decompose'): ?>
+                            <?php elseif ($src === 'decompose' && !empty($r->extKey)): ?>
+                                <?php /* Recovered from disk by the backfill: which plan it produced was never
+                                         recorded, so it is not a decompose that failed to fire — nothing to retry. */ ?>
                                 <span class="small ms-auto text-body-secondary"
                                       title="This goal was recovered from disk. Which plan it produced — if any — was not recorded at the time.">
                                     <i class="bi bi-question-circle"></i> plan unknown
+                                </span>
+                            <?php elseif ($src === 'decompose'): ?>
+                                <?php /* Submitted here but never produced a plan. Almost always the refusal in
+                                         PlanRunner::start — a planner or ad-hoc task was already running for that
+                                         project — and nothing retried it afterwards. */ ?>
+                                <span class="small ms-auto d-flex align-items-center gap-2">
+                                    <span class="badge bg-warning-subtle text-warning-emphasis border border-warning-subtle">
+                                        <i class="bi bi-exclamation-triangle"></i> never ran
+                                    </span>
+                                    <button type="button" class="btn btn-sm btn-outline-primary py-0 prompt-rerun"
+                                            data-prompt="<?= (int) $r->id ?>"
+                                            title="Decompose this goal again for <?= htmlspecialchars($tag) ?>">
+                                        <i class="bi bi-arrow-clockwise"></i> Run decompose
+                                    </button>
                                 </span>
                             <?php endif; ?>
                         </div>
@@ -142,6 +158,36 @@
             b.textContent = clipped ? 'Show all' : 'Show less';
         });
     });
+    var csrf = document.querySelector('meta[name="csrf-token"]');
+    document.querySelectorAll('.prompt-rerun').forEach(function (b) {
+        b.addEventListener('click', async function () {
+            var was = b.innerHTML;
+            b.disabled = true;
+            b.innerHTML = '<span class="spinner-border spinner-border-sm"></span> starting…';
+            try {
+                var fd = new FormData();
+                fd.append('prompt_id', b.dataset.prompt);
+                if (csrf) fd.append('_csrf_token', csrf.content);
+                var res = await fetch('/workbench/promptrerun', { method: 'POST', body: fd });
+                var j = await res.json();
+                if (j.success) {
+                    // The planner takes minutes; reloading would just show the same row.
+                    // Say what is happening and leave the page where it is.
+                    b.outerHTML = '<span class="badge bg-info-subtle text-info-emphasis border border-info-subtle">'
+                                + '<i class="bi bi-hourglass-split"></i> decomposing…</span>';
+                    return;
+                }
+                // Refusals here are actionable ("a planner is already running") — show the
+                // server's own words rather than a generic failure.
+                alert(j.message || 'Could not start the decompose.');
+            } catch (e) {
+                alert('Could not start the decompose: ' + e);
+            }
+            b.disabled = false;
+            b.innerHTML = was;
+        });
+    });
+
     document.querySelectorAll('.prompt-copy').forEach(function (b) {
         b.addEventListener('click', function () {
             var el = document.getElementById(b.dataset.target);

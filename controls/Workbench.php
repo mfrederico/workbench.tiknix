@@ -435,6 +435,9 @@ class Workbench extends BuildControl {
             'body'         => $goal,
             'instance_id'  => (int) $instance->id,
             'instance_tag' => $slug . '.' . $app,
+            // Remembered so a later re-run reproduces what you asked for, rather than
+            // quietly downgrading a straight-through decompose into a draft.
+            'auto_build'   => $autoBuild,
         ]);
 
         try {
@@ -3127,6 +3130,78 @@ class Workbench extends BuildControl {
             ? $inst->slug . '.' . ($inst->app ?: 'tiknix') : '';
 
         $this->render('workbench/prompts', ['title' => 'Prompts']);
+    }
+
+    /**
+     * POST /workbench/promptrerun — decompose a goal that never produced a plan. JSON.
+     *
+     * decompose() records the prompt BEFORE starting the planner, deliberately, so the
+     * ask survives a planner that never runs. The commonest way it never runs is the
+     * refusal in PlanRunner::start — "a planner is already running for this instance" —
+     * which happens exactly when you fire a decompose while an ad-hoc task is mid-flight.
+     * Nothing retried it afterwards, so the goal sat in the log while unrelated branches
+     * kept building, and the only recovery was to find the text and paste it again.
+     *
+     * This is that retry, from the stored goal, reproducing the original straight-through
+     * choice rather than quietly downgrading it to a draft.
+     */
+    public function promptrerun($params = []) {
+        if (!$this->planActionGuard()) return;   // login + POST + CSRF
+
+        $promptId = (int) $this->getParam('prompt_id', 0);
+        $p = $promptId > 0 ? \app\PromptLog::find($promptId, (int) $this->member->id) : null;
+        if (!$p) { Flight::jsonError('No such prompt.', 404); return; }
+        if ((string) $p['source'] !== \app\PromptLog::SOURCE_DECOMPOSE) {
+            Flight::jsonError('Only a decompose goal can be re-run.', 409); return;
+        }
+        if (!empty($p['plan_uid'])) {
+            Flight::jsonError('This goal already produced a plan — open it from the board instead.', 409); return;
+        }
+
+        // Resolve the project from the tag recorded WITH the prompt, not from whatever is
+        // selected now: you may well be looking at a different project by the time you
+        // notice the decompose never fired.
+        $tag  = (string) $p['instance_tag'];
+        $slug = (string) strstr($tag, '.', true) ?: $tag;
+        $app  = ltrim((string) strstr($tag, '.'), '.') ?: 'tiknix';
+        $inst = $this->access->instanceBySlug($slug, $app);
+        if (!$inst || !$inst->id || !$this->access->canAccessInstance((int)$this->member->id, (int)$inst->id)) {
+            Flight::jsonError('That project is no longer available to you (' . $tag . ').', 409); return;
+        }
+
+        $dir = '/var/www/html/default/' . $slug . '.' . $app;
+        if (!is_file($dir . '/public/index.php')) {
+            Flight::jsonError('That project is not on disk any more.', 409); return;
+        }
+        if (!$this->agentSignedIn($dir, (string) ($inst->engine ?: 'claude'))) {
+            Flight::jsonError('This project has not signed in to Claude yet, so the planner cannot run.', 409); return;
+        }
+
+        try {
+            $runner = new PlanRunner($slug, $dir, (int)$this->member->id,
+                (int)$this->member->level, (string)($inst->engine ?: 'claude'));
+            // The same refusal that stranded it in the first place. Say so plainly —
+            // "try again when that finishes" is actionable; a generic failure is not.
+            if ($runner->running()) {
+                Flight::jsonError('A planner is already running for ' . $tag . ' — try again when it finishes.', 409);
+                return;
+            }
+            $runner->start((string) $p['body'], [], !empty($p['auto_build']), $promptId);
+        } catch (\Throwable $e) {
+            $this->logger->error('Prompt re-run failed', ['prompt' => $promptId, 'error' => $e->getMessage()]);
+            Flight::jsonError('Could not start the planner: ' . $e->getMessage(), 500);
+            return;
+        }
+
+        $this->logger->info('Prompt re-run started', [
+            'prompt' => $promptId, 'instance' => $tag, 'auto_build' => !empty($p['auto_build']),
+        ]);
+        Flight::jsonSuccess(
+            ['instance' => $tag, 'auto_build' => !empty($p['auto_build'])],
+            'Decomposing again for ' . $tag . (!empty($p['auto_build'])
+                ? ' — it will approve itself and build when the plan lands.'
+                : ' — the plan will appear on the board shortly.')
+        );
     }
 
     public function logs($params = []) {
