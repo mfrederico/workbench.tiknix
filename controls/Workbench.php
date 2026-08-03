@@ -3902,11 +3902,67 @@ class Workbench extends BuildControl {
         return $this->mondayConnection() !== null;
     }
 
+    /**
+     * Ask CORE for this project's decrypted monday token.
+     *
+     * The key that decrypts connection tokens stays in core. This sidecar can read
+     * core's database, so it can already see every customer's ciphertext — being
+     * given the key would let it decrypt all of them, which is a much larger grant
+     * than "let the workbench import from monday". So core hands back exactly one
+     * token, for one connector, on one project, to a request signed with this
+     * sidecar's own shared secret.
+     *
+     * Returns '' on any failure. The caller treats that as "not connected", which
+     * is the honest answer: a token we cannot obtain is one we do not have.
+     */
+    private function mondayToken(int $instanceId): string {
+        static $cache = [];
+        if (isset($cache[$instanceId])) return $cache[$instanceId];
+
+        $coreUrl = rtrim((string) (Flight::get('sidecar.core_url') ?? ''), '/');
+        $secret  = (string) (Flight::get('sidecar.sso_secret') ?? '');
+        if ($coreUrl === '' || $secret === '') return $cache[$instanceId] = '';
+
+        $signed = \app\Sidecar\Token::mint([
+            'instance_id' => $instanceId,
+            'connector'   => 'monday',
+            'member_id'   => (int) $this->member->id,
+        ], $secret, 'connection-token');
+
+        $ch = curl_init($coreUrl . '/brokerinfo/connectiontoken');
+        curl_setopt_array($ch, [
+            CURLOPT_RETURNTRANSFER => true,
+            CURLOPT_TIMEOUT        => 15,
+            CURLOPT_POST           => true,
+            CURLOPT_POSTFIELDS     => http_build_query(['sidecar' => 'workbench', 'token' => $signed]),
+        ]);
+        $body   = curl_exec($ch);
+        $status = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
+
+        $json = json_decode(is_string($body) ? $body : '', true);
+        if ($status !== 200 || !is_array($json) || empty($json['token'])) {
+            Flight::get('log')?->warning('workbench: core would not hand back the monday token', [
+                'status' => $status,
+                'reason' => is_array($json) ? ($json['message'] ?? '') : '',
+            ]);
+            return $cache[$instanceId] = '';
+        }
+
+        return $cache[$instanceId] = (string) $json['token'];
+    }
+
     /** Point MondayImport at this project: its connection, and its already-open db. */
     private function mondayReady(): bool {
         $conn = $this->mondayConnection();
         if (!$conn) return false;
 
+        // The real token comes from core; this sidecar has no key to decrypt with.
+        // Handed over separately rather than written onto the bean, so
+        // ConnectionStore::token() is never asked to decrypt something already plain.
+        $plain = $this->mondayToken((int) $this->selected['id']);
+        if ($plain === '') return false;
+
+        \app\MondayImport::setToken($plain);
         \app\MondayImport::setConnection($conn);
         // BuildControl::selectInstance already pointed RedBean at this project's
         // workbench.db, so MondayImport must not go looking for one of its own.
