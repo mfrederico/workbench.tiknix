@@ -19,6 +19,16 @@
             }
             $createUrl = '/workbench/create' . (!empty($createParams) ? '?' . http_build_query($createParams) : '');
             ?>
+            <?php /* Only when the SELECTED project actually has a live monday
+                     connection. An import button on a project with nowhere to
+                     import from is an offer that fails after the click, and it
+                     invites people to go looking for a setting that is not
+                     missing — the connection belongs to a different project. */ ?>
+            <?php if (!empty($hasMonday)): ?>
+                <a href="/workbench/monday" class="btn btn-outline-primary me-2">
+                    <i class="bi bi-box-arrow-in-down"></i> Import from monday.com
+                </a>
+            <?php endif; ?>
             <a href="<?= $createUrl ?>" class="btn btn-primary">
                 <i class="bi bi-plus-lg"></i> New Task
             </a>

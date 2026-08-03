@@ -160,6 +160,10 @@ class Workbench extends BuildControl {
         $this->viewData['decomposingTag'] = $this->selected
             ? $this->selected['slug'] . '.' . ($this->selected['app'] ?: 'tiknix') : '';
 
+        // Drives the 'Import from monday.com' button: shown only when the
+        // selected project has a live connection.
+        $this->viewData['hasMonday'] = $this->hasMonday();
+
         $this->render('workbench/index', $this->viewData);
     }
 
@@ -3835,5 +3839,222 @@ class Workbench extends BuildControl {
             ]);
             return null;
         })();
+    }
+
+    // ---- monday.com import -------------------------------------------------------
+    //
+    // Reached only when the selected project actually has an active monday
+    // connection — see mondayConnection(). Everything here is scoped to the
+    // SELECTED project: the instance comes from $this->selected, never from the
+    // request, so a crafted id cannot import somebody else's board.
+
+    /**
+     * The selected project's monday connection, or null.
+     *
+     * Answered from CORE, because that is where the Connections hub stores it, and
+     * this sidecar reaches core through its own PDO rather than through app\CoreDb.
+     * Scoped to the instance for the reason ConnectionStore::forInstance exists:
+     * core's table holds every project's rows, and an unscoped read here would show
+     * one customer the boards of another.
+     *
+     * Cached per request — the nav asks, then the action asks again.
+     */
+    private function mondayConnection(): ?\RedBeanPHP\OODBBean {
+        static $cached = false, $conn = null;
+        if ($cached) return $conn;
+        $cached = true;
+
+        if (!$this->selected) return $conn = null;
+
+        try {
+            $pdo = \app\Sidecar\Kernel::coreDb();
+            if (!$pdo) return $conn = null;
+
+            $st = $pdo->prepare(
+                "SELECT id, connector_type, access_token, external_name, instance_id
+                   FROM connections
+                  WHERE instance_id = ? AND connector_type = 'monday' AND enabled = 1
+                    AND (revoked_at IS NULL OR revoked_at = 0)
+                  ORDER BY id DESC LIMIT 1");
+            $st->execute([(int) $this->selected['id']]);
+            $row = $st->fetch(\PDO::FETCH_ASSOC);
+            if (!$row) return $conn = null;
+
+            // Dispensed, never stored — this is a carrier for the fields
+            // ConnectionStore::token() and MondayImport read. Dispense touches no
+            // database, so nothing is created in the workbench db.
+            $b = Bean::dispense('connections');
+            $b->id            = (int) $row['id'];
+            $b->connectorType = (string) $row['connector_type'];
+            $b->accessToken   = (string) $row['access_token'];
+            $b->externalName  = (string) $row['external_name'];
+            $b->instanceId    = (int) $row['instance_id'];
+            return $conn = $b;
+        } catch (\Throwable $e) {
+            Flight::get('log')?->warning('workbench: monday connection lookup failed',
+                ['err' => $e->getMessage()]);
+            return $conn = null;
+        }
+    }
+
+    /** True when the selected project can import from monday — drives the nav. */
+    public function hasMonday(): bool {
+        return $this->mondayConnection() !== null;
+    }
+
+    /** Point MondayImport at this project: its connection, and its already-open db. */
+    private function mondayReady(): bool {
+        $conn = $this->mondayConnection();
+        if (!$conn) return false;
+
+        \app\MondayImport::setConnection($conn);
+        // BuildControl::selectInstance already pointed RedBean at this project's
+        // workbench.db, so MondayImport must not go looking for one of its own.
+        \app\MondayImport::useCurrentDatabase(true);
+        return true;
+    }
+
+    /**
+     * GET /workbench/monday — pick a board, then tick the items to build.
+     */
+    public function monday($params = []) {
+        if (!$this->requireLogin()) return;
+
+        if (!$this->mondayReady()) {
+            $this->flash('error', 'This project has no active monday.com connection.');
+            Flight::redirect('/workbench');
+            return;
+        }
+
+        $instanceId = (int) $this->selected['id'];
+        $boardId    = trim((string) $this->getParam('board', ''));
+        $cursor     = trim((string) $this->getParam('cursor', ''));
+
+        $this->viewData['title']   = 'Import from monday.com';
+        $this->viewData['account'] = (string) $this->mondayConnection()->externalName;
+        $this->viewData['boardId'] = $boardId;
+        $this->viewData['items']   = [];
+        $this->viewData['cursor']  = '';
+        $this->viewData['error']   = '';
+
+        try {
+            $this->viewData['boards'] = \app\MondayImport::boards($instanceId);
+
+            if ($boardId !== '') {
+                $page = \app\MondayImport::items($boardId, 50, $cursor, $instanceId);
+                $this->viewData['items']  = $page['items'];
+                $this->viewData['cursor'] = $page['cursor'];
+            }
+        } catch (\Throwable $e) {
+            // monday's own words. "Complexity budget exhausted, reset in 45 seconds"
+            // and "Not authenticated" need different reactions from whoever reads it.
+            $this->viewData['boards'] = $this->viewData['boards'] ?? [];
+            $this->viewData['error']  = $e->getMessage();
+        }
+
+        $this->render('workbench/monday', $this->viewData);
+    }
+
+    /**
+     * POST /workbench/mondayimport — bring the ticked items in as tasks.
+     *
+     * Each becomes ONE parent task. Decomposition is the existing pipeline, run
+     * afterwards from the board, so imported work goes through the same steps as
+     * anything typed in by hand.
+     */
+    public function mondayimport($params = []) {
+        if (!$this->requireLogin()) return;
+        if (!Flight::csrf()->validateRequest()) {
+            $this->flash('error', 'Session expired, please try again.');
+            Flight::redirect('/workbench/monday');
+            return;
+        }
+        if (!$this->mondayReady()) {
+            $this->flash('error', 'This project has no active monday.com connection.');
+            Flight::redirect('/workbench');
+            return;
+        }
+
+        $boardId = trim((string) $this->getParam('board', ''));
+        $ticked  = (array) ($this->getParam('items', []) ?: []);
+        if (!$ticked) {
+            $this->flash('error', 'Nothing selected.');
+            Flight::redirect('/workbench/monday?board=' . urlencode($boardId));
+            return;
+        }
+
+        $instanceId = (int) $this->selected['id'];
+        $tag        = $this->selected['slug'] . '.' . ($this->selected['app'] ?: 'tiknix');
+
+        try {
+            // Re-read from monday rather than trusting posted names: the form carries
+            // ids, and the title and columns that become the brief should be what the
+            // board says now, not what a page rendered some minutes ago.
+            $page  = \app\MondayImport::items($boardId, 100, '', $instanceId);
+            $byId  = [];
+            foreach ($page['items'] as $i) $byId[(string) $i['id']] = $i + ['board_id' => $boardId];
+
+            $chosen = [];
+            foreach ($ticked as $id) {
+                $id = (string) $id;
+                if (isset($byId[$id])) $chosen[] = $byId[$id];
+            }
+
+            $res = \app\MondayImport::import($chosen, $instanceId, $tag, (int) $this->member->id);
+
+            $msg = $res['created'] . ' task' . ($res['created'] === 1 ? '' : 's') . ' imported';
+            if ($res['skipped']) $msg .= ', ' . $res['skipped'] . ' already here';
+            $this->flash($res['created'] ? 'success' : 'info', $msg . '.');
+        } catch (\Throwable $e) {
+            $this->flash('error', 'monday.com: ' . $e->getMessage());
+            Flight::redirect('/workbench/monday?board=' . urlencode($boardId));
+            return;
+        }
+
+        Flight::redirect('/workbench');
+    }
+
+    /**
+     * POST /workbench/mondaypost — send one task's finished children back.
+     *
+     * Manual and per task, so nothing reaches a client's board unprompted. Creating
+     * subitems adds a subitems column to a board that has never had one, which is a
+     * change to their board and another reason this is not automatic.
+     */
+    public function mondaypost($params = []) {
+        if (!$this->requireLogin()) return;
+        if (!Flight::csrf()->validateRequest()) {
+            $this->flash('error', 'Session expired, please try again.');
+            Flight::redirect('/workbench');
+            return;
+        }
+        if (!$this->mondayReady()) {
+            $this->flash('error', 'This project has no active monday.com connection.');
+            Flight::redirect('/workbench');
+            return;
+        }
+
+        $taskId = (int) $this->getParam('task_id', 0);
+
+        // The task must be one this member can see, in the selected project — the
+        // access check, not the request, decides that.
+        $owner = $this->access->findTaskInstance($taskId);
+        if (!$owner || (int) $owner['id'] !== (int) $this->selected['id']) {
+            $this->flash('error', 'Task not found in this project.');
+            Flight::redirect('/workbench');
+            return;
+        }
+
+        $res = \app\MondayImport::postBack($taskId, (int) $this->selected['id']);
+
+        if (!$res['posted']) {
+            $this->flash('error', $res['reason']);
+        } else {
+            $msg = $res['subitems'] . ' subitem' . ($res['subitems'] === 1 ? '' : 's') . ' posted to monday.com';
+            $this->flash($res['failed'] ? 'error' : 'success',
+                $res['failed'] ? $msg . ', ' . $res['reason'] : $msg . '.');
+        }
+
+        Flight::redirect('/workbench/view?id=' . $taskId);
     }
 }

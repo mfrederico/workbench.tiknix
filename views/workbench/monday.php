@@ -1,0 +1,188 @@
+<?php
+/**
+ * Import from monday.com — pick a board, tick the items to build.
+ *
+ * Only reachable when the selected project has an active monday connection; the
+ * controller redirects otherwise, so nothing here has to consider the empty case.
+ *
+ * Two flags do the work. `imported` marks an item that is already a task here,
+ * so ticking a whole board twice is visibly pointless rather than silently
+ * ignored. `done` marks work monday considers finished — on a real board that is
+ * a good share of it, and importing a completed phase to build it again is the
+ * mistake this page exists to make hard.
+ *
+ * Vars: $boards, $items, $boardId, $cursor, $account, $error, $csrf, $selected
+ */
+?>
+<div class="container-fluid py-3">
+
+  <div class="d-flex align-items-center justify-content-between mb-3">
+    <div>
+      <h1 class="h4 mb-1">Import from monday.com</h1>
+      <div class="text-body-secondary small">
+        <?= htmlspecialchars($account ?: 'monday.com') ?>
+        <?php if (!empty($selected['slug'])): ?>
+          &middot; into <span class="font-monospace"><?= htmlspecialchars($selected['slug']) ?></span>
+        <?php endif; ?>
+      </div>
+    </div>
+    <a href="/workbench" class="btn btn-outline-secondary btn-sm">
+      <i class="bi bi-arrow-left"></i> Task board
+    </a>
+  </div>
+
+  <?php if (!empty($error)): ?>
+    <?php /* monday's own wording — "Complexity budget exhausted, reset in 45
+             seconds" and "Not authenticated" want different reactions, and a
+             friendlier generic message would lose that. */ ?>
+    <div class="alert alert-danger">
+      <i class="bi bi-exclamation-triangle me-1"></i>
+      <?= htmlspecialchars($error) ?>
+    </div>
+  <?php endif; ?>
+
+  <!-- board picker -->
+  <form method="GET" action="/workbench/monday" class="row g-2 align-items-end mb-4">
+    <div class="col-md-7">
+      <label for="board" class="form-label small text-body-secondary mb-1">Board</label>
+      <select name="board" id="board" class="form-select" onchange="this.form.submit()">
+        <option value="">Choose a board…</option>
+        <?php foreach (($boards ?? []) as $b): ?>
+          <option value="<?= htmlspecialchars($b['id']) ?>"
+                  <?= (string) $b['id'] === (string) $boardId ? 'selected' : '' ?>>
+            <?= htmlspecialchars($b['name']) ?>
+            (<?= (int) $b['items_count'] ?> items<?= $b['workspace'] !== '' ? ' · ' . htmlspecialchars($b['workspace']) : '' ?>)
+          </option>
+        <?php endforeach; ?>
+      </select>
+    </div>
+    <div class="col-md-3">
+      <noscript><button class="btn btn-outline-primary">Load items</button></noscript>
+    </div>
+  </form>
+
+  <?php if ($boardId === ''): ?>
+    <p class="text-body-secondary">Pick a board to see what is on it.</p>
+
+  <?php elseif (empty($items)): ?>
+    <p class="text-body-secondary">
+      <?= empty($error) ? 'That board has no items.' : 'Nothing could be loaded.' ?>
+    </p>
+
+  <?php else: ?>
+    <form method="POST" action="/workbench/mondayimport">
+      <?php foreach ($csrf as $name => $value): ?>
+        <input type="hidden" name="<?= $name ?>" value="<?= $value ?>">
+      <?php endforeach; ?>
+      <input type="hidden" name="board" value="<?= htmlspecialchars($boardId) ?>">
+
+      <div class="card">
+        <div class="card-header d-flex align-items-center justify-content-between">
+          <span><?= count($items) ?> item<?= count($items) === 1 ? '' : 's' ?></span>
+          <button type="button" class="btn btn-link btn-sm p-0" id="tickBuildable">
+            Select everything not done or imported
+          </button>
+        </div>
+
+        <ul class="list-group list-group-flush">
+          <?php foreach ($items as $it): ?>
+            <?php $blocked = !empty($it['imported']); ?>
+            <li class="list-group-item">
+              <div class="form-check d-flex align-items-start gap-2">
+                <input class="form-check-input mt-1 wb-mi"
+                       type="checkbox"
+                       name="items[]"
+                       value="<?= htmlspecialchars($it['id']) ?>"
+                       id="mi<?= htmlspecialchars($it['id']) ?>"
+                       data-done="<?= !empty($it['done']) ? '1' : '0' ?>"
+                       data-imported="<?= $blocked ? '1' : '0' ?>"
+                       <?= $blocked ? 'disabled' : '' ?>>
+                <label class="form-check-label flex-grow-1" for="mi<?= htmlspecialchars($it['id']) ?>">
+                  <span class="<?= $blocked ? 'text-body-secondary' : '' ?>">
+                    <?= htmlspecialchars($it['name']) ?>
+                  </span>
+
+                  <?php if (!empty($it['group'])): ?>
+                    <span class="badge text-bg-light border ms-1"><?= htmlspecialchars($it['group']) ?></span>
+                  <?php endif; ?>
+
+                  <?php if (!empty($it['done'])): ?>
+                    <span class="badge text-bg-success-subtle text-success-emphasis border border-success-subtle ms-1">Done in monday</span>
+                  <?php endif; ?>
+
+                  <?php if ($blocked): ?>
+                    <span class="badge text-bg-secondary ms-1">Already imported</span>
+                    <?php if (!empty($it['task_id'])): ?>
+                      <a class="small ms-1" href="/workbench/view?id=<?= (int) $it['task_id'] ?>">view task</a>
+                    <?php endif; ?>
+                  <?php endif; ?>
+
+                  <?php if (!empty($it['fields'])): ?>
+                    <div class="small text-body-secondary mt-1">
+                      <?php
+                        // Only the few that say something about the work. The rest is
+                        // board bookkeeping and would bury these.
+                        $show = [];
+                        foreach (['Status', 'Priority', 'Due Date', 'Owner', 'Estimated Hours'] as $k) {
+                            if (!empty($it['fields'][$k])) $show[] = $k . ': ' . $it['fields'][$k];
+                        }
+                        echo htmlspecialchars(implode('  ·  ', $show));
+                      ?>
+                    </div>
+                  <?php endif; ?>
+                </label>
+              </div>
+            </li>
+          <?php endforeach; ?>
+        </ul>
+
+        <div class="card-footer d-flex align-items-center justify-content-between">
+          <div class="small text-body-secondary">
+            Each becomes one task. Decompose it from the board when you are ready to build.
+          </div>
+          <div class="d-flex gap-2">
+            <?php if (!empty($cursor)): ?>
+              <a class="btn btn-outline-secondary btn-sm"
+                 href="/workbench/monday?board=<?= urlencode($boardId) ?>&cursor=<?= urlencode($cursor) ?>">
+                Next page
+              </a>
+            <?php endif; ?>
+            <button type="submit" class="btn btn-primary" id="importBtn" disabled>
+              Import selected
+            </button>
+          </div>
+        </div>
+      </div>
+    </form>
+
+    <script>
+    (function () {
+        var boxes  = Array.prototype.slice.call(document.querySelectorAll('.wb-mi'));
+        var btn    = document.getElementById('importBtn');
+        var tickAll= document.getElementById('tickBuildable');
+
+        // Disabled until something is ticked: a button that submits nothing and
+        // returns "Nothing selected" is a round trip to say what the page knew.
+        function sync() {
+            var n = boxes.filter(function (b) { return b.checked && !b.disabled; }).length;
+            btn.disabled = n === 0;
+            btn.textContent = n === 0 ? 'Import selected'
+                            : 'Import ' + n + ' item' + (n === 1 ? '' : 's');
+        }
+
+        boxes.forEach(function (b) { b.addEventListener('change', sync); });
+
+        // Skips done and already-imported ones — the whole point of the flags.
+        tickAll.addEventListener('click', function () {
+            boxes.forEach(function (b) {
+                if (b.disabled) return;
+                b.checked = b.dataset.done !== '1';
+            });
+            sync();
+        });
+
+        sync();
+    })();
+    </script>
+  <?php endif; ?>
+</div>

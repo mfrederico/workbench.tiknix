@@ -86,6 +86,31 @@ $baseDomain = preg_replace('#^https?://#', '', $baseUrl);
 
                     <!-- Actions -->
                     <div class="d-flex gap-2 flex-wrap">
+                        <?php /* Only on a task that CAME from monday, and only once
+                                 something under it has finished. Posting creates
+                                 subitems on the customer's board — monday adds a
+                                 subitems column to a board that never had one — so
+                                 this stays a deliberate click, never automatic. */ ?>
+                        <?php if (!empty($task->mondayEid)): ?>
+                            <form method="POST" action="/workbench/mondaypost" class="d-inline">
+                                <?php foreach ($csrf as $cn => $cv): ?>
+                                    <input type="hidden" name="<?= $cn ?>" value="<?= $cv ?>">
+                                <?php endforeach; ?>
+                                <input type="hidden" name="task_id" value="<?= (int) $task->id ?>">
+                                <button class="btn btn-outline-primary"
+                                        <?= !empty($task->postedBackAt) ? 'title="Posted ' . htmlspecialchars($task->postedBackAt) . '"' : '' ?>>
+                                    <i class="bi bi-box-arrow-up-right"></i>
+                                    <?= !empty($task->postedBackAt) ? 'Post to monday again' : 'Post to monday.com' ?>
+                                </button>
+                            </form>
+                            <?php if (!empty($task->mondayUrl)): ?>
+                                <a class="btn btn-outline-secondary" target="_blank" rel="noopener"
+                                   href="<?= htmlspecialchars($task->mondayUrl) ?>">
+                                    <i class="bi bi-box-arrow-up-right"></i> Open in monday
+                                </a>
+                            <?php endif; ?>
+                        <?php endif; ?>
+
                         <?php if ($canRun && in_array($task->status, ['pending', 'failed'])): ?>
                             <button class="btn btn-success" onclick="runTask(<?= $task->id ?>)">
                                 <i class="bi bi-play-fill"></i> Run with Claude
