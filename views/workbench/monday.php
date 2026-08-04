@@ -166,6 +166,24 @@
                     <?php endif; ?>
                   <?php endif; ?>
 
+                  <?php
+                    // Subitems are the breakdown monday already has. Counted here
+                    // (open ones only) so the choice is informed: ticking this item
+                    // brings its open subitems in as child tasks, and the planner is
+                    // not asked to invent a decomposition alongside them.
+                    $openSubs = 0;
+                    foreach (($it['subitems'] ?? []) as $sub) {
+                        if (!empty($sub['closed'])) continue;
+                        $openSubs++;
+                    }
+                  ?>
+                  <?php if ($openSubs > 0): ?>
+                    <span class="badge text-bg-info-subtle text-info-emphasis border border-info-subtle ms-1"
+                          title="Imported as child tasks. Closed subitems are skipped.">
+                      <i class="bi bi-diagram-3"></i> <?= $openSubs ?> subitem<?= $openSubs === 1 ? '' : 's' ?>
+                    </span>
+                  <?php endif; ?>
+
                   <?php if (!empty($it['fields'])): ?>
                     <div class="small text-body-secondary mt-1">
                       <?php
