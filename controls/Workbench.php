@@ -1350,7 +1350,10 @@ class Workbench extends BuildControl {
         }
 
         // Assign port for this member
-        $portInfo = PortManager::getTaskPortInfo($this->member->id);
+        // Per TASK, not per member: one number for every task meant two concurrent
+        // runs were both told 8002 and the second server could not bind.
+        $portInfo = PortManager::getTaskPortInfo(
+            $this->member->id, (string) $task->instanceTag, (int) $task->id);
         $assignedPort = $portInfo['port'];
         if (!$portInfo['available'] && $portInfo['fallback']) {
             $assignedPort = $portInfo['fallback'];
