@@ -4019,9 +4019,26 @@ class Workbench extends BuildControl {
             $this->viewData['boards'] = \app\MondayImport::boards($instanceId);
 
             if ($boardId !== '') {
-                $page = \app\MondayImport::items($boardId, 50, $cursor, $instanceId);
+                // 100, not 50: a board's items are grouped in the picker, and a page
+                // that stops halfway through "Murray Website" shows a group with a
+                // count that is a page artefact rather than the size of the work.
+                $page = \app\MondayImport::items($boardId, 100, $cursor, $instanceId);
                 $this->viewData['items']  = $page['items'];
                 $this->viewData['cursor'] = $page['cursor'];
+
+                // The groups present on this page, in the order monday returned them,
+                // with how many of each are still open. A board here is one client's
+                // work split by site — Murray Website, Parts Website, Massport
+                // Website — so the group IS the unit somebody wants to import.
+                $groups = [];
+                foreach ($page['items'] as $it) {
+                    $g = (string) ($it['group'] ?? '');
+                    if ($g === '') continue;
+                    if (!isset($groups[$g])) $groups[$g] = ['name' => $g, 'total' => 0, 'open' => 0];
+                    $groups[$g]['total']++;
+                    if (empty($it['done']) && empty($it['imported'])) $groups[$g]['open']++;
+                }
+                $this->viewData['groups'] = array_values($groups);
             }
         } catch (\Throwable $e) {
             // monday's own words. "Complexity budget exhausted, reset in 45 seconds"
@@ -4040,6 +4057,104 @@ class Workbench extends BuildControl {
      * afterwards from the board, so imported work goes through the same steps as
      * anything typed in by hand.
      */
+    /**
+     * POST /workbench/mondayrefresh — re-check imported tasks against monday.
+     *
+     * FLAGS, never deletes. A board moving on is not permission to remove work
+     * somebody may already have started; the flag is what a person acts on. What
+     * comes back is stated in full rather than summarised to a count, because
+     * "3 tasks flagged" sends you hunting for which three.
+     */
+    public function mondayrefresh($params = []) {
+        if (!$this->requireLogin()) return;
+        if (!Flight::csrf()->validateRequest()) {
+            $this->flash('error', 'Session expired, please try again.');
+            Flight::redirect('/workbench');
+            return;
+        }
+        if (!$this->mondayReady()) {
+            $this->flash('error', 'This project has no active monday.com connection.');
+            Flight::redirect('/workbench');
+            return;
+        }
+
+        try {
+            $r = \app\MondayImport::refresh((int) $this->selected['id']);
+        } catch (\Throwable $e) {
+            // monday's own wording — a complexity budget and a dead token want
+            // different things done about them.
+            Flight::get('log')?->error('workbench: monday refresh failed',
+                ['project' => $this->selected['slug'] ?? '', 'err' => $e->getMessage()]);
+            $this->flash('error', 'Could not re-check monday: ' . $e->getMessage());
+            Flight::redirect('/workbench');
+            return;
+        }
+
+        if (!$r['checked']) {
+            $this->flash('info', 'No imported monday items to check.');
+        } elseif (!$r['flagged']) {
+            $this->flash('success', 'Checked ' . $r['checked'] . ' monday item(s) — all still open.');
+        } else {
+            $lines = [];
+            foreach ($r['flagged'] as $f) $lines[] = $f['title'] . ' (' . $f['status'] . ')';
+            $this->flash('warning', 'Checked ' . $r['checked'] . ': '
+                . count($r['flagged']) . ' no longer open — ' . implode('; ', $lines)
+                . '. Nothing was deleted.');
+        }
+
+        Flight::redirect('/workbench');
+    }
+
+    /**
+     * POST /workbench/mondayreimport — re-pull imported tasks whose item has changed.
+     *
+     * Separate from mondayrefresh on purpose. That one only FLAGS and touches
+     * nothing; this one rewrites the title, brief and priority a previous import
+     * generated. Two different promises, so two different buttons — a person
+     * checking whether a board moved on should not have their task text rewritten
+     * as a side effect.
+     */
+    public function mondayreimport($params = []) {
+        if (!$this->requireLogin()) return;
+        if (!Flight::csrf()->validateRequest()) {
+            $this->flash('error', 'Session expired, please try again.');
+            Flight::redirect('/workbench');
+            return;
+        }
+        if (!$this->mondayReady()) {
+            $this->flash('error', 'This project has no active monday.com connection.');
+            Flight::redirect('/workbench');
+            return;
+        }
+
+        // Optional: only the ticked ones. Absent means every imported task.
+        $ids = array_values(array_filter(array_map('intval', (array) ($this->getParam('tasks', []) ?: []))));
+
+        try {
+            $r = \app\MondayImport::reimport($ids ?: null, (int) $this->selected['id']);
+        } catch (\Throwable $e) {
+            Flight::get('log')?->error('workbench: monday re-import failed',
+                ['project' => $this->selected['slug'] ?? '', 'err' => $e->getMessage()]);
+            $this->flash('error', 'Could not re-pull from monday: ' . $e->getMessage());
+            Flight::redirect('/workbench');
+            return;
+        }
+
+        if (!$r['checked']) {
+            $this->flash('info', 'No imported monday items to re-pull.');
+        } elseif (!$r['updated']) {
+            $this->flash('success', 'Checked ' . $r['checked'] . ' — all already match monday.');
+        } else {
+            $lines = [];
+            foreach ($r['changes'] as $c) $lines[] = $c['title'] . ' (' . implode(', ', $c['fields']) . ')';
+            $msg = 'Updated ' . $r['updated'] . ' of ' . $r['checked'] . ': ' . implode('; ', $lines) . '.';
+            if ($r['missing']) $msg .= ' ' . $r['missing'] . ' no longer visible in monday and left alone.';
+            $this->flash('success', $msg);
+        }
+
+        Flight::redirect('/workbench');
+    }
+
     public function mondayimport($params = []) {
         if (!$this->requireLogin()) return;
         if (!Flight::csrf()->validateRequest()) {

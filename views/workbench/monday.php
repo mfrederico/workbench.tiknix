@@ -89,8 +89,36 @@
           </button>
         </div>
 
+        <?php
+          /* Grouped, because on these boards a group is one site's work — Murray
+             Website, Parts Website, Massport Website — and "import that site" is the
+             thing somebody actually wants. Ungrouped items keep their own bucket
+             rather than being folded into the first group. */
+          $byGroup = [];
+          foreach ($items as $it) { $byGroup[(string) ($it['group'] ?? '')][] = $it; }
+        ?>
         <ul class="list-group list-group-flush">
-          <?php foreach ($items as $it): ?>
+          <?php foreach ($byGroup as $groupName => $groupItems): ?>
+            <?php
+              $openInGroup = 0;
+              foreach ($groupItems as $gi) if (empty($gi['done']) && empty($gi['imported'])) $openInGroup++;
+            ?>
+            <li class="list-group-item bg-body-secondary py-1 d-flex align-items-center justify-content-between">
+              <span class="small fw-semibold">
+                <?= $groupName !== '' ? htmlspecialchars($groupName) : '<span class="text-body-secondary">No group</span>' ?>
+                <span class="text-body-secondary fw-normal">
+                  · <?= count($groupItems) ?> item<?= count($groupItems) === 1 ? '' : 's' ?><?php
+                    if ($openInGroup !== count($groupItems)) echo ', ' . $openInGroup . ' open'; ?>
+                </span>
+              </span>
+              <?php if ($openInGroup > 0): ?>
+                <button type="button" class="btn btn-link btn-sm p-0 wb-group-tick"
+                        data-group="<?= htmlspecialchars($groupName) ?>">
+                  Select the <?= $openInGroup ?> open here
+                </button>
+              <?php endif; ?>
+            </li>
+          <?php foreach ($groupItems as $it): ?>
             <?php $blocked = !empty($it['imported']); ?>
             <li class="list-group-item">
               <div class="form-check d-flex align-items-start gap-2">
@@ -100,6 +128,7 @@
                        value="<?= htmlspecialchars($it['id']) ?>"
                        id="mi<?= htmlspecialchars($it['id']) ?>"
                        data-done="<?= !empty($it['done']) ? '1' : '0' ?>"
+                       data-group="<?= htmlspecialchars((string) ($it['group'] ?? '')) ?>"
                        data-imported="<?= $blocked ? '1' : '0' ?>"
                        <?= $blocked ? 'disabled' : '' ?>>
                 <label class="form-check-label flex-grow-1" for="mi<?= htmlspecialchars($it['id']) ?>">
@@ -154,6 +183,7 @@
               </div>
             </li>
           <?php endforeach; ?>
+          <?php endforeach; ?>
         </ul>
 
         <div class="card-footer d-flex align-items-center justify-content-between">
@@ -191,6 +221,20 @@
         }
 
         boxes.forEach(function (b) { b.addEventListener('change', sync); });
+
+        // Per-group select. Same rule as the global one: open work only, so
+        // ticking a group never quietly re-imports its finished half.
+        Array.prototype.slice.call(document.querySelectorAll('.wb-group-tick'))
+            .forEach(function (link) {
+                link.addEventListener('click', function () {
+                    var g = link.dataset.group;
+                    boxes.forEach(function (b) {
+                        if (b.disabled || b.dataset.group !== g) return;
+                        if (b.dataset.done !== '1') b.checked = true;
+                    });
+                    sync();
+                });
+            });
 
         // Skips done and already-imported ones — the whole point of the flags.
         tickAll.addEventListener('click', function () {
