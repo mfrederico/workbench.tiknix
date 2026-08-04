@@ -115,11 +115,18 @@
                     <?php /* Says WHICH closed status, because "Done in monday" on a
                              cancelled item is a wrong answer that looks like a right
                              one — and done and cancelled deserve different reactions. */ ?>
-                    <?php $isCancelled = stripos((string) ($it['status'] ?? ''), 'cancel') !== false; ?>
+                    <?php
+                      $isCancelled = stripos((string) ($it['status'] ?? ''), 'cancel') !== false;
+                      // Archived outranks the status text: an archived item with a
+                      // blank Status would otherwise fall back to reading "Done".
+                      $closedLabel = !empty($it['archived'])
+                          ? 'Archived'
+                          : ((($it['status'] ?? '') !== '') ? $it['status'] : 'Done');
+                    ?>
                     <span class="badge ms-1 border <?= $isCancelled
                           ? 'text-bg-warning-subtle text-warning-emphasis border-warning-subtle'
                           : 'text-bg-success-subtle text-success-emphasis border-success-subtle' ?>">
-                      <?= htmlspecialchars(($it['status'] ?? '') !== '' ? $it['status'] : 'Done') ?> in monday
+                      <?= htmlspecialchars($closedLabel) ?> in monday
                     </span>
                   <?php endif; ?>
 
