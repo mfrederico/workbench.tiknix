@@ -7,9 +7,14 @@
  *
  * Two flags do the work. `imported` marks an item that is already a task here,
  * so ticking a whole board twice is visibly pointless rather than silently
- * ignored. `done` marks work monday considers finished — on a real board that is
- * a good share of it, and importing a completed phase to build it again is the
- * mistake this page exists to make hard.
+ * ignored. `done` marks a CLOSED item — done or cancelled (MondayImport::isClosed
+ * decides, so this page never has to know which word a board uses). On a real
+ * board that is a good share of it, and importing finished or abandoned work to
+ * build it again is the mistake this page exists to make hard.
+ *
+ * Closed items are skipped by the bulk select and still tickable one at a time.
+ * Only `imported` disables the box outright: re-importing is the one thing that
+ * cannot be what somebody meant.
  *
  * Vars: $boards, $items, $boardId, $cursor, $account, $error, $csrf, $selected
  */
@@ -80,7 +85,7 @@
         <div class="card-header d-flex align-items-center justify-content-between">
           <span><?= count($items) ?> item<?= count($items) === 1 ? '' : 's' ?></span>
           <button type="button" class="btn btn-link btn-sm p-0" id="tickBuildable">
-            Select everything not done or imported
+            Select everything still open
           </button>
         </div>
 
@@ -107,7 +112,15 @@
                   <?php endif; ?>
 
                   <?php if (!empty($it['done'])): ?>
-                    <span class="badge text-bg-success-subtle text-success-emphasis border border-success-subtle ms-1">Done in monday</span>
+                    <?php /* Says WHICH closed status, because "Done in monday" on a
+                             cancelled item is a wrong answer that looks like a right
+                             one — and done and cancelled deserve different reactions. */ ?>
+                    <?php $isCancelled = stripos((string) ($it['status'] ?? ''), 'cancel') !== false; ?>
+                    <span class="badge ms-1 border <?= $isCancelled
+                          ? 'text-bg-warning-subtle text-warning-emphasis border-warning-subtle'
+                          : 'text-bg-success-subtle text-success-emphasis border-success-subtle' ?>">
+                      <?= htmlspecialchars(($it['status'] ?? '') !== '' ? $it['status'] : 'Done') ?> in monday
+                    </span>
                   <?php endif; ?>
 
                   <?php if ($blocked): ?>
