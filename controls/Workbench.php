@@ -1406,7 +1406,11 @@ class Workbench extends BuildControl {
 
                 // Clone repository into isolated workspace (clones the base branch)
                 $mainGit = new GitService();
-                $workspacePath = $mainGit->cloneToWorkspace($this->member->id, $task->id, $cloneUrl, $baseBranch);
+                // instanceTag scopes the workspace. Without it three projects' task
+                // 26 share one directory and clone over each other — see
+                // GitService::getWorkspacePath.
+                $workspacePath = $mainGit->cloneToWorkspace(
+                    $this->member->id, $task->id, $cloneUrl, $baseBranch, (string) $task->instanceTag);
                 $task->projectPath = $workspacePath;
 
                 $srcLabel = $instDir !== null ? ($task->instanceTag ?: 'instance') : 'main';
