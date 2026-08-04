@@ -972,15 +972,24 @@ class Workbench extends BuildControl {
         // Get task logs
         $logs = Bean::find('tasklog', 'task_id = ? ORDER BY created_at DESC LIMIT 50', [$taskId]);
 
-        // Get task comments (including image_path for attached images)
+        // Task comments.
+        //
+        // This used to JOIN member and name tc.image_path explicitly, and returned
+        // NOTHING on every instance. `member` does not live in workbench.db — it is
+        // core's table — and image_path only exists once somebody has attached an
+        // image, because the schema is fluid. RedBean answers a query naming an
+        // absent table or column with an empty result rather than an error, so the
+        // conversation looked deleted on every reload while the rows sat there
+        // untouched. Comments posted by fetch appeared because the JAVASCRIPT added
+        // them to the page; they vanished the moment the server rendered it.
+        //
+        // So: read the comments from the database they are actually in, with no
+        // column named that fluid mode may not have created yet.
         $comments = Bean::getAll(
-            "SELECT tc.*, tc.image_path, m.first_name, m.last_name, m.username, m.email, m.avatar_url
-             FROM taskcomment tc
-             JOIN member m ON tc.member_id = m.id
-             WHERE tc.task_id = ?
-             ORDER BY tc.created_at ASC",
+            "SELECT * FROM taskcomment WHERE task_id = ? ORDER BY created_at ASC",
             [$taskId]
         );
+        $comments = $this->withCommentAuthors($comments);
 
         // Get latest snapshot
         $latestSnapshot = Bean::findOne('tasksnapshot', 'task_id = ? ORDER BY created_at DESC', [$taskId]);
@@ -2764,16 +2773,14 @@ class Workbench extends BuildControl {
             }
         }
 
-        // Get recent comments for live updates
-        $comments = Bean::getAll(
-            "SELECT tc.id, tc.content, tc.image_path, tc.is_from_claude, tc.created_at,
-                    m.first_name, m.last_name, m.username
-             FROM taskcomment tc
-             JOIN member m ON tc.member_id = m.id
-             WHERE tc.task_id = ?
-             ORDER BY tc.created_at ASC",
+        // Recent comments for live updates. Same fault as view() had and fixed the
+        // same way: no JOIN to member (it is core's table, not workbench.db) and no
+        // column named that fluid mode may not have created. Both silently returned
+        // an empty set, so the live panel agreed with the page — wrongly.
+        $comments = $this->withCommentAuthors(Bean::getAll(
+            "SELECT * FROM taskcomment WHERE task_id = ? ORDER BY created_at ASC",
             [$taskId]
-        );
+        ));
         $progress['comments'] = array_map(function($c) {
             $author = $c['is_from_claude'] ? 'Claude' :
                       (trim(($c['first_name'] ?? '') . ' ' . ($c['last_name'] ?? '')) ?:
@@ -3859,6 +3866,61 @@ class Workbench extends BuildControl {
      *
      * Cached per request — the nav asks, then the action asks again.
      */
+    /**
+     * Attach author details to comments, read from CORE.
+     *
+     * The comments live in the project's workbench.db and the people live in
+     * core's database, so this cannot be a JOIN — that is exactly what was
+     * silently returning nothing. Two queries against two databases, which is what
+     * this sidecar already does everywhere else.
+     *
+     * An author who cannot be resolved keeps their comment: losing somebody's
+     * message because their row is gone would be a worse answer than showing it
+     * unattributed, and the view already falls back to "Unknown".
+     */
+    private function withCommentAuthors(array $comments): array {
+        if (!$comments) return [];
+
+        $ids = array_values(array_unique(array_filter(array_map(
+            fn($c) => (int) ($c['member_id'] ?? 0), $comments))));
+
+        $people = [];
+        if ($ids) {
+            try {
+                $pdo = \app\Sidecar\Kernel::coreDb();
+                if ($pdo) {
+                    $st = $pdo->prepare('SELECT id, first_name, last_name, username, email, avatar_url
+                                           FROM member WHERE id IN (' . implode(',', array_fill(0, count($ids), '?')) . ')');
+                    $st->execute($ids);
+                    foreach ($st->fetchAll(\PDO::FETCH_ASSOC) as $m) $people[(int) $m['id']] = $m;
+                }
+            } catch (\Throwable $e) {
+                // Said out loud: nameless comments are a symptom somebody would
+                // otherwise report as "the conversation looks broken".
+                Flight::get('log')?->error('workbench: could not read comment authors from core',
+                    ['err' => $e->getMessage()]);
+            }
+        }
+
+        foreach ($comments as &$c) {
+            $m = $people[(int) ($c['member_id'] ?? 0)] ?? [];
+            $c['first_name'] = $m['first_name'] ?? '';
+            $c['last_name']  = $m['last_name']  ?? '';
+            $c['username']   = $m['username']   ?? '';
+            $c['email']      = $m['email']      ?? '';
+            $c['avatar_url'] = $m['avatar_url'] ?? '';
+            // Fluid schema: neither column exists until something first writes one
+            // — image_path until an image is attached, is_from_claude until Claude
+            // replies — so both are absent on a young instance and both are read
+            // unguarded by the view and the live panel.
+            $c['image_path']     = $c['image_path'] ?? '';
+            $c['is_from_claude'] = (int) ($c['is_from_claude'] ?? 0);
+        }
+        unset($c);
+
+        return $comments;
+    }
+
     /** The selected project's install directory, which owns its connections. */
     private function selectedInstanceDir(): string {
         if (!$this->selected) return '';
@@ -3989,6 +4051,10 @@ class Workbench extends BuildControl {
         // BuildControl::selectInstance already pointed RedBean at this project's
         // workbench.db, so MondayImport must not go looking for one of its own.
         \app\MondayImport::useCurrentDatabase(true);
+        // Where attachments may be written: this project's own install, under
+        // secure/. Naming it is what permits the download at all — unset, monday
+        // files stay referenced in the brief and nothing is fetched.
+        \app\MondayImport::setInstallDir($this->selectedInstanceDir());
         return true;
     }
 
