@@ -3859,6 +3859,13 @@ class Workbench extends BuildControl {
      *
      * Cached per request — the nav asks, then the action asks again.
      */
+    /** The selected project's install directory, which owns its connections. */
+    private function selectedInstanceDir(): string {
+        if (!$this->selected) return '';
+        return '/var/www/html/default/' . $this->selected['slug']
+             . '.' . ($this->selected['app'] ?: 'tiknix');
+    }
+
     private function mondayConnection(): ?\RedBeanPHP\OODBBean {
         static $cached = false, $conn = null;
         if ($cached) return $conn;
@@ -3866,33 +3873,50 @@ class Workbench extends BuildControl {
 
         if (!$this->selected) return $conn = null;
 
+        // Read from the PROJECT's own store, not core's table. Connections moved to
+        // <install>/data/connections.db (CONNECTIONS_PER_INSTANCE.md) and core's table
+        // was emptied, so this query returned nothing and the monday nav simply
+        // vanished -- indistinguishable from "this project never connected monday".
+        //
+        // Reading the project's file is also a NARROWER grant than what this replaced.
+        // Before, the sidecar could see every customer's ciphertext in core's table and
+        // asked core to decrypt one. Now it opens one project's database with one
+        // project's key, and can decrypt nothing else.
+        $dir = $this->selectedInstanceDir();
+        $db  = $dir . '/data/connections.db';
+        if ($dir === '' || !is_file($db)) return $conn = null;   // genuinely nothing connected
+
         try {
-            $pdo = \app\Sidecar\Kernel::coreDb();
-            if (!$pdo) return $conn = null;
-
+            $pdo = new \PDO('sqlite:' . $db, null, null, [
+                \PDO::ATTR_ERRMODE => \PDO::ERRMODE_EXCEPTION,
+            ]);
+            // Only columns guaranteed to exist: naming an absent one makes SQLite throw
+            // here, but made RedBean answer with NOTHING, which reads as "not connected".
             $st = $pdo->prepare(
-                "SELECT id, connector_type, access_token, external_name, instance_id
+                "SELECT id, connector_type, access_token, external_name, environment, revoked_at
                    FROM connections
-                  WHERE instance_id = ? AND connector_type = 'monday' AND enabled = 1
-                    AND (revoked_at IS NULL OR revoked_at = 0)
-                  ORDER BY id DESC LIMIT 1");
-            $st->execute([(int) $this->selected['id']]);
-            $row = $st->fetch(\PDO::FETCH_ASSOC);
-            if (!$row) return $conn = null;
+                  WHERE connector_type = 'monday' AND enabled = 1
+                  ORDER BY CASE WHEN environment = 'production' THEN 0 ELSE 1 END, id DESC");
+            $st->execute();
 
-            // Dispensed, never stored — this is a carrier for the fields
-            // ConnectionStore::token() and MondayImport read. Dispense touches no
-            // database, so nothing is created in the workbench db.
-            $b = Bean::dispense('connections');
-            $b->id            = (int) $row['id'];
-            $b->connectorType = (string) $row['connector_type'];
-            $b->accessToken   = (string) $row['access_token'];
-            $b->externalName  = (string) $row['external_name'];
-            $b->instanceId    = (int) $row['instance_id'];
-            return $conn = $b;
+            foreach ($st->fetchAll(\PDO::FETCH_ASSOC) as $row) {
+                if (!empty($row['revoked_at'])) continue;
+                // Dispensed, never stored — a carrier for the fields MondayImport reads.
+                $b = Bean::dispense('connections');
+                $b->id            = (int) $row['id'];
+                $b->connectorType = (string) $row['connector_type'];
+                $b->accessToken   = (string) $row['access_token'];
+                $b->externalName  = (string) $row['external_name'];
+                $b->instanceId    = (int) $this->selected['id'];
+                return $conn = $b;
+            }
+            return $conn = null;
         } catch (\Throwable $e) {
-            Flight::get('log')?->warning('workbench: monday connection lookup failed',
-                ['err' => $e->getMessage()]);
+            // LOUD: this is "I could not tell you", which is not the same as "no monday
+            // connection" and must not quietly render as a missing button.
+            Flight::get('log')?->error('workbench: could not read the project\'s connections store', [
+                'project' => $this->selected['slug'] ?? '', 'db' => $db, 'err' => $e->getMessage(),
+            ]);
             return $conn = null;
         }
     }
@@ -3902,65 +3926,20 @@ class Workbench extends BuildControl {
         return $this->mondayConnection() !== null;
     }
 
-    /**
-     * Ask CORE for this project's decrypted monday token.
-     *
-     * The key that decrypts connection tokens stays in core. This sidecar can read
-     * core's database, so it can already see every customer's ciphertext — being
-     * given the key would let it decrypt all of them, which is a much larger grant
-     * than "let the workbench import from monday". So core hands back exactly one
-     * token, for one connector, on one project, to a request signed with this
-     * sidecar's own shared secret.
-     *
-     * Returns '' on any failure. The caller treats that as "not connected", which
-     * is the honest answer: a token we cannot obtain is one we do not have.
-     */
-    private function mondayToken(int $instanceId): string {
-        static $cache = [];
-        if (isset($cache[$instanceId])) return $cache[$instanceId];
-
-        $coreUrl = rtrim((string) (Flight::get('sidecar.core_url') ?? ''), '/');
-        $secret  = (string) (Flight::get('sidecar.sso_secret') ?? '');
-        if ($coreUrl === '' || $secret === '') return $cache[$instanceId] = '';
-
-        $signed = \app\Sidecar\Token::mint([
-            'instance_id' => $instanceId,
-            'connector'   => 'monday',
-            'member_id'   => (int) $this->member->id,
-        ], $secret, 'connection-token');
-
-        $ch = curl_init($coreUrl . '/brokerinfo/connectiontoken');
-        curl_setopt_array($ch, [
-            CURLOPT_RETURNTRANSFER => true,
-            CURLOPT_TIMEOUT        => 15,
-            CURLOPT_POST           => true,
-            CURLOPT_POSTFIELDS     => http_build_query(['sidecar' => 'workbench', 'token' => $signed]),
-        ]);
-        $body   = curl_exec($ch);
-        $status = (int) curl_getinfo($ch, CURLINFO_HTTP_CODE);
-
-        $json = json_decode(is_string($body) ? $body : '', true);
-        if ($status !== 200 || !is_array($json) || empty($json['token'])) {
-            Flight::get('log')?->warning('workbench: core would not hand back the monday token', [
-                'status' => $status,
-                'reason' => is_array($json) ? ($json['message'] ?? '') : '',
-            ]);
-            return $cache[$instanceId] = '';
-        }
-
-        return $cache[$instanceId] = (string) $json['token'];
-    }
-
     /** Point MondayImport at this project: its connection, and its already-open db. */
     private function mondayReady(): bool {
         $conn = $this->mondayConnection();
         if (!$conn) return false;
 
-        // The real token comes from core; this sidecar has no key to decrypt with.
-        // Handed over separately rather than written onto the bean, so
-        // ConnectionStore::token() is never asked to decrypt something already plain.
-        $plain = $this->mondayToken((int) $this->selected['id']);
-        if ($plain === '') return false;
+        try {
+            $plain = $this->mondayPlainToken($conn);
+        } catch (\Throwable $e) {
+            // Said out loud, not swallowed: the connection exists, so "not ready" here
+            // is a fault worth a log line naming the reason.
+            Flight::get('log')?->error('workbench: the project\'s monday token could not be opened',
+                ['project' => $this->selected['slug'] ?? '', 'err' => $e->getMessage()]);
+            return false;
+        }
 
         \app\MondayImport::setToken($plain);
         \app\MondayImport::setConnection($conn);
