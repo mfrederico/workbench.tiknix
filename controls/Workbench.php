@@ -3926,6 +3926,49 @@ class Workbench extends BuildControl {
         return $this->mondayConnection() !== null;
     }
 
+    /**
+     * The selected project's own connection key, and the token it opens.
+     *
+     * No round-trip to core. The key lives at <install>/secure/connections.key and
+     * belongs to that project alone, so this sidecar decrypts one project's
+     * credential and has no means to touch another's — a smaller grant than the
+     * arrangement it replaces, where core held one key for everybody's ciphertext.
+     *
+     * Throws rather than returning ''. The version this replaced returned an empty
+     * string on every failure and the caller read it as "not connected", so an
+     * unreadable key, an unreachable core and a genuinely absent connector were one
+     * indistinguishable outcome.
+     */
+    private function mondayPlainToken(\RedBeanPHP\OODBBean $conn): string {
+        $keyFile = $this->selectedInstanceDir() . '/secure/connections.key';
+        if (!is_file($keyFile)) {
+            throw new \RuntimeException('This project has no connections key at ' . $keyFile
+                . ' — reconnect monday.com from its Connections page.');
+        }
+
+        $hex = trim((string) file_get_contents($keyFile));
+        if (strlen($hex) !== 64 || !ctype_xdigit($hex)) {
+            throw new \RuntimeException('The project\'s connections key is malformed.');
+        }
+
+        $raw = (string) ($conn->accessToken ?? '');
+        $dec = base64_decode($raw, true);
+        if ($dec === false || strlen($dec) < SODIUM_CRYPTO_SECRETBOX_NONCEBYTES + SODIUM_CRYPTO_SECRETBOX_MACBYTES + 1) {
+            throw new \RuntimeException('The stored monday token is not a readable envelope.');
+        }
+
+        // Same envelope EncryptionService::encryptWith writes: base64(nonce . box).
+        $key   = hex2bin($hex);
+        $nonce = substr($dec, 0, SODIUM_CRYPTO_SECRETBOX_NONCEBYTES);
+        $plain = sodium_crypto_secretbox_open(substr($dec, SODIUM_CRYPTO_SECRETBOX_NONCEBYTES), $nonce, $key);
+        sodium_memzero($key);
+
+        if ($plain === false) {
+            throw new \RuntimeException('The monday token would not decrypt with this project\'s key.');
+        }
+        return $plain;
+    }
+
     /** Point MondayImport at this project: its connection, and its already-open db. */
     private function mondayReady(): bool {
         $conn = $this->mondayConnection();
