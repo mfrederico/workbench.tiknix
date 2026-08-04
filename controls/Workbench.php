@@ -4092,11 +4092,15 @@ class Workbench extends BuildControl {
 
         $taskId = (int) $this->getParam('task_id', 0);
 
-        // The task must be one this member can see, in the selected project — the
-        // access check, not the request, decides that.
-        $owner = $this->access->findTaskInstance($taskId);
-        if (!$owner || (int) $owner['id'] !== (int) $this->selected['id']) {
-            $this->flash('error', 'Task not found in this project.');
+        // The task must live in the SELECTED project's workbench.db, which
+        // BuildControl has already opened. Deliberately not findTaskInstance():
+        // task ids are per-database, so id 1 exists in most of them, and that
+        // helper returns the first instance it finds one in — which is how a task
+        // in this project was reported as belonging to another. It also leaves
+        // RedBean pointed at whichever database it stopped scanning on.
+        $task = Bean::load('workbenchtask', $taskId);
+        if (!$task->id || empty($task->mondayEid)) {
+            $this->flash('error', 'That task did not come from monday.com.');
             Flight::redirect('/workbench');
             return;
         }
