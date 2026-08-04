@@ -4104,23 +4104,42 @@ class Workbench extends BuildControl {
             return;
         }
 
-        $parts = [];
+        // Written as sentences a person can act on. The version this replaces read
+        // "updated 1 from monday — Product Images (brief). 1 no longer open — Parts
+        // Catalog (deleted in monday). Nothing was deleted." — which put a raw field
+        // name in brackets, and then followed "deleted in monday" with "Nothing was
+        // deleted", so the reassurance looked like a contradiction of the sentence
+        // before it.
+        $label = ['title' => 'title', 'brief' => 'description', 'priority' => 'priority'];
+
+        $sentences = ['Checked ' . $r['checked'] . ' monday item' . ($r['checked'] === 1 ? '' : 's') . '.'];
+
         if ($r['updated']) {
             $c = [];
-            foreach ($r['changes'] as $ch) $c[] = $ch['title'] . ' (' . implode(', ', $ch['fields']) . ')';
-            $parts[] = 'updated ' . $r['updated'] . ' from monday — ' . implode('; ', $c);
-        }
-        if ($r['flagged']) {
-            $f = [];
-            foreach ($r['flagged'] as $fl) $f[] = $fl['title'] . ' (' . $fl['status'] . ')';
-            $parts[] = count($r['flagged']) . ' no longer open — ' . implode('; ', $f);
+            foreach ($r['changes'] as $ch) {
+                $fields = array_map(fn($f) => $label[$f] ?? $f, $ch['fields']);
+                $c[] = $ch['title'] . ' (' . implode(' and ', $fields) . ')';
+            }
+            $sentences[] = 'Brought ' . (count($c) === 1 ? 'one change' : count($c) . ' changes')
+                         . ' across from monday: ' . implode('; ', $c) . '.';
         }
 
-        if (!$parts) {
-            $this->flash('success', 'Checked ' . $r['checked'] . ' monday item(s) — all still open and up to date.');
+        if ($r['flagged']) {
+            $f = [];
+            foreach ($r['flagged'] as $fl) $f[] = $fl['title'] . ' — ' . $fl['status'];
+            // The reassurance goes HERE, attached to the flag it is about, rather
+            // than trailing the whole message where it reads as a denial of it.
+            $sentences[] = (count($f) === 1 ? 'One item is' : count($f) . ' items are')
+                         . ' no longer open in monday: ' . implode('; ', $f) . '. '
+                         . (count($f) === 1 ? 'Its task is' : 'Those tasks are')
+                         . ' still here and unchanged — flagged only, so you can decide.';
+        }
+
+        if (count($sentences) === 1) {
+            $this->flash('success', 'Checked ' . $r['checked'] . ' monday item'
+                . ($r['checked'] === 1 ? '' : 's') . ' — all still open, nothing changed.');
         } else {
-            $this->flash($r['flagged'] ? 'warning' : 'success',
-                'Checked ' . $r['checked'] . ': ' . implode('. ', $parts) . '. Nothing was deleted.');
+            $this->flash($r['flagged'] ? 'warning' : 'success', implode(' ', $sentences));
         }
 
         Flight::redirect('/workbench');
