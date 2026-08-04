@@ -34,27 +34,13 @@
                          been finished, cancelled or deleted. It never removes a task:
                          a board changing is not permission to delete work somebody
                          may have started. */ ?>
-                <?php /* Rewrites the title, brief and priority a previous import
-                         generated, for items whose monday content has changed. It
-                         does NOT touch status, comments or branches — those are the
-                         work, and monday knows nothing about them. Kept separate
-                         from Re-check so looking never rewrites. */ ?>
-                <form method="POST" action="/workbench/mondayreimport" class="d-inline">
-                    <?php foreach (($csrf ?? []) as $cn => $cv): ?>
-                        <input type="hidden" name="<?= htmlspecialchars($cn) ?>" value="<?= htmlspecialchars($cv) ?>">
-                    <?php endforeach; ?>
-                    <button type="submit" class="btn btn-outline-secondary me-2"
-                            title="Re-pull title, brief and priority for imported items whose monday content changed. Leaves task status, comments and branches alone.">
-                        <i class="bi bi-cloud-download"></i> Pull updates
-                    </button>
-                </form>
                 <form method="POST" action="/workbench/mondayrefresh" class="d-inline">
                     <?php foreach (($csrf ?? []) as $cn => $cv): ?>
                         <input type="hidden" name="<?= htmlspecialchars($cn) ?>" value="<?= htmlspecialchars($cv) ?>">
                     <?php endforeach; ?>
                     <button type="submit" class="btn btn-outline-secondary me-2"
-                            title="Re-check imported items against monday. Flags closed or deleted ones; deletes nothing.">
-                        <i class="bi bi-arrow-repeat"></i> Re-check monday
+                            title="Re-read imported items from monday: flags any that were finished, cancelled or deleted, and pulls in changed titles and briefs. Never deletes a task, and never touches its status, comments or branch.">
+                        <i class="bi bi-arrow-repeat"></i> Sync with monday
                     </button>
                 </form>
             <?php endif; ?>

@@ -4058,11 +4058,19 @@ class Workbench extends BuildControl {
      * anything typed in by hand.
      */
     /**
-     * POST /workbench/mondayrefresh — re-check imported tasks against monday.
+     * POST /workbench/mondayrefresh — sync imported tasks with monday.
      *
-     * FLAGS, never deletes. A board moving on is not permission to remove work
-     * somebody may already have started; the flag is what a person acts on. What
-     * comes back is stated in full rather than summarised to a count, because
+     * One pass doing both halves: flags work monday has closed, and re-pulls the
+     * title, brief and priority for items whose content changed. These were two
+     * buttons making the identical call over the identical rows, which asked a
+     * person to guess which they wanted when the answer is always both.
+     *
+     * It never DELETES. A board moving on is not permission to remove work
+     * somebody may have started; the flag is what a person acts on. Task status,
+     * comments and branches are never touched either — those are the work, and
+     * monday knows nothing about them.
+     *
+     * What happened is stated in full rather than summarised to a count, because
      * "3 tasks flagged" sends you hunting for which three.
      */
     public function mondayrefresh($params = []) {
@@ -4092,64 +4100,27 @@ class Workbench extends BuildControl {
 
         if (!$r['checked']) {
             $this->flash('info', 'No imported monday items to check.');
-        } elseif (!$r['flagged']) {
-            $this->flash('success', 'Checked ' . $r['checked'] . ' monday item(s) — all still open.');
+            Flight::redirect('/workbench');
+            return;
+        }
+
+        $parts = [];
+        if ($r['updated']) {
+            $c = [];
+            foreach ($r['changes'] as $ch) $c[] = $ch['title'] . ' (' . implode(', ', $ch['fields']) . ')';
+            $parts[] = 'updated ' . $r['updated'] . ' from monday — ' . implode('; ', $c);
+        }
+        if ($r['flagged']) {
+            $f = [];
+            foreach ($r['flagged'] as $fl) $f[] = $fl['title'] . ' (' . $fl['status'] . ')';
+            $parts[] = count($r['flagged']) . ' no longer open — ' . implode('; ', $f);
+        }
+
+        if (!$parts) {
+            $this->flash('success', 'Checked ' . $r['checked'] . ' monday item(s) — all still open and up to date.');
         } else {
-            $lines = [];
-            foreach ($r['flagged'] as $f) $lines[] = $f['title'] . ' (' . $f['status'] . ')';
-            $this->flash('warning', 'Checked ' . $r['checked'] . ': '
-                . count($r['flagged']) . ' no longer open — ' . implode('; ', $lines)
-                . '. Nothing was deleted.');
-        }
-
-        Flight::redirect('/workbench');
-    }
-
-    /**
-     * POST /workbench/mondayreimport — re-pull imported tasks whose item has changed.
-     *
-     * Separate from mondayrefresh on purpose. That one only FLAGS and touches
-     * nothing; this one rewrites the title, brief and priority a previous import
-     * generated. Two different promises, so two different buttons — a person
-     * checking whether a board moved on should not have their task text rewritten
-     * as a side effect.
-     */
-    public function mondayreimport($params = []) {
-        if (!$this->requireLogin()) return;
-        if (!Flight::csrf()->validateRequest()) {
-            $this->flash('error', 'Session expired, please try again.');
-            Flight::redirect('/workbench');
-            return;
-        }
-        if (!$this->mondayReady()) {
-            $this->flash('error', 'This project has no active monday.com connection.');
-            Flight::redirect('/workbench');
-            return;
-        }
-
-        // Optional: only the ticked ones. Absent means every imported task.
-        $ids = array_values(array_filter(array_map('intval', (array) ($this->getParam('tasks', []) ?: []))));
-
-        try {
-            $r = \app\MondayImport::reimport($ids ?: null, (int) $this->selected['id']);
-        } catch (\Throwable $e) {
-            Flight::get('log')?->error('workbench: monday re-import failed',
-                ['project' => $this->selected['slug'] ?? '', 'err' => $e->getMessage()]);
-            $this->flash('error', 'Could not re-pull from monday: ' . $e->getMessage());
-            Flight::redirect('/workbench');
-            return;
-        }
-
-        if (!$r['checked']) {
-            $this->flash('info', 'No imported monday items to re-pull.');
-        } elseif (!$r['updated']) {
-            $this->flash('success', 'Checked ' . $r['checked'] . ' — all already match monday.');
-        } else {
-            $lines = [];
-            foreach ($r['changes'] as $c) $lines[] = $c['title'] . ' (' . implode(', ', $c['fields']) . ')';
-            $msg = 'Updated ' . $r['updated'] . ' of ' . $r['checked'] . ': ' . implode('; ', $lines) . '.';
-            if ($r['missing']) $msg .= ' ' . $r['missing'] . ' no longer visible in monday and left alone.';
-            $this->flash('success', $msg);
+            $this->flash($r['flagged'] ? 'warning' : 'success',
+                'Checked ' . $r['checked'] . ': ' . implode('. ', $parts) . '. Nothing was deleted.');
         }
 
         Flight::redirect('/workbench');
