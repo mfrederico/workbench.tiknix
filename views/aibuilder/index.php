@@ -353,15 +353,57 @@ if (AB.has) {
       if(navigator.clipboard) navigator.clipboard.readText().then(t=>{ if(t) term.paste(t); }).catch(()=>{});
     });
 
-    freshToken().then(tok=>{
-      // Bearer over the handshake: token rides in Sec-WebSocket-Protocol, not the URL (no log leak).
-      termWs=new WebSocket(wsBase+AB.wsPath, ['tiknix-bearer', tok]);
-      termWs.onopen=()=>{ setStatus('terminal connected'); termWs.send(JSON.stringify({type:'resize',cols:term.cols,rows:term.rows})); };
-      termWs.onmessage=e=>term.write(typeof e.data==='string'?e.data:new Uint8Array(e.data));
-      termWs.onclose=()=>setStatus('terminal disconnected');
-      term.onData(d=>{ if(termWs.readyState===WebSocket.OPEN) termWs.send(JSON.stringify({type:'input',data:d})); });
-      window.addEventListener('resize',()=>{ fit.fit(); if(termWs.readyState===WebSocket.OPEN) termWs.send(JSON.stringify({type:'resize',cols:term.cols,rows:term.rows})); });
-    });
+    // Input and resize are wired ONCE, against whatever socket is current. Binding
+    // them inside connect() would add a fresh handler per reconnect, so after three
+    // drops every keystroke would be sent three times.
+    term.onData(d=>{ if(termWs && termWs.readyState===WebSocket.OPEN) termWs.send(JSON.stringify({type:'input',data:d})); });
+    window.addEventListener('resize',()=>{ fit.fit(); if(termWs && termWs.readyState===WebSocket.OPEN) termWs.send(JSON.stringify({type:'resize',cols:term.cols,rows:term.rows})); });
+
+    // Reconnect with backoff.
+    //
+    // onclose used to just set a status string, so ANY close was permanent until
+    // the page was reloaded — a bridge restart, a network blip, a laptop lid.
+    // The session itself survives on the bridge (it reaps on idle, not on
+    // disconnect), so reattaching gets the same agent and its scrollback back.
+    //
+    // A fresh token per attempt, because the old one is single-use: the bridge
+    // burns it at the handshake, so replaying it fails closed.
+    let retry=0, closedForGood=false;
+    const MAX_RETRY_MS=15000;
+
+    function connect(){
+      freshToken().then(tok=>{
+        // Bearer over the handshake: token rides in Sec-WebSocket-Protocol, not the URL (no log leak).
+        termWs=new WebSocket(wsBase+AB.wsPath, ['tiknix-bearer', tok]);
+        termWs.onopen=()=>{
+          if(retry) term.write('\r\n\x1b[32m[reconnected]\x1b[0m\r\n');
+          retry=0;
+          setStatus('terminal connected');
+          termWs.send(JSON.stringify({type:'resize',cols:term.cols,rows:term.rows}));
+        };
+        termWs.onmessage=e=>term.write(typeof e.data==='string'?e.data:new Uint8Array(e.data));
+        termWs.onclose=()=>{
+          if(closedForGood) return;
+          retry++;
+          // 1s, 2s, 4s… capped. Capped rather than unbounded so a bridge that comes
+          // back after ten minutes is picked up without anybody touching the page.
+          const wait=Math.min(1000*Math.pow(2,retry-1), MAX_RETRY_MS);
+          setStatus('terminal disconnected — reconnecting in '+Math.round(wait/1000)+'s');
+          setTimeout(()=>{ if(!closedForGood) connect(); }, wait);
+        };
+      }).catch(()=>{
+        // Could not even mint a token (session expired, core unreachable). Keep
+        // trying on the same backoff rather than dying silently, which is the
+        // behaviour this replaced.
+        retry++;
+        const wait=Math.min(1000*Math.pow(2,retry-1), MAX_RETRY_MS);
+        setStatus('terminal disconnected — retrying in '+Math.round(wait/1000)+'s');
+        setTimeout(()=>{ if(!closedForGood) connect(); }, wait);
+      });
+    }
+
+    window.addEventListener('beforeunload',()=>{ closedForGood=true; });
+    connect();
   }
 
   // --- Changes panel (polls so terminal edits show up live) ---
