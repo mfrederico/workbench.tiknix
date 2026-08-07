@@ -1,7 +1,26 @@
 <?php
-// Extract domain from baseurl for subdomain URLs
-$baseUrl = \Flight::get('baseurl') ?? 'https://localhost';
-$baseDomain = preg_replace('#^https?://#', '', $baseUrl);
+// The domain a test server is reachable on.
+//
+// This USED to be `Flight::get('baseurl') ?? 'https://localhost'`, computed here,
+// a second time, independently of the controller. In the sidecar Flight has no
+// plain 'baseurl' — only app.baseurl — so it fell through and printed
+// https://<hash>.localhost for a preview that was genuinely live at
+// <hash>.tiknix.com the whole time. The proxy, DNS and certificate were all
+// working; only this string was wrong, which is the most expensive kind of bug to
+// look at because everything about it says the feature is broken.
+//
+// Controllers::serverBaseurl() already resolves this correctly (baseurl, then
+// sidecar.core_url). Two copies of one rule drift, and this is what that costs, so
+// the fallback chain lives in ONE place and the view asks for it.
+//
+// `?:` not `??`: Flight::get returns '' for a key that exists and is empty, and
+// '' is not null — the old `??` would have kept an empty domain.
+//
+// And NO localhost fallback. An unset domain is a configuration fault, and the
+// honest rendering of it is to say so rather than to print a link that cannot
+// work. $baseDomain === '' is what the markup below checks.
+$baseUrl    = (string) (\Flight::get('baseurl') ?: \Flight::get('sidecar.core_url') ?: '');
+$baseDomain = $baseUrl === '' ? '' : preg_replace('#^https?://#', '', rtrim($baseUrl, '/'));
 ?>
 <div class="container-fluid py-4">
     <div class="row">
@@ -783,10 +802,15 @@ $baseDomain = preg_replace('#^https?://#', '', $baseUrl);
                         <?php if ($task->testServerSession): ?>
                             <div class="alert alert-success py-2 mb-2">
                                 <i class="bi bi-check-circle me-1"></i>
-                                <?php if ($task->proxyHash): ?>
-                                    Running at <a href="https://<?= htmlspecialchars(($task->proxyHash) ?? '') ?>.<?= $baseDomain ?>" target="_blank" class="fw-bold">
-                                        <?= htmlspecialchars(($task->proxyHash) ?? '') ?>.<?= $baseDomain ?>
+                                <?php if ($task->proxyHash && $baseDomain !== ''): ?>
+                                    Running at <a href="https://<?= htmlspecialchars(($task->proxyHash) ?? '') ?>.<?= htmlspecialchars($baseDomain) ?>" target="_blank" class="fw-bold">
+                                        <?= htmlspecialchars(($task->proxyHash) ?? '') ?>.<?= htmlspecialchars($baseDomain) ?>
                                     </a>
+                                <?php elseif ($task->proxyHash): ?>
+                                    Running, but this install has no public domain configured, so the preview
+                                    address cannot be built — set <code>[sidecar] core_url</code> in
+                                    <code>conf/config.ini</code>. Reachable meanwhile on
+                                    <a href="http://localhost:<?= $task->assignedPort ?>" target="_blank">localhost:<?= $task->assignedPort ?></a>.
                                 <?php else: ?>
                                     Running on <a href="http://localhost:<?= $task->assignedPort ?>" target="_blank">localhost:<?= $task->assignedPort ?></a>
                                 <?php endif; ?>
@@ -798,10 +822,10 @@ $baseDomain = preg_replace('#^https?://#', '', $baseUrl);
                                 <code class="small d-block text-center mt-1">tmux attach -t <?= htmlspecialchars(($task->testServerSession) ?? '') ?></code>
                             </div>
                         <?php else: ?>
-                            <?php if ($task->proxyHash): ?>
+                            <?php if ($task->proxyHash && $baseDomain !== ''): ?>
                                 <p class="small text-muted mb-2">
                                     <i class="bi bi-globe me-1"></i>
-                                    Test URL: <code><?= htmlspecialchars(($task->proxyHash) ?? '') ?>.<?= $baseDomain ?></code>
+                                    Test URL: <code><?= htmlspecialchars(($task->proxyHash) ?? '') ?>.<?= htmlspecialchars($baseDomain) ?></code>
                                 </p>
                             <?php endif; ?>
                             <div class="d-grid">

@@ -46,7 +46,20 @@ class Workbench extends BuildControl {
      * core url; that null-baseurl→localhost gap is why an in-sidecar test server was unreachable.
      */
     protected function serverBaseurl(): string {
-        return (string) (Flight::get('baseurl') ?: Flight::get('sidecar.core_url') ?: 'https://localhost');
+        // NO localhost fallback. It used to end `?: 'https://localhost'`, and that
+        // single default is the whole bug: a preview genuinely live at
+        // <hash>.tiknix.com was advertised as <hash>.localhost, which reads as a
+        // broken feature rather than a missing setting. A wrong answer that looks
+        // right costs more than no answer.
+        //
+        // An empty return means "this install has not been told its public domain",
+        // and every caller says so plainly instead of printing a link that cannot work.
+        $url = (string) (Flight::get('baseurl') ?: Flight::get('sidecar.core_url') ?: '');
+        if ($url === '') {
+            Flight::get('log')?->error('serverBaseurl: no baseurl and no sidecar.core_url — '
+                . 'test-server preview URLs cannot be built. Set [sidecar] core_url in conf/config.ini.');
+        }
+        return rtrim($url, '/');
     }
 
     /**
