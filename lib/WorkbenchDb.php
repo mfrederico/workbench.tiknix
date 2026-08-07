@@ -17,12 +17,31 @@ class WorkbenchDb {
         return $parent . '/' . $inst['slug'] . '.' . $app;
     }
 
+    /** The connection key for an instance's workbench.db. One namer, so callers agree. */
+    public static function key(string $slug): string { return 'ws:' . $slug; }
+
     /** Select this instance's workbench.db (creates dir + DB + tables on first use). */
     public static function select(string $instanceDir, string $slug): void {
-        $key = 'ws:' . $slug;
+        $key = self::key($slug);
         $dir = rtrim($instanceDir, '/') . '/data';
         if (!is_dir($dir)) @mkdir($dir, 0775, true);
-        if (!Bean::hasDatabase($key)) Bean::addDatabase($key, 'sqlite:' . $dir . '/workbench.db');
+        if (!Bean::hasDatabase($key)) {
+            // DELIBERATELY UNCACHED — the sixth argument is not an oversight.
+            //
+            // Bean::addDatabase now gives secondary connections the query cache, which is
+            // right for a database only web requests write. This one is the opposite: the
+            // build board is written by plan-orchestrate.php, plan-ingest.php and
+            // PlanExecutor on the CLI, and read here over HTTP. APCu memory is per-SAPI,
+            // so those writers cannot stamp a version this process will ever see — a
+            // cached read would sit stale until the TTL lapsed while a build moved on
+            // underneath it. Task status going quietly stale is the exact confusion that
+            // made a board full of "stalled" and "awaiting" impossible to trust, and a
+            // 60-second-old answer here is worse than a slower fresh one.
+            //
+            // Redis would remove this restriction (one namespace across every process);
+            // until then, correctness wins.
+            Bean::addDatabase($key, 'sqlite:' . $dir . '/workbench.db', null, null, false, false);
+        }
         Bean::selectDatabase($key);
         Bean::freeze(false);   // fluid: auto-create workbenchtask/taskcomment/… on first store
     }

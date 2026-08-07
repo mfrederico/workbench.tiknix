@@ -127,12 +127,18 @@ class Workbench extends BuildControl {
 
         $this->viewData['title'] = 'Task Board';
 
-        // Freshly-ingested tasks (written by the headless plan-ingest.php CLI, which
-        // has its own DB connection) don't invalidate this web process's query cache,
-        // so a just-decomposed plan could stay hidden for up to the cache TTL. Bust
-        // the task table before reading so newly-landed plans show immediately.
-        $ad = Flight::get('cachedDatabaseAdapter');
-        if ($ad instanceof \app\CachedDatabaseAdapter) $ad->invalidateTable('workbenchtask');
+        // Freshly-ingested tasks are written by the headless plan-ingest.php CLI, whose
+        // APCu segment this process cannot see, so it can never invalidate what we cached.
+        // workbenchtask lives in the instance's workbench.db, which WorkbenchDb therefore
+        // opens uncached — so today this is already fresh and the call below does nothing.
+        //
+        // It stays, addressed to the RIGHT connection. It used to ask
+        // Flight::get('cachedDatabaseAdapter'), which is always the DEFAULT connection:
+        // that stamped a version for 'workbenchtask' in CORE's namespace, for a table in
+        // a different database. It invalidated nothing while reading exactly like a
+        // guard that worked. If workbench.db is ever cached (Redis), this starts working
+        // instead of quietly continuing not to.
+        $this->bustTaskCache();
 
         // Get filter parameters
         $filters = [
@@ -961,8 +967,7 @@ class Workbench extends BuildControl {
         // subtask list — dropping $planRollup and rendering the task-level
         // "Approve & Merge" button on a plan parent, which merges the (branchless)
         // parent and corrupts its status. Bust before we load/find anything.
-        $ad = Flight::get('cachedDatabaseAdapter');
-        if ($ad instanceof \app\CachedDatabaseAdapter) $ad->invalidateTable('workbenchtask');
+        $this->bustTaskCache();
 
         $task = Bean::load('workbenchtask', $taskId);
         if (!$task->id) {

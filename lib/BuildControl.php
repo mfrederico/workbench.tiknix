@@ -61,6 +61,27 @@ abstract class BuildControl extends Control {
         ];
     }
 
+    /**
+     * Drop any cached reads of the task tables for the SELECTED project.
+     *
+     * Addressed to the connection that actually holds workbenchtask — the instance's own
+     * workbench.db — not to Flight::get('cachedDatabaseAdapter'), which is always the
+     * DEFAULT connection. Busting a table on the wrong adapter stamps a version in the
+     * wrong database's namespace: it invalidates nothing, and reads exactly like a guard
+     * that works.
+     *
+     * WorkbenchDb opens that connection UNCACHED on purpose (CLI writes it, see there), so
+     * Bean::cacheAdapter returns null and this is a no-op today. That is the point: the
+     * call states the intent in one place, and starts doing something the moment the
+     * connection can be cached, without anyone having to remember these call sites.
+     */
+    protected function bustTaskCache(): void {
+        if (!$this->selected) return;
+        $ad = \app\Bean::cacheAdapter(WorkbenchDb::key((string) $this->selected['slug']));
+        if (!$ad) return;                       // connection is uncached — nothing to drop
+        foreach (['workbenchtask', 'tasklog', 'taskcomment'] as $t) $ad->invalidateTable($t);
+    }
+
     /** Point RedBean + child processes at this instance's per-instance workbench.db. */
     protected function selectInstance(array $inst): void {
         $this->selected = $inst;
