@@ -802,9 +802,13 @@ $baseDomain = $baseUrl === '' ? '' : preg_replace('#^https?://#', '', rtrim($bas
                         <?php if ($task->testServerSession): ?>
                             <div class="alert alert-success py-2 mb-2">
                                 <i class="bi bi-check-circle me-1"></i>
-                                <?php if ($task->proxyHash && $baseDomain !== ''): ?>
-                                    Running at <a href="https://<?= htmlspecialchars(($task->proxyHash) ?? '') ?>.<?= htmlspecialchars($baseDomain) ?>" target="_blank" class="fw-bold">
-                                        <?= htmlspecialchars(($task->proxyHash) ?? '') ?>.<?= htmlspecialchars($baseDomain) ?>
+                                <?php if ($task->proxyHash && $baseDomain !== ''):
+                                    // The SAME helper the proxy file is named from — the link and
+                                    // the file must agree exactly or the host 404s.
+                                    $previewHost = \app\Workbench::previewLabel((string) $task->proxyHash, (string) $task->instanceTag) . '.' . $baseDomain;
+                                ?>
+                                    Running at <a href="https://<?= htmlspecialchars($previewHost) ?>" target="_blank" class="fw-bold">
+                                        <?= htmlspecialchars($previewHost) ?>
                                     </a>
                                 <?php elseif ($task->proxyHash): ?>
                                     Running, but this install has no public domain configured, so the preview
@@ -825,7 +829,7 @@ $baseDomain = $baseUrl === '' ? '' : preg_replace('#^https?://#', '', rtrim($bas
                             <?php if ($task->proxyHash && $baseDomain !== ''): ?>
                                 <p class="small text-muted mb-2">
                                     <i class="bi bi-globe me-1"></i>
-                                    Test URL: <code><?= htmlspecialchars(($task->proxyHash) ?? '') ?>.<?= htmlspecialchars($baseDomain) ?></code>
+                                    Test URL: <code><?= htmlspecialchars(\app\Workbench::previewLabel((string) $task->proxyHash, (string) $task->instanceTag) . '.' . $baseDomain) ?></code>
                                 </p>
                             <?php endif; ?>
                             <div class="d-grid">

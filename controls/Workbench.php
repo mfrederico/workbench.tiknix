@@ -45,6 +45,49 @@ class Workbench extends BuildControl {
      * Flight has no 'baseurl' (only 'app.baseurl'=workbench.tiknix.com), so fall back to the
      * core url; that null-baseurl→localhost gap is why an in-sidecar test server was unreachable.
      */
+    /**
+     * The hostname label a test server is published under.
+     *
+     * ONE definition, because this string is used twice — as the subdomain in the
+     * URL, and as the suffix of the /var/www/html/.proxy.<label>.<domain> file
+     * nginx reads. Those two must agree exactly or the link 404s, and they were
+     * previously written out by hand in both places.
+     *
+     * The `preview-` prefix says what the host IS. A bare 12-hex label shares a
+     * namespace with real instances (<slug>.tiknix.com), so nothing distinguished a
+     * throwaway preview from a customer's site, and nothing stopped a hash
+     * colliding with a slug.
+     *
+     * EXISTING previews are unaffected: stop and cleanup use $task->proxyFile, the
+     * path recorded when the file was written, so anything already running is still
+     * removed correctly. A restart republishes it under the new label.
+     */
+    public static function previewLabel(string $proxyHash, string $instanceTag = ''): string {
+        // The project the preview belongs to, so the host says whose it is:
+        //   preview-floorplan-dd2e9b-cfa3ac1deeca.tiknix.com
+        // instance_tag arrives as "<slug>.tiknix"; the app suffix is dropped because
+        // the domain already supplies it.
+        $slug = preg_replace('/\.[a-z0-9]+$/i', '', trim($instanceTag));
+
+        // DNS labels allow letters, digits and hyphens only, and cannot start or end
+        // with one. A slug that fails this would produce a host that simply does not
+        // resolve — silently, which is the failure mode this whole area keeps having.
+        $slug = strtolower(preg_replace('/[^A-Za-z0-9-]+/', '-', $slug));
+        $slug = trim($slug, '-');
+
+        $label = $slug === '' ? 'preview-' . $proxyHash : 'preview-' . $slug . '-' . $proxyHash;
+
+        // 63 octets is the hard limit for one DNS label. Only the slug is trimmed —
+        // the hash is what makes the name unique and the prefix is what makes it
+        // recognisable, so neither may be sacrificed.
+        if (strlen($label) > 63) {
+            $keep  = 63 - strlen('preview-') - 1 - strlen($proxyHash);
+            $slug  = rtrim(substr($slug, 0, max(0, $keep)), '-');
+            $label = $slug === '' ? 'preview-' . $proxyHash : 'preview-' . $slug . '-' . $proxyHash;
+        }
+        return $label;
+    }
+
     protected function serverBaseurl(): string {
         // NO localhost fallback. It used to end `?: 'https://localhost'`, and that
         // single default is the whole bug: a preview genuinely live at
@@ -3697,7 +3740,7 @@ class Workbench extends BuildControl {
                 $baseDomain = preg_replace('#^https?://#', '', $this->serverBaseurl());
                 // Strip TLD (e.g., .com, .net) - nginx lua expects domain without TLD
                 $baseDomain = preg_replace('/\.[a-z]{2,}$/i', '', $baseDomain);
-                $proxyFile = "/var/www/html/.proxy.{$task->proxyHash}.{$baseDomain}";
+                $proxyFile = "/var/www/html/.proxy." . self::previewLabel($task->proxyHash, (string) $task->instanceTag) . ".{$baseDomain}";
                 $proxyContent = "proxyhost=127.0.0.1\nproxyport={$task->assignedPort}";
                 if (file_put_contents($proxyFile, $proxyContent) !== false) {
                     $task->proxyFile = $proxyFile;
@@ -3707,8 +3750,10 @@ class Workbench extends BuildControl {
             Bean::store($task);
 
             $baseDomain = $baseDomain ?? preg_replace('#^https?://#', '', $this->serverBaseurl());
-            $testUrl = !empty($task->proxyHash)
-                ? "https://{$task->proxyHash}.{$baseDomain}"
+            // Empty $baseDomain means this install has not been told its public
+            // domain (see serverBaseurl) — say the port rather than invent a host.
+            $testUrl = (!empty($task->proxyHash) && $baseDomain !== '')
+                ? 'https://' . self::previewLabel($task->proxyHash, (string) $task->instanceTag) . '.' . $baseDomain
                 : "http://localhost:{$task->assignedPort}";
 
             $this->logTaskEvent($task->id, 'info', 'system', "Test server auto-started on port {$task->assignedPort}");
