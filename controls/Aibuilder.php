@@ -790,8 +790,9 @@ class Aibuilder extends BuildControl {
             Flight::jsonError('Approve the plan before running it (or it is already building).', 409);
             return;
         }
-        $session = 'tiknix-plan' . (int)$plan->id . '-orchestrator';
-        if (TmuxManager::exists($session)) { Flight::jsonError('This plan is already running.', 409); return; }
+        if (\app\PlanOrchestrator::running((int)$plan->id, (string)$inst->slug)) {
+            Flight::jsonError('This plan is already running.', 409); return;
+        }
 
         $dir = $this->instanceDir($inst->slug);
         // Worker model for the orchestrator. The executor runs the claude CLI for every
@@ -813,7 +814,10 @@ class Aibuilder extends BuildControl {
         $plan->status     = 'running';   // sync the plain status column for the Workbench list
         $plan->updatedAt  = date('Y-m-d H:i:s');
         R::store($plan);
-        Flight::jsonSuccess(['session' => $session], 'Build started — up to ' . PlanExecutor::MAX_CONCURRENT . ' agents running.');
+        Flight::jsonSuccess(
+            ['session' => \app\PlanOrchestrator::sessionName((int)$plan->id, (string)$inst->slug)],
+            'Build started — up to ' . PlanExecutor::MAX_CONCURRENT . ' agents running.'
+        );
     }
 
     /** GET /aibuilder/planprogress?plan= — per-task build status for the live board. JSON. */
@@ -821,7 +825,7 @@ class Aibuilder extends BuildControl {
         if (!$this->requireLevel($this->minLevel())) return;
         $pi = $this->ownedPlan($this->getParam('plan', 0));
         if (!$pi) { Flight::jsonError('No such plan', 404); return; }
-        [$plan] = $pi;
+        [$plan, $inst] = $pi;
         $subs = R::find('workbenchtask', 'parent_task_id = ? ORDER BY priority ASC, id ASC', [(int)$plan->id]);
         $tasks = [];
         foreach ($subs as $s) {
@@ -833,7 +837,7 @@ class Aibuilder extends BuildControl {
         }
         Flight::jsonSuccess([
             'plan_status' => $plan->planStatus ?: 'draft',
-            'running'     => TmuxManager::exists('tiknix-plan' . (int)$plan->id . '-orchestrator'),
+            'running'     => \app\PlanOrchestrator::running((int)$plan->id, (string)$inst->slug),
             'tasks'       => $tasks,
         ]);
     }

@@ -573,16 +573,20 @@ class Workbench extends BuildControl {
         $inst = $instanceId ? $this->access->instanceMeta((int)$instanceId) : null;
         if (!$inst || !$inst->id || !$this->access->canAccessInstance((int)$this->member->id, (int)$inst->id)) { Flight::jsonError('No valid instance for these tasks.', 409); return; }
 
-        // Don't consolidate tasks whose plan is actively building.
+        $slug = (string)$inst->slug;
+        $app  = $inst->app ?: 'tiknix';
+
+        // Don't consolidate tasks whose plan is actively building. Asked through
+        // PlanOrchestrator so the project is part of the question: the bare name
+        // matched plan 26 in EVERY project, so a build on one instance refused a
+        // consolidation on another.
         foreach (array_keys($parentIds) as $pid) {
-            if (TmuxManager::exists('tiknix-plan' . $pid . '-orchestrator')) {
+            if (PlanOrchestrator::running((int)$pid, $slug)) {
                 Flight::jsonError('A plan involved is currently building — stop it before consolidating.', 409);
                 return;
             }
         }
 
-        $slug = (string)$inst->slug;
-        $app  = $inst->app ?: 'tiknix';
         $instanceDir = '/var/www/html/default/' . $slug . '.' . $app;
         if (!is_file($instanceDir . '/public/index.php')) { Flight::jsonError('That instance is not available on disk.', 409); return; }
 
@@ -685,7 +689,7 @@ class Workbench extends BuildControl {
             Flight::jsonError('Approve the plan before building it (or it is already building).', 409);
             return;
         }
-        if (TmuxManager::exists('tiknix-plan' . (int)$plan->id . '-orchestrator')) { Flight::jsonError('This plan is already running.', 409); return; }
+        if (PlanOrchestrator::running((int)$plan->id, (string)$inst->slug)) { Flight::jsonError('This plan is already running.', 409); return; }
         if (!$this->startOrchestrator($plan, $inst)) {
             Flight::jsonError('Could not start the orchestrator.', 500);
             return;
@@ -728,7 +732,7 @@ class Workbench extends BuildControl {
         if (!$plan->id) { Flight::jsonError('Parent plan not found', 404); return; }
         $inst = $plan->instanceId ? $this->access->instanceMeta((int)$plan->instanceId) : null;
         if (!$inst || !$inst->id) { Flight::jsonError('This plan has no linked instance.', 409); return; }
-        if (TmuxManager::exists('tiknix-plan' . (int)$plan->id . '-orchestrator')) {
+        if (PlanOrchestrator::running((int)$plan->id, (string)$inst->slug)) {
             Flight::jsonError('This plan is already building — the task will be picked up in that run.', 409);
             return;
         }
@@ -757,8 +761,9 @@ class Workbench extends BuildControl {
         if (!$this->planActionGuard()) return;
         $pi = $this->ownedPlan($this->getParam('plan_id', 0));
         if (!$pi) { Flight::jsonError('No such plan', 404); return; }
-        [$plan] = $pi;
-        if ($plan->planStatus === 'building' || TmuxManager::exists('tiknix-plan' . (int)$plan->id . '-orchestrator')) {
+        [$plan, $inst] = $pi;
+        if ($plan->planStatus === 'building'
+            || PlanOrchestrator::running((int)$plan->id, (string)($inst->slug ?? ''))) {
             Flight::jsonError('This plan is building — stop the build before deleting it.', 409);
             return;
         }
@@ -975,13 +980,13 @@ class Workbench extends BuildControl {
 
         // Sync tmux status to database for running tasks.
         // Plan-decompose subtasks are owned by PlanExecutor (separate worktree +
-        // "tiknix-plan<N>-task<M>" session), NOT by ClaudeRunner. Never let this
+        // a tiknix-<slug>-plan<N>-task<M> session), NOT by ClaudeRunner. Never let this
         // view's poller touch them — its ClaudeRunner session name won't match, so
         // exists() returns false and it would race the executor by force-failing a
         // live subtask.
         $isPlanManaged = !empty($task->planRef)
             || !empty($task->worktreeBranch)
-            || strncmp((string)$task->agentSession, 'tiknix-plan', 11) === 0;
+            || TmuxManager::isPlanSession((string)$task->agentSession);
         if (!$isPlanManaged && $task->status === 'running') {
             $workspacePath = $task->projectPath ?: Flight::get('project_root');
             $runner = new ClaudeRunner($taskId, $task->memberId, $task->teamId, $workspacePath);
@@ -1336,7 +1341,12 @@ class Workbench extends BuildControl {
             // If this task is a plan parent, deleting it removes the WHOLE chain:
             // stop its orchestrator, then cascade-delete every subtask (and each
             // subtask's own logs/snapshots/comments + any running agent session).
-            TmuxManager::kill('tiknix-plan' . $taskId . '-orchestrator');
+            //
+            // Scoped by the task's own project. The bare name killed plan <id>'s
+            // orchestrator in EVERY project, so deleting a finished plan 26 here
+            // stopped a live plan 26 building somewhere else. PlanOrchestrator::stop
+            // also covers a session still running under the pre-rename name.
+            PlanOrchestrator::stop($taskId, (string) (strstr((string)($task->instanceTag ?? ''), '.', true) ?: ''));
             $subtaskCount = 0;
             foreach (Bean::find('workbenchtask', 'parent_task_id = ?', [$taskId]) as $sub) {
                 if (!empty($sub->agentSession)) TmuxManager::kill((string)$sub->agentSession);
@@ -2816,7 +2826,7 @@ class Workbench extends BuildControl {
         // CURRENTLY doing. Read-only: it never writes the bean, so it can't race the
         // executor that owns this task's status.
         $isPlanManaged = !empty($task->planRef) || !empty($task->worktreeBranch)
-            || strncmp((string)$task->agentSession, 'tiknix-plan', 11) === 0;
+            || TmuxManager::isPlanSession((string)$task->agentSession);
         if (in_array($task->status, ['running', 'queued'], true) && $isPlanManaged && empty($progress['live'])) {
             $act = $this->planAgentActivity($task);
             if ($act['current'] !== null || $act['running']) {
@@ -3708,7 +3718,7 @@ class Workbench extends BuildControl {
         }
 
         try {
-            $sessionName = TmuxManager::buildServerSessionName($memberId, $task->id);
+            $sessionName = TmuxManager::buildServerSessionName($memberId, $task->id, preg_replace('/\.[a-z0-9]+$/i', '', (string) $task->instanceTag));
             $projectPath = !empty($task->projectPath) ? $task->projectPath : dirname(__DIR__);
 
             // Build the server command
