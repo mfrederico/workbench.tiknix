@@ -28,18 +28,23 @@ class WorkbenchDb {
         if (!Bean::hasDatabase($key)) {
             // DELIBERATELY UNCACHED — the sixth argument is not an oversight.
             //
-            // Bean::addDatabase now gives secondary connections the query cache, which is
-            // right for a database only web requests write. This one is the opposite: the
-            // build board is written by plan-orchestrate.php, plan-ingest.php and
-            // PlanExecutor on the CLI, and read here over HTTP. APCu memory is per-SAPI,
-            // so those writers cannot stamp a version this process will ever see — a
-            // cached read would sit stale until the TTL lapsed while a build moved on
-            // underneath it. Task status going quietly stale is the exact confusion that
-            // made a board full of "stalled" and "awaiting" impossible to trust, and a
-            // 60-second-old answer here is worse than a slower fresh one.
+            // The build board is written by plan-orchestrate.php, plan-ingest.php and
+            // PlanExecutor on the CLI, and read here over HTTP. Task status going quietly
+            // stale is the exact confusion that made a board full of "stalled" and
+            // "awaiting" impossible to trust, so a 60-second-old answer here is worse than
+            // a slower fresh one.
             //
-            // Redis would remove this restriction (one namespace across every process);
-            // until then, correctness wins.
+            // Core CAN now invalidate across that boundary: [cache] version_store =
+            // valkey puts the per-table generations in a service every process shares, so
+            // a CLI write does reach a web reader (measured — with apcu versions the same
+            // test served a stale count, with valkey it did not). Two things must both be
+            // true before flipping this to cached, and neither is today:
+            //   1. this sidecar has NO query cache at all — no [cache] block in its
+            //      conf/config.ini, so query_cache is null and nothing is cached anyway;
+            //   2. if it gains one, it MUST also set version_store = valkey. Core writing
+            //      generations to valkey while this process read them from apcu would put
+            //      the writer and the reader in different namespaces — the same split that
+            //      the DSN-only cache prefix was just fixed to remove.
             Bean::addDatabase($key, 'sqlite:' . $dir . '/workbench.db', null, null, false, false);
         }
         Bean::selectDatabase($key);

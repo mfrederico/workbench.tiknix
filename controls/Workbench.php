@@ -696,6 +696,28 @@ class Workbench extends BuildControl {
             return;
         }
         if (PlanOrchestrator::running((int)$plan->id, (string)$inst->slug)) { Flight::jsonError('This plan is already running.', 409); return; }
+
+        // SAY WHY IT CANNOT BUILD, instead of starting an orchestrator that stalls.
+        //
+        // Pressing Build on a plan whose remaining subtasks are all blocked used to spawn
+        // an orchestrator that ticked once, found nothing launchable, wrote "stalled" and
+        // exited. The page refreshed to the same stalled plan with no error — identical
+        // to the button being broken. Plan 32 on floorplan sat like that: two subtasks
+        // were left in `awaiting` (a status the executor never launches and nothing ever
+        // moves), so the three that depended on them could never start.
+        $dir   = '/var/www/html/default/' . $inst->slug . '.' . ($inst->app ?: 'tiknix');
+        $check = (new PlanExecutor((int) $plan->id, (string) $inst->slug, $dir, (int) $this->member->level))
+                    ->progressCheck();
+        if ($check['ready'] === 0 && $check['running'] === 0) {
+            $why = $check['roots']
+                ? implode('; ', $check['roots'])
+                : 'no subtask is ready and none is running';
+            Flight::jsonError('This plan cannot start: ' . $why
+                . '. Reset or re-run those subtasks first — a subtask left in "awaiting" '
+                . 'is never picked up by a build.', 409);
+            return;
+        }
+
         if (!$this->startOrchestrator($plan, $inst)) {
             Flight::jsonError('Could not start the orchestrator.', 500);
             return;
@@ -732,7 +754,26 @@ class Workbench extends BuildControl {
         $task = Bean::load('workbenchtask', (int)$this->getParam('task_id', 0));
         if (!$task->id || !$this->access->canRun((int)$this->member->id, $task)) { Flight::jsonError('No such task', 404); return; }
         if (empty($task->parentTaskId)) { Flight::jsonError('Only a plan subtask can be retried this way.', 409); return; }
-        if (!in_array($task->status, ['failed', 'conflict'], true)) { Flight::jsonError('Only a failed task can be retried.', 409); return; }
+        // `awaiting` is retryable ONLY once its session is gone.
+        //
+        // While the session is alive, awaiting means the agent asked something and is
+        // holding at its prompt — the session IS the question, and resetting the task
+        // would throw away work mid-flight. Once the session has ended there is no
+        // question left to answer and nothing will ever move the task again: the
+        // executor launches `pending` only, and treats `awaiting` as neither done nor
+        // startable. That is a dead end with no way out of the UI, and it is how plan 32
+        // on floorplan stalled permanently behind two subtasks.
+        $retryable = ['failed', 'conflict'];
+        $session   = trim((string) ($task->agentSession ?: $task->tmuxSession ?: ''));
+        if ($task->status === 'awaiting' && ($session === '' || !TmuxManager::exists($session))) {
+            $retryable[] = 'awaiting';
+        }
+        if (!in_array($task->status, $retryable, true)) {
+            Flight::jsonError($task->status === 'awaiting'
+                ? 'This task is waiting on you and its console is still live — answer it there, or stop the session first.'
+                : 'Only a failed task can be retried.', 409);
+            return;
+        }
 
         $plan = Bean::load('workbenchtask', (int)$task->parentTaskId);
         if (!$plan->id) { Flight::jsonError('Parent plan not found', 404); return; }
