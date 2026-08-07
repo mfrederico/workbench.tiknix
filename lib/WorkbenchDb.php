@@ -7,7 +7,6 @@
 namespace app;
 
 use \Flight as Flight;
-use RedBeanPHP\R;
 
 class WorkbenchDb {
 
@@ -23,9 +22,9 @@ class WorkbenchDb {
         $key = 'ws:' . $slug;
         $dir = rtrim($instanceDir, '/') . '/data';
         if (!is_dir($dir)) @mkdir($dir, 0775, true);
-        if (!R::hasDatabase($key)) R::addDatabase($key, 'sqlite:' . $dir . '/workbench.db');
-        R::selectDatabase($key);
-        R::freeze(false);   // fluid: auto-create workbenchtask/taskcomment/… on first store
+        if (!Bean::hasDatabase($key)) Bean::addDatabase($key, 'sqlite:' . $dir . '/workbench.db');
+        Bean::selectDatabase($key);
+        Bean::freeze(false);   // fluid: auto-create workbenchtask/taskcomment/… on first store
     }
 
     /** The instance's workbench.db file path (for the TIKNIX_WORKBENCH_DB env of children). */
@@ -41,5 +40,5 @@ class WorkbenchDb {
     }
 
     /** Back to the sidecar's own default DB (Kit metadata). */
-    public static function selectDefault(): void { R::selectDatabase('default'); }
+    public static function selectDefault(): void { Bean::selectDatabase('default'); }
 }

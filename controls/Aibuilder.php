@@ -25,7 +25,6 @@ namespace app;
 
 use \Flight as Flight;
 use app\BaseControls\Control;
-use RedBeanPHP\R;
 use app\EngineRegistry;
 use app\MemberEnginePrefs;
 use app\BrokerService;
@@ -690,10 +689,10 @@ class Aibuilder extends BuildControl {
         $inst = $this->accessibleInstance($this->getParam('id', 0));
         if (!$inst) { Flight::jsonError('No such instance', 404); return; }
 
-        $parents = R::find('workbenchtask', 'instance_id = ? AND parent_task_id IS NULL ORDER BY created_at DESC', [(int)$inst->id]);
+        $parents = Bean::find('workbenchtask', 'instance_id = ? AND parent_task_id IS NULL ORDER BY created_at DESC', [(int)$inst->id]);
         $plans = [];
         foreach ($parents as $p) {
-            $subs = R::find('workbenchtask', 'parent_task_id = ? ORDER BY priority ASC, id ASC', [(int)$p->id]);
+            $subs = Bean::find('workbenchtask', 'parent_task_id = ? ORDER BY priority ASC, id ASC', [(int)$p->id]);
             $plans[] = [
                 'id' => (int)$p->id, 'title' => $p->title, 'summary' => $p->description,
                 'checkpoint' => $p->planCheckpoint, 'status' => $p->status,
@@ -755,7 +754,7 @@ class Aibuilder extends BuildControl {
     private function ownedPlan($planId) {
         $planId = (int)$planId;
         if ($planId <= 0) return null;
-        $plan = R::load('workbenchtask', $planId);
+        $plan = Bean::load('workbenchtask', $planId);
         if (!$plan->id || $plan->parentTaskId) return null;         // must be a plan parent
         $inst = $this->accessibleInstance((int)$plan->instanceId);
         if (!$inst) return null;
@@ -771,7 +770,7 @@ class Aibuilder extends BuildControl {
         [$plan] = $pi;
         $plan->planStatus = 'approved';
         $plan->updatedAt  = date('Y-m-d H:i:s');
-        R::store($plan);
+        Bean::store($plan);
         Flight::jsonSuccess(['plan_status' => 'approved'], 'Plan approved — ready to build.');
     }
 
@@ -813,7 +812,7 @@ class Aibuilder extends BuildControl {
         $plan->planStatus = 'building';
         $plan->status     = 'running';   // sync the plain status column for the Workbench list
         $plan->updatedAt  = date('Y-m-d H:i:s');
-        R::store($plan);
+        Bean::store($plan);
         Flight::jsonSuccess(
             ['session' => \app\PlanOrchestrator::sessionName((int)$plan->id, (string)$inst->slug)],
             'Build started — up to ' . PlanExecutor::MAX_CONCURRENT . ' agents running.'
@@ -826,7 +825,7 @@ class Aibuilder extends BuildControl {
         $pi = $this->ownedPlan($this->getParam('plan', 0));
         if (!$pi) { Flight::jsonError('No such plan', 404); return; }
         [$plan, $inst] = $pi;
-        $subs = R::find('workbenchtask', 'parent_task_id = ? ORDER BY priority ASC, id ASC', [(int)$plan->id]);
+        $subs = Bean::find('workbenchtask', 'parent_task_id = ? ORDER BY priority ASC, id ASC', [(int)$plan->id]);
         $tasks = [];
         foreach ($subs as $s) {
             $tasks[] = [

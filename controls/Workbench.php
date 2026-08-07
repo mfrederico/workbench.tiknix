@@ -3892,13 +3892,13 @@ class Workbench extends BuildControl {
         // Agents noticed and said so ("complete_task wasn't available in this session"),
         // which is why finished tasks sat at 'running' forever.
         return \app\CoreDb::with(function () use ($memberId, $keyName) {
-            $existing = \RedBeanPHP\R::findOne('apikey',
+            $existing = Bean::findOne('apikey',
                 'member_id = ? AND name = ? AND is_active = 1 AND (expires_at IS NULL OR expires_at > ?)',
                 [$memberId, $keyName, date('Y-m-d H:i:s')]
             );
             if ($existing && $existing->id) return (string) $existing->token;
 
-            $key = \RedBeanPHP\R::dispense('apikey');
+            $key = Bean::dispense('apikey');
             $key->memberId       = $memberId;
             $key->name           = $keyName;
             $key->token          = 'tk_' . bin2hex(random_bytes(32));
@@ -3908,7 +3908,7 @@ class Workbench extends BuildControl {
             $key->expiresAt      = date('Y-m-d H:i:s', strtotime('+1 year'));
             $key->createdAt      = date('Y-m-d H:i:s');
             $key->usageCount     = 0;
-            \RedBeanPHP\R::store($key);
+            Bean::store($key);
 
             $this->logger->info('Created workbench API key in core db', [
                 'member_id' => $memberId, 'key_id' => $key->id,

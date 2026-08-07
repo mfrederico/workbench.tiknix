@@ -55,7 +55,7 @@ foreach ($byInst as $row) {
 
     WorkbenchDb::selectInstance($meta);
     $existing = 0;
-    try { $existing = (int) R::getCell("SELECT COUNT(*) FROM workbenchtask"); } catch (\Throwable $e) {}
+    try { $existing = (int) Bean::getCell("SELECT COUNT(*) FROM workbenchtask"); } catch (\Throwable $e) {}
     if ($existing > 0) { echo "  {$inst['slug']} (id=$iid): workbench.db already has $existing tasks — SKIP (idempotent)\n"; continue; }
 
     // read everything for this instance from core FIRST (we're about to switch RedBean db)

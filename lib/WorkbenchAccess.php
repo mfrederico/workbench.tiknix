@@ -19,7 +19,6 @@ namespace app;
 use \Flight as Flight;
 use \app\Bean;
 use \app\Sidecar\Access;
-use RedBeanPHP\R;
 
 class WorkbenchAccess {
 
@@ -107,7 +106,7 @@ class WorkbenchAccess {
         foreach ($this->instances as $inst) {
             try {
                 WorkbenchDb::selectInstance($inst);
-                if ((int) R::getCell("SELECT id FROM workbenchtask WHERE id = ?", [$taskId]) === $taskId) {
+                if ((int) Bean::getCell("SELECT id FROM workbenchtask WHERE id = ?", [$taskId]) === $taskId) {
                     return $inst;
                 }
             } catch (\Throwable $e) { /* table absent */ }
@@ -170,7 +169,7 @@ class WorkbenchAccess {
             $n = 0;
             try {
                 WorkbenchDb::selectInstance($inst);
-                $n = (int) R::getCell(
+                $n = (int) Bean::getCell(
                     "SELECT COUNT(*) FROM workbenchtask WHERE parent_task_id IS NULL");
             } catch (\Throwable $e) { $n = 0; }   // table absent until first task
             $out[] = [
