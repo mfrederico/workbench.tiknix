@@ -74,16 +74,23 @@ $baseDomain = $baseUrl === '' ? '' : preg_replace('#^https?://#', '', rtrim($bas
                             <?php
                             $typeInfo = $taskTypes[$task->taskType ?? 'feature'] ?? $taskTypes['feature'];
                             $priorityInfo = $priorities[$task->priority ?? 3] ?? $priorities[3];
-                            $statusBadge = match($task->status) {
-                                'pending' => 'secondary',
-                                'queued' => 'info',
-                                'running' => 'primary',
-                                'awaiting' => 'warning',
-                                'completed' => 'success',
-                                'merged' => 'success',
-                                'failed' => 'danger',
-                                'paused' => 'warning',
-                                default => 'secondary'
+
+                            // A PLAN PARENT HAS TWO STATUS COLUMNS, AND ONLY ONE OF THEM IS ITS OWN.
+                            //
+                            // `status` is the column every workbenchtask carries; `plan_status` is the
+                            // plan lifecycle (draft/approved/building/stalled/done) and exists only on
+                            // parents. They are written as a pair, so a stalled plan also reads
+                            // `failed` — and this page showed that word while the board showed
+                            // "Stalled" and the Build button (keyed on plan_status) offered to resume.
+                            // Three names for one state. The plan's own column wins on a plan.
+                            $shownStatus = !empty($task->planStatus) ? (string)$task->planStatus : (string)$task->status;
+                            $statusBadge = match($shownStatus) {
+                                'queued', 'approved' => 'info',
+                                'running', 'building' => 'primary',
+                                'awaiting', 'paused' => 'warning',
+                                'completed', 'merged', 'done' => 'success',
+                                'failed', 'stalled' => 'danger',
+                                default => 'secondary'   // pending, draft, anything new
                             };
                             ?>
                             <span class="badge bg-<?= $typeInfo['color'] ?> me-1">
@@ -93,12 +100,12 @@ $baseDomain = $baseUrl === '' ? '' : preg_replace('#^https?://#', '', rtrim($bas
                                 <?= $priorityInfo['label'] ?>
                             </span>
                             <span class="badge bg-<?= $statusBadge ?> fs-6">
-                                <?php if ($task->status === 'running'): ?>
+                                <?php if (in_array($shownStatus, ['running', 'building'], true)): ?>
                                     <span class="spinner-border spinner-border-sm me-1"></span>
-                                <?php elseif ($task->status === 'merged'): ?>
+                                <?php elseif ($shownStatus === 'merged'): ?>
                                     <i class="bi bi-git me-1"></i>
                                 <?php endif; ?>
-                                <?= ucfirst($task->status) ?>
+                                <?= htmlspecialchars(ucfirst($shownStatus)) ?>
                             </span>
                         </div>
                     </div>
@@ -707,7 +714,7 @@ $baseDomain = $baseUrl === '' ? '' : preg_replace('#^https?://#', '', rtrim($bas
                 <div class="card-body">
                     <dl class="mb-0">
                         <dt>Status</dt>
-                        <dd><span class="badge bg-<?= $statusBadge ?>"><?= ucfirst($task->status) ?></span></dd>
+                        <dd><span class="badge bg-<?= $statusBadge ?>"><?= htmlspecialchars(ucfirst($shownStatus)) ?></span></dd>
 
                         <dt>Run Count</dt>
                         <dd><?= $task->runCount ?? 0 ?></dd>
