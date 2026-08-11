@@ -75,15 +75,10 @@ $baseDomain = $baseUrl === '' ? '' : preg_replace('#^https?://#', '', rtrim($bas
                             $typeInfo = $taskTypes[$task->taskType ?? 'feature'] ?? $taskTypes['feature'];
                             $priorityInfo = $priorities[$task->priority ?? 3] ?? $priorities[3];
 
-                            // A PLAN PARENT HAS TWO STATUS COLUMNS, AND ONLY ONE OF THEM IS ITS OWN.
-                            //
-                            // `status` is the column every workbenchtask carries; `plan_status` is the
-                            // plan lifecycle (draft/approved/building/stalled/done) and exists only on
-                            // parents. They are written as a pair, so a stalled plan also reads
-                            // `failed` — and this page showed that word while the board showed
-                            // "Stalled" and the Build button (keyed on plan_status) offered to resume.
-                            // Three names for one state. The plan's own column wins on a plan.
-                            $shownStatus = !empty($task->planStatus) ? (string)$task->planStatus : (string)$task->status;
+                            // Which lifecycle this row is on — Model_Workbenchtask::isPlan()
+                            // owns that question, so the board, the reaper and this page
+                            // cannot answer it differently.
+                            $shownStatus = $task->displayStatus();
                             $statusBadge = match($shownStatus) {
                                 'queued', 'approved' => 'info',
                                 'running', 'building' => 'primary',
