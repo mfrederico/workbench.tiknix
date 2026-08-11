@@ -106,20 +106,6 @@ class Workbench extends BuildControl {
     }
 
     /**
-     * CORE's public URL — the opposite preference to serverBaseurl().
-     *
-     * Anything an agent must REACH over HTTP that is served by core (today: the MCP
-     * endpoint) has to be addressed at core's host. This sidecar's own app.baseurl is
-     * workbench.tiknix.com, which serves no /mcp/message, so using it wrote a workspace
-     * .mcp.json aimed at a 403.
-     */
-    protected function coreBaseUrl(): string {
-        return rtrim((string) (Flight::get('sidecar.core_url')
-            ?: Flight::get('app.baseurl')
-            ?: 'https://tiknix.com'), '/');
-    }
-
-    /**
      * Task dashboard
      */
     public function index($params = []) {
@@ -1592,10 +1578,13 @@ class Workbench extends BuildControl {
         // Always regenerate .mcp.json at run time with current config
         // This ensures correct baseurl from config.ini and fresh API key
         if ($workspacePath && is_dir($workspacePath)) {
+            // REFUSE, do not degrade. A worktree without its project's own MCP target is
+            // the exact condition this change exists to prevent, so it stops the run.
             try {
                 $this->writeProjectMcpConfig($workspacePath, $task, $taskId, 'Generated');
-            } catch (Exception $e) {
-                $this->logger->warning('Failed to generate workspace MCP config', ['error' => $e->getMessage()]);
+            } catch (\Throwable $e) {
+                Flight::jsonError($e->getMessage(), 409);
+                return;
             }
         }
 
@@ -1767,8 +1756,9 @@ class Workbench extends BuildControl {
         if ($workspacePath && is_dir($workspacePath)) {
             try {
                 $this->writeProjectMcpConfig($workspacePath, $task, $taskId, 'Regenerated');
-            } catch (Exception $e) {
-                $this->logger->warning('Failed to regenerate workspace MCP config', ['error' => $e->getMessage()]);
+            } catch (\Throwable $e) {
+                Flight::jsonError($e->getMessage(), 409);
+                return;
             }
         }
 
@@ -1943,7 +1933,10 @@ class Workbench extends BuildControl {
             if ($runner->exists()) { $runner->kill(); usleep(400000); }
             try {
                 $this->writeProjectMcpConfig($ws, $task, $taskId, 'Regenerated');
-            } catch (Exception $e) { /* non-fatal */ }
+            } catch (\Throwable $e) {
+                Flight::jsonError($e->getMessage(), 409);
+                return;
+            }
 
             if (!$runner->spawn()) { Flight::jsonError('Failed to start the agent session', 500); return; }
             $task->status = 'running';
@@ -3441,18 +3434,30 @@ class Workbench extends BuildControl {
     }
 
     /**
-     * Write the worktree's .mcp.json from the PROJECT's target. Returns what happened so
-     * the caller can log it against the task. See projectMcpTarget() for why there is no
-     * core fallback.
+     * Write the worktree's .mcp.json from the PROJECT's target.
+     *
+     * THROWS rather than returning quietly. An unresolvable target is not a degraded run
+     * that happens to lack a few tools — it is a run whose worktree keeps whatever
+     * .mcp.json it had, which for an existing workspace is the CORE-addressed one this
+     * change exists to remove. Logging a warning and starting the agent anyway is how the
+     * original bug survived two weeks of daily builds: every symptom was inside an agent
+     * transcript nobody reads, and the board showed a task that merely never finished.
+     *
+     * The caller must refuse the run. See projectMcpTarget() for why there is no fallback.
+     *
+     * @throws \RuntimeException when the project's own MCP target cannot be resolved
      */
     private function writeProjectMcpConfig(string $workspacePath, $task, int $taskId, string $when): void {
         $target = $this->projectMcpTarget($task);
         if ($target === null) {
-            $msg = 'No usable .mcp.json for this project — the agent will have NO tiknix tools. '
-                 . 'Re-provision the project, or add one pointing at its own /mcp/message.';
-            $this->logger->error('Project MCP config unresolvable', ['task' => $taskId]);
+            $msg = 'This project has no usable .mcp.json, so an agent started here would either '
+                 . 'have no tiknix tools or keep addressing core — reading and writing another '
+                 . 'project\'s tasks. Re-provision the project, or give it a .mcp.json pointing '
+                 . 'at its own /mcp/message.';
+            $this->logger->error('Project MCP config unresolvable — refusing to start the agent',
+                ['task' => $taskId, 'workspace' => $workspacePath]);
             $this->logTaskEvent($taskId, 'error', 'system', $msg);
-            return;
+            throw new \RuntimeException($msg);
         }
         $this->generateWorkspaceMcpConfig($workspacePath, $target['apiKey'], $target['baseUrl']);
         $this->logTaskEvent($taskId, 'info', 'system', $when . " .mcp.json → {$target['baseUrl']}");
