@@ -1784,12 +1784,31 @@ async function declineTask(id) {
                     </label>
                 </div>
 
-                <?php if (!empty($task->prUrl)): ?>
+                <?php
+                // OFFER THE MERGE WHENEVER THERE IS SOMETHING TO MERGE — a branch — not
+                // only when a GitHub PR exists.
+                //
+                // An INSTANCE task never gets a prUrl: approve() deliberately skips PR
+                // creation for one ($createPr && !$isInstanceTask) because its changes go
+                // back through localMergeBack() instead. Gating this box on prUrl therefore
+                // hid it on every instance task, the JS sent merge_pr=0, and the button
+                // labelled "Approve & Merge" tore down the session without merging
+                // anything. The work survived only in the workspace, which the same dialog
+                // offers to delete.
+                $canMerge = !empty($task->prUrl) || !empty($task->branchName);
+                $isPrMerge = !empty($task->prUrl);
+                ?>
+                <?php if ($canMerge): ?>
                 <div class="form-check mb-2">
                     <input class="form-check-input" type="checkbox" id="approveMergePr" checked>
                     <label class="form-check-label" for="approveMergePr">
                         <i class="bi bi-arrow-down-circle me-1"></i>
-                        Merge Pull Request (squash)
+                        <?php if ($isPrMerge): ?>
+                            Merge Pull Request (squash)
+                        <?php else: ?>
+                            Merge <code><?= htmlspecialchars((string) $task->branchName) ?></code>
+                            into <code><?= htmlspecialchars((string) ($task->baseBranch ?: 'the base branch')) ?></code>
+                        <?php endif; ?>
                     </label>
                 </div>
                 <?php endif; ?>
