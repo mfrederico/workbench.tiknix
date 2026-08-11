@@ -133,12 +133,12 @@ $baseDomain = $baseUrl === '' ? '' : preg_replace('#^https?://#', '', rtrim($bas
                         <?php endif; ?>
 
                         <?php
-                        // `conflict` BELONGS HERE. taskretry() accepts ['failed','conflict']
-                        // and the executor never relaunches a conflicted subtask on its own,
-                        // so leaving it out of this list left the status with no action at
-                        // all: plan 72 sat stalled behind task 76 for a day because the only
-                        // button the page offered was Edit.
-                        $runnable = ['pending', 'failed', 'conflict'];
+                        // A conflicted SOLO task can just be run again. A conflicted plan
+                        // SUBTASK must not: Run starts the agent alone and leaves the plan
+                        // stalled, while Fix & retry (below, plan-aware) re-opens the plan
+                        // and relaunches the orchestrator so the tasks behind it move too.
+                        $runnable = ['pending', 'failed'];
+                        if (empty($task->parentTaskId)) $runnable[] = 'conflict';
                         ?>
                         <?php if ($canRun && in_array($task->status, $runnable, true)): ?>
                             <button class="btn btn-success" onclick="runTask(<?= $task->id ?>)">
@@ -325,11 +325,23 @@ $baseDomain = $baseUrl === '' ? '' : preg_replace('#^https?://#', '', rtrim($bas
                 </div>
             <?php endif; ?>
 
-            <!-- Error (when failed) -->
-            <?php if ($task->status === 'failed' && $task->errorMessage): ?>
+            <!-- Error (when failed or conflicted) -->
+            <?php
+            // A CONFLICT IS A FAILURE WITH A MESSAGE, and it is the one that needs this
+            // card most: the Fix & retry button below is plan-aware (it re-opens the plan
+            // and relaunches the orchestrator, which Run with Claude does not), and the
+            // executor never relaunches a conflicted subtask by itself. Gating on `failed`
+            // alone meant a conflicted subtask showed neither the merge output nor any way
+            // to act on it.
+            $isFailureState = in_array($task->status, ['failed', 'conflict'], true);
+            ?>
+            <?php if ($isFailureState && $task->errorMessage): ?>
                 <div class="card mb-4 border-danger">
                     <div class="card-header bg-danger text-white">
-                        <h5 class="mb-0"><i class="bi bi-x-circle"></i> Task Failed</h5>
+                        <h5 class="mb-0">
+                            <i class="bi bi-x-circle"></i>
+                            <?= $task->status === 'conflict' ? 'Merge Conflict' : 'Task Failed' ?>
+                        </h5>
                     </div>
                     <div class="card-body">
                         <pre class="<?= !empty($task->parentTaskId) ? 'mb-3' : 'mb-0' ?> text-danger"><?= htmlspecialchars(($task->errorMessage) ?? '') ?></pre>
