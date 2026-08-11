@@ -1593,14 +1593,7 @@ class Workbench extends BuildControl {
         // This ensures correct baseurl from config.ini and fresh API key
         if ($workspacePath && is_dir($workspacePath)) {
             try {
-                $apiKey = $this->getOrCreateWorkbenchApiKey($this->member->id);
-                // CORE's url, not this sidecar's. /mcp/message is served by core's
-                // controls/Mcp.php; the sidecar has no Mcp controller at all, so
-                // app.baseurl (workbench.tiknix.com) produced a .mcp.json pointing at
-                // an endpoint that answers 403 — every agent tool call dead on arrival.
-                $baseUrl = $this->coreBaseUrl();
-                $this->generateWorkspaceMcpConfig($workspacePath, $apiKey, $baseUrl);
-                $this->logTaskEvent($taskId, 'info', 'system', "Generated .mcp.json with baseurl: {$baseUrl}");
+                $this->writeProjectMcpConfig($workspacePath, $task, $taskId, 'Generated');
             } catch (Exception $e) {
                 $this->logger->warning('Failed to generate workspace MCP config', ['error' => $e->getMessage()]);
             }
@@ -1773,14 +1766,7 @@ class Workbench extends BuildControl {
         // Regenerate .mcp.json with current config before running
         if ($workspacePath && is_dir($workspacePath)) {
             try {
-                $apiKey = $this->getOrCreateWorkbenchApiKey($this->member->id);
-                // CORE's url, not this sidecar's. /mcp/message is served by core's
-                // controls/Mcp.php; the sidecar has no Mcp controller at all, so
-                // app.baseurl (workbench.tiknix.com) produced a .mcp.json pointing at
-                // an endpoint that answers 403 — every agent tool call dead on arrival.
-                $baseUrl = $this->coreBaseUrl();
-                $this->generateWorkspaceMcpConfig($workspacePath, $apiKey, $baseUrl);
-                $this->logTaskEvent($taskId, 'info', 'system', "Regenerated .mcp.json for re-run");
+                $this->writeProjectMcpConfig($workspacePath, $task, $taskId, 'Regenerated');
             } catch (Exception $e) {
                 $this->logger->warning('Failed to regenerate workspace MCP config', ['error' => $e->getMessage()]);
             }
@@ -1956,13 +1942,7 @@ class Workbench extends BuildControl {
             }
             if ($runner->exists()) { $runner->kill(); usleep(400000); }
             try {
-                $apiKey  = $this->getOrCreateWorkbenchApiKey($this->member->id);
-                // CORE's url, not this sidecar's. /mcp/message is served by core's
-                // controls/Mcp.php; the sidecar has no Mcp controller at all, so
-                // app.baseurl (workbench.tiknix.com) produced a .mcp.json pointing at
-                // an endpoint that answers 403 — every agent tool call dead on arrival.
-                $baseUrl = $this->coreBaseUrl();
-                $this->generateWorkspaceMcpConfig($ws, $apiKey, $baseUrl);
+                $this->writeProjectMcpConfig($ws, $task, $taskId, 'Regenerated');
             } catch (Exception $e) { /* non-fatal */ }
 
             if (!$runner->spawn()) { Flight::jsonError('Failed to start the agent session', 500); return; }
@@ -3416,6 +3396,66 @@ class Workbench extends BuildControl {
         if (!$inst->id) return null;
         $dir = '/var/www/html/default/' . $inst->slug . '.' . ($inst->app ?: 'tiknix');
         return is_dir($dir . '/.git') ? $dir : null;
+    }
+
+    /**
+     * The MCP endpoint + key an agent worktree for $task must use: the PROJECT's OWN.
+     *
+     * Not core's, and not this sidecar's. A worktree pointed at core runs every
+     * mcp__tiknix__* call inside CORE's process — core's database and core's source tree
+     * — while the task id it passes came from the PROJECT's data/workbench.db. Task ids
+     * are per-project autoincrements (the same reason session names carry the slug, see
+     * TmuxManager::buildTaskSessionName), so "task 1" names a different row in each. It
+     * resolves to somebody else's task and denies, or to a same-named row and silently
+     * writes the WRONG one. mtmoses's first build died on the first of those.
+     *
+     * The project already knows the answer: provisioning writes it a .mcp.json addressed
+     * to its own domain with its own agent key, and PlanExecutor already copies that file
+     * into plan-subtask worktrees. This is the same source of truth for solo tasks.
+     *
+     * NO FALLBACK to core. Writing core's url here is precisely the bug; a project whose
+     * config cannot be read must fail loudly and leave the worktree's config alone.
+     *
+     * @return array{baseUrl:string, apiKey:string}|null
+     */
+    private function projectMcpTarget($task): ?array {
+        $dir = $this->instanceDirForTask($task);
+        if ($dir === null) return null;
+
+        $file = $dir . '/.mcp.json';
+        if (!is_file($file)) return null;
+
+        $json = json_decode((string) @file_get_contents($file), true);
+        $srv  = $json['mcpServers']['tiknix'] ?? null;
+        if (!is_array($srv)) return null;
+
+        $url  = trim((string) ($srv['url'] ?? ''));
+        $auth = trim((string) ($srv['headers']['Authorization'] ?? ''));
+        if ($url === '' || stripos($auth, 'Bearer ') !== 0) return null;
+
+        // ensureMcpConfig() appends /mcp/message itself, so hand it the base.
+        return [
+            'baseUrl' => (string) preg_replace('#/mcp/message/?$#', '', rtrim($url, '/')),
+            'apiKey'  => trim(substr($auth, 7)),
+        ];
+    }
+
+    /**
+     * Write the worktree's .mcp.json from the PROJECT's target. Returns what happened so
+     * the caller can log it against the task. See projectMcpTarget() for why there is no
+     * core fallback.
+     */
+    private function writeProjectMcpConfig(string $workspacePath, $task, int $taskId, string $when): void {
+        $target = $this->projectMcpTarget($task);
+        if ($target === null) {
+            $msg = 'No usable .mcp.json for this project — the agent will have NO tiknix tools. '
+                 . 'Re-provision the project, or add one pointing at its own /mcp/message.';
+            $this->logger->error('Project MCP config unresolvable', ['task' => $taskId]);
+            $this->logTaskEvent($taskId, 'error', 'system', $msg);
+            return;
+        }
+        $this->generateWorkspaceMcpConfig($workspacePath, $target['apiKey'], $target['baseUrl']);
+        $this->logTaskEvent($taskId, 'info', 'system', $when . " .mcp.json → {$target['baseUrl']}");
     }
 
     /**
