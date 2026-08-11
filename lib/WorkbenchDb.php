@@ -10,11 +10,15 @@ use \Flight as Flight;
 
 class WorkbenchDb {
 
-    /** The instance's app root on disk (…/<slug>.<app>), mirroring PipeFiles::instanceDir. */
+    /**
+     * The instance's app root on disk (…/<slug>.<app>).
+     *
+     * Core owns this rule — Model_Instance::dirFrom, which also refuses an empty slug
+     * rather than naming a directory that is not a project. Five sidecars each carried a
+     * copy that had to agree forever with nothing to notice if one stopped.
+     */
     public static function instanceDir(array $inst): string {
-        $parent = dirname(rtrim((string) Flight::get('sidecar.core_root'), '/'));  // /var/www/html/default
-        $app = ($inst['app'] ?? '') !== '' ? $inst['app'] : 'tiknix';
-        return $parent . '/' . $inst['slug'] . '.' . $app;
+        return \Model_Instance::dirFrom((string) $inst['slug'], (string) ($inst['app'] ?? ''));
     }
 
     /** The connection key for an instance's workbench.db. One namer, so callers agree. */
