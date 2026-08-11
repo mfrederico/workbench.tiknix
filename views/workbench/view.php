@@ -132,9 +132,18 @@ $baseDomain = $baseUrl === '' ? '' : preg_replace('#^https?://#', '', rtrim($bas
                             <?php endif; ?>
                         <?php endif; ?>
 
-                        <?php if ($canRun && in_array($task->status, ['pending', 'failed'])): ?>
+                        <?php
+                        // `conflict` BELONGS HERE. taskretry() accepts ['failed','conflict']
+                        // and the executor never relaunches a conflicted subtask on its own,
+                        // so leaving it out of this list left the status with no action at
+                        // all: plan 72 sat stalled behind task 76 for a day because the only
+                        // button the page offered was Edit.
+                        $runnable = ['pending', 'failed', 'conflict'];
+                        ?>
+                        <?php if ($canRun && in_array($task->status, $runnable, true)): ?>
                             <button class="btn btn-success" onclick="runTask(<?= $task->id ?>)">
-                                <i class="bi bi-play-fill"></i> Run with Claude
+                                <i class="bi bi-play-fill"></i>
+                                <?= $task->status === 'conflict' ? 'Retry (resolve conflict)' : 'Run with Claude' ?>
                             </button>
                         <?php endif; ?>
 
@@ -1725,7 +1734,8 @@ async function declineTask(id) {
 
     const status = <?= json_encode((string)$task->status) ?>;
     const canRun = <?= $canRun ? 'true' : 'false' ?>;
-    if (!canRun || !['pending', 'failed'].includes(status)) {
+    // Same set the button above uses — see the $runnable comment there.
+    if (!canRun || !['pending', 'failed', 'conflict'].includes(status)) {
         alert('Auto-run was requested, but this task is "' + status + '" and cannot be started.');
         return;
     }
