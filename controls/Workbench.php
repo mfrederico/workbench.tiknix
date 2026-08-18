@@ -1441,6 +1441,20 @@ class Workbench extends BuildControl {
             return;
         }
 
+        // A PLAN PARENT HAS NO WORK OF ITS OWN. Its subtasks carry the work and merge
+        // individually; the parent is a header. Running it starts an agent with nothing
+        // to do, which then sits at its prompt while the parent reads `running` for ever
+        // — and the plan looks unfinished even though every subtask already merged.
+        //
+        // pd plan 4 went that way: built and fully merged on 17 Aug, then Run seventeen
+        // hours later left it `running` with `plan_status` still `done`. The approve path
+        // already refuses a plan for the same reason; this one did not.
+        if (empty($task->parentTaskId) && !empty($task->planStatus)) {
+            Flight::jsonError('This is a plan, not a task — build it from the plan view. '
+                . 'Its subtasks do the work; the parent has none to run.', 409);
+            return;
+        }
+
         // Check if already running
         if ($task->status === 'running') {
             Flight::jsonError('Task is already running', 400);

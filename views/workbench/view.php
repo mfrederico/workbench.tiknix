@@ -139,8 +139,16 @@ $baseDomain = $baseUrl === '' ? '' : preg_replace('#^https?://#', '', rtrim($bas
                         // and relaunches the orchestrator so the tasks behind it move too.
                         $runnable = ['pending', 'failed'];
                         if (empty($task->parentTaskId)) $runnable[] = 'conflict';
+
+                        // A PLAN PARENT is never runnable as a task — it is a header, and
+                        // its subtasks carry the work. Offering Run here starts an agent
+                        // with nothing to do and pins the parent at `running` while the
+                        // plan is already built (pd plan 4). Plans are built from the plan
+                        // view; run() refuses this too, so the button and the endpoint
+                        // agree rather than one inviting what the other rejects.
+                        $isPlanParent = empty($task->parentTaskId) && !empty($task->planStatus);
                         ?>
-                        <?php if ($canRun && in_array($task->status, $runnable, true)): ?>
+                        <?php if ($canRun && !$isPlanParent && in_array($task->status, $runnable, true)): ?>
                             <button class="btn btn-success" onclick="runTask(<?= $task->id ?>)">
                                 <i class="bi bi-play-fill"></i>
                                 <?= $task->status === 'conflict' ? 'Retry (resolve conflict)' : 'Run with Claude' ?>
