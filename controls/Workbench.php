@@ -3241,7 +3241,16 @@ class Workbench extends BuildControl {
         $source = (string) $this->getParam('source', '');
         $q      = trim((string) $this->getParam('q', ''));
 
-        $rows = \app\PromptLog::forMember($memberId, $source, 500);
+        /* Scope to the project you are working on. This listed every project you own, so a
+           partsdna goal sat next to a collectiq one with nothing but a small tag to tell
+           them apart — and the buttons beside them act on whichever project is selected,
+           not the one the row came from. ?all=1 is the deliberate way to see everything. */
+        $inst = $this->selected ? $this->access->instanceMeta((int) $this->selected['id']) : null;
+        $selectedTag = ($inst && $inst->id) ? $inst->slug . '.' . ($inst->app ?: 'tiknix') : '';
+        $showAll     = (string) $this->getParam('all', '') === '1';
+        $scopeTag    = $showAll ? '' : $selectedTag;
+
+        $rows = \app\PromptLog::forMember($memberId, $source, 500, $scopeTag);
         if ($q !== '') {
             $needle = mb_strtolower($q);
             $rows = array_values(array_filter($rows, function ($r) use ($needle) {
@@ -3251,17 +3260,39 @@ class Workbench extends BuildControl {
         }
 
         $this->viewData['rows']    = $rows;
-        $this->viewData['counts']  = \app\PromptLog::countsForMember($memberId);
+        $this->viewData['counts']  = \app\PromptLog::countsForMember($memberId, $scopeTag);
         $this->viewData['sources'] = \app\PromptLog::sources();
         $this->viewData['source']  = $source;
         $this->viewData['q']       = $q;
         // Which project you are on, so a prompt from THIS project can link straight to the
         // plan it became — a plan id only resolves inside its own instance's db.
-        $inst = $this->selected ? $this->access->instanceMeta((int) $this->selected['id']) : null;
-        $this->viewData['selectedTag'] = ($inst && $inst->id)
-            ? $inst->slug . '.' . ($inst->app ?: 'tiknix') : '';
+        $this->viewData['selectedTag'] = $selectedTag;
+        $this->viewData['showAll']     = $showAll;
+        /* Goals waiting their turn. One planner runs per project, so firing several
+           decomposes queues them rather than losing them — but nothing showed the queue,
+           so "it did nothing" was indistinguishable from "it is third in line". */
+        $this->viewData['queued'] = \app\PromptQueue::queued($memberId, $scopeTag);
 
         $this->render('workbench/prompts', ['title' => 'Prompts']);
+    }
+
+    /**
+     * POST /workbench/promptunqueue — stop retrying a queued decompose. JSON.
+     *
+     * Leaves the prompt in the log; it simply stops waiting for its turn. Ownership is
+     * re-checked through PromptLog::find, which takes the member id and has no "load any
+     * prompt" mode — dequeue() alone takes only an id, and nobody else's queue is yours
+     * to empty.
+     */
+    public function promptunqueue($params = []) {
+        if (!$this->planActionGuard()) return;   // login + POST + CSRF
+
+        $promptId = (int) $this->getParam('prompt_id', 0);
+        $p = $promptId > 0 ? \app\PromptLog::find($promptId, (int) $this->member->id) : null;
+        if (!$p) { Flight::jsonError('No such prompt.', 404); return; }
+
+        \app\PromptQueue::dequeue($promptId);
+        Flight::jsonSuccess(['id' => $promptId], 'Removed from the queue.');
     }
 
     /**

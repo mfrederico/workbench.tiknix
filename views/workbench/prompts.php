@@ -33,13 +33,38 @@
                class="btn <?= $source === '' ? 'btn-primary' : 'btn-outline-secondary' ?>">
                 All <span class="badge text-bg-light ms-1"><?= (int) ($counts[''] ?? 0) ?></span>
             </a>
+            <?php
+              /* Every link has to carry the current scope, or clicking a source tab
+                 silently widens the page back to all projects. */
+              $keep = ($q !== '' ? '&q=' . urlencode($q) : '') . (!empty($showAll) ? '&all=1' : '');
+            ?>
             <?php foreach ($sources as $key => $label): ?>
-                <a href="/workbench/prompts?source=<?= urlencode($key) ?><?= $q !== '' ? '&q=' . urlencode($q) : '' ?>"
+                <a href="/workbench/prompts?source=<?= urlencode($key) ?><?= $keep ?>"
                    class="btn <?= $source === $key ? 'btn-primary' : 'btn-outline-secondary' ?>">
                     <?= htmlspecialchars($label) ?>
                     <span class="badge text-bg-light ms-1"><?= (int) ($counts[$key] ?? 0) ?></span>
                 </a>
             <?php endforeach; ?>
+            <?php if (!empty($queued)): ?>
+                <a href="#queued" class="btn btn-outline-warning">
+                    Queued <span class="badge text-bg-warning ms-1"><?= count($queued) ?></span>
+                </a>
+            <?php endif; ?>
+        </div>
+
+        <?php /* Which project these prompts belong to, and the way out. The page used to
+                 list every project at once, which mattered because the buttons beside a row
+                 act on the SELECTED project, not the one the row came from. */ ?>
+        <div class="small text-body-secondary d-flex align-items-center gap-2">
+            <?php if (!empty($showAll)): ?>
+                <span><i class="bi bi-globe2 me-1"></i>All projects</span>
+                <a href="/workbench/prompts<?= $source !== '' ? '?source=' . urlencode($source) : '' ?>">show only this project</a>
+            <?php elseif (($selectedTag ?? '') !== ''): ?>
+                <span><i class="bi bi-folder me-1"></i><?= htmlspecialchars($selectedTag) ?></span>
+                <a href="/workbench/prompts?all=1<?= $source !== '' ? '&source=' . urlencode($source) : '' ?>">show all projects</a>
+            <?php else: ?>
+                <span class="text-warning"><i class="bi bi-exclamation-triangle me-1"></i>No project selected — showing all</span>
+            <?php endif; ?>
         </div>
         <div class="ms-auto d-flex gap-2">
             <?php if ($source !== ''): ?><input type="hidden" name="source" value="<?= htmlspecialchars($source) ?>"><?php endif; ?>
@@ -48,6 +73,44 @@
             <button class="btn btn-sm btn-outline-primary" type="submit"><i class="bi bi-search"></i></button>
         </div>
     </form>
+
+    <?php /* Goals waiting their turn. One planner runs per project, so firing several
+             decomposes queues them instead of losing them — but with nothing showing the
+             queue, "it did nothing" was indistinguishable from "it is third in line".
+             Only straight-through goals queue: a decompose without it produces a draft
+             that waits for approval anyway, so retrying it unattended would be inventing
+             an instruction nobody gave. */ ?>
+    <?php if (!empty($queued)): ?>
+        <div class="card border-warning-subtle mb-3" id="queued">
+            <div class="card-header bg-warning-subtle d-flex align-items-center gap-2 py-2">
+                <i class="bi bi-hourglass-split"></i>
+                <strong><?= count($queued) ?> waiting to decompose</strong>
+                <span class="small text-body-secondary ms-auto">oldest first — the order they will run in</span>
+            </div>
+            <ul class="list-group list-group-flush">
+                <?php foreach ($queued as $i => $qd): ?>
+                    <li class="list-group-item d-flex align-items-start gap-2">
+                        <span class="badge text-bg-secondary mt-1">#<?= $i + 1 ?></span>
+                        <div class="flex-grow-1 min-w-0">
+                            <div class="text-truncate"><?= htmlspecialchars($qd['title'] ?: mb_substr($qd['body'], 0, 120)) ?></div>
+                            <div class="small text-body-secondary">
+                                <?= htmlspecialchars($qd['instance_tag']) ?>
+                                · queued <?= htmlspecialchars($qd['queued_at']) ?>
+                                <?php if ($qd['attempts'] > 0): ?>
+                                    · <span class="text-warning"><?= (int) $qd['attempts'] ?> attempt<?= $qd['attempts'] === 1 ? '' : 's' ?></span>
+                                <?php endif; ?>
+                                <?php if (!empty($qd['auto_build'])): ?>
+                                    · <span class="badge text-bg-light border">runs straight through</span>
+                                <?php endif; ?>
+                            </div>
+                        </div>
+                        <button class="btn btn-sm btn-outline-secondary" onclick="wbUnqueue(<?= (int) $qd['id'] ?>, this)"
+                                title="Stop waiting — leaves the prompt in the log, it just will not retry">Cancel</button>
+                    </li>
+                <?php endforeach; ?>
+            </ul>
+        </div>
+    <?php endif; ?>
 
     <?php if (empty($rows)): ?>
         <div class="alert alert-info py-2">
@@ -159,6 +222,31 @@
 <style>.prompt-clipped { max-height: 9rem; overflow: hidden; }</style>
 
 <script>
+/* Drop a queued decompose. Global because the queue rows are rendered above and use an
+   inline onclick, matching how the rest of this page's row actions are wired. */
+async function wbUnqueue(promptId, btn) {
+    var meta = document.querySelector('meta[name="csrf-token"]');
+    var was = btn.innerHTML;
+    btn.disabled = true;
+    try {
+        var fd = new FormData();
+        fd.append('prompt_id', promptId);
+        if (meta) fd.append('_csrf_token', meta.content);
+        var res = await fetch('/workbench/promptunqueue', { method: 'POST', body: fd });
+        var j = await res.json();
+        if (!j.success) throw new Error(j.message || 'Could not remove it.');
+        // Drop the row, and the whole card once it is the last one — an empty
+        // "0 waiting to decompose" panel reads as a queue that is stuck.
+        var li = btn.closest('li'), card = btn.closest('.card');
+        if (li) li.remove();
+        if (card && !card.querySelector('li')) card.remove();
+    } catch (e) {
+        btn.disabled = false;
+        btn.innerHTML = was;
+        alert(e.message);
+    }
+}
+
 (function () {
     document.querySelectorAll('.prompt-more').forEach(function (b) {
         b.addEventListener('click', function () {
