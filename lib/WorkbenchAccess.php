@@ -166,9 +166,37 @@ class WorkbenchAccess {
         return !empty($this->instances[$instanceId]['owned']);
     }
 
-    /** No team model in the sidecar — instance access IS the ACL. */
-    public function getMemberTeams(int $memberId): array { return []; }
-    public function isTeamMember(int $teamId, int $memberId): bool { return false; }
+    /* Team questions are CORE's to answer, and they are answered by core's one
+       implementation rather than a second copy here.
+
+       These were stubs — getMemberTeams() returned [] and isTeamMember() returned false —
+       on the reasoning that the sidecar has no team model because instance access is the
+       ACL. That is true of TASK visibility and false of everything else, and answering
+       "no" to a question this class cannot see is not a simplification, it is a wrong
+       answer with no way to tell. It emptied the board's team filter, and it made
+       assigning a task to a team fail with "You are not a member of this team" for
+       everyone, members included.
+
+       They could not simply call core's class because it queries through Bean:: on the
+       ambient connection, which in a sidecar is the instance's own workbench.db with no
+       team table at all. CoreDb::with() switches to core for the call and restores after,
+       which is the same mechanism the prompt log and the public-user lookup already use. */
+
+    /** Core's team access, constructed once. */
+    private function teams(): \app\TaskAccessControl {
+        return $this->teamAccess ??= new \app\TaskAccessControl();
+    }
+    private ?\app\TaskAccessControl $teamAccess = null;
+
+    public function getMemberTeams(int $memberId): array {
+        return (array) \app\CoreDb::with(fn() => $this->teams()->getMemberTeams($memberId), []);
+    }
+
+    public function isTeamMember(int $teamId, int $memberId): bool {
+        // Defaults to FALSE only when core is unreachable — a denial we could not verify,
+        // which is the safe direction for an access check and is logged by CoreDb.
+        return (bool) \app\CoreDb::with(fn() => $this->teams()->isTeamMember($teamId, $memberId), false);
+    }
 
     /**
      * Left-nav workbench tabs: one per accessible instance, with a plan count read from
