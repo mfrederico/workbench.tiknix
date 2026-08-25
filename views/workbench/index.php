@@ -332,6 +332,11 @@
                                                 <input type="checkbox" class="form-check-input wb-consol me-1 align-middle" value="<?= (int)$task->id ?>" title="Select to consolidate with other pending tasks">
                                             <?php endif; ?>
                                             <?php if ($isSub): ?><i class="bi bi-arrow-return-right text-muted me-1"></i><?php endif; ?>
+                                            <?php /* The id, so a task can be referred to. Everything else on this
+                                                     row is prose — quoting a title in a message is ambiguous the
+                                                     moment two tasks start with "Fix:". Monospaced and muted so it
+                                                     reads as a handle rather than competing with the title. */ ?>
+                                            <code class="text-body-secondary small me-1">#<?= (int) $task->id ?></code>
                                             <a href="/workbench/view?id=<?= $task->id ?>" class="text-decoration-none fw-medium">
                                                 <?= htmlspecialchars(($task->title) ?? '') ?>
                                             </a>

@@ -737,6 +737,19 @@ $baseDomain = $baseUrl === '' ? '' : preg_replace('#^https?://#', '', rtrim($bas
                 </div>
                 <div class="card-body">
                     <dl class="mb-0">
+                        <?php /* The id, with its project beside it. Task ids are per-project
+                                 autoincrements, so "task 85" on its own identifies nothing — id
+                                 85 exists on four boards at once and is a different piece of work
+                                 on each. Quoting one in a message or a bug report only works if
+                                 the project travels with it. */ ?>
+                        <dt>Task</dt>
+                        <dd>
+                            <code>#<?= (int) $task->id ?></code>
+                            <?php if (!empty($task->instanceTag)): ?>
+                                <span class="text-body-secondary small">on <?= htmlspecialchars((string) $task->instanceTag) ?></span>
+                            <?php endif; ?>
+                        </dd>
+
                         <dt>Status</dt>
                         <dd><span class="badge bg-<?= $statusBadge ?>"><?= htmlspecialchars(ucfirst($shownStatus)) ?></span></dd>
 
