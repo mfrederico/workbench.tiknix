@@ -306,6 +306,7 @@
                             <thead>
                                 <tr>
                                     <th class="wb-grp">Group</th>
+                                    <th class="text-end">ID</th>
                                     <th>Task</th>
                                     <th>Instance</th>
                                     <th>Type</th>
@@ -327,16 +328,18 @@
                                     <tr>
                                         <?php // Prefix an inverted-timestamp so string-sorting column 0 puts newest groups first, while the value still groups by key (parsed back out in startRender). ?>
                                         <td class="wb-grp"><?= htmlspecialchars(sprintf('%010d', 9999999999 - (int)($groupOrder[$groupKey] ?? 0)) . '~' . $groupKey) ?></td>
+                                        <?php /* Its own column, not glued to the title: a column sorts, aligns,
+                                                 and can be scanned down. data-order carries the numeric value so
+                                                 DataTables sorts 9 before 85 rather than lexically. */ ?>
+                                        <td class="text-end text-nowrap" data-order="<?= (int) $task->id ?>">
+                                            <a href="/workbench/view?id=<?= (int) $task->id ?>"
+                                               class="text-body-secondary text-decoration-none"><code>#<?= (int) $task->id ?></code></a>
+                                        </td>
                                         <td>
                                             <?php if ($task->status === 'pending'): ?>
                                                 <input type="checkbox" class="form-check-input wb-consol me-1 align-middle" value="<?= (int)$task->id ?>" title="Select to consolidate with other pending tasks">
                                             <?php endif; ?>
                                             <?php if ($isSub): ?><i class="bi bi-arrow-return-right text-muted me-1"></i><?php endif; ?>
-                                            <?php /* The id, so a task can be referred to. Everything else on this
-                                                     row is prose — quoting a title in a message is ambiguous the
-                                                     moment two tasks start with "Fix:". Monospaced and muted so it
-                                                     reads as a handle rather than competing with the title. */ ?>
-                                            <code class="text-body-secondary small me-1">#<?= (int) $task->id ?></code>
                                             <a href="/workbench/view?id=<?= $task->id ?>" class="text-decoration-none fw-medium">
                                                 <?= htmlspecialchars(($task->title) ?? '') ?>
                                             </a>
@@ -483,7 +486,12 @@
                             pageLength: 25,
                             lengthMenu: [[10,25,50,-1],[10,25,50,'All']],
                             orderFixed: { pre: [[0,'asc']] },    // group key carries an inverted-ts prefix, so asc = newest group first
-                            order: [[6,'desc']],                  // and rows newest-first within each group
+                            // Created, newest-first within each group. Index 7, not 6: the ID
+                            // column sits at 1 and pushed every later column along one. An index
+                            // here is a position, so adding a column silently re-points it —
+                            // this would have started ordering by Status with nothing to show
+                            // for it but a board in the wrong order.
+                            order: [[7,'desc']],
                             columnDefs: [
                                 { targets: 0, visible: false, searchable: false },
                                 { targets: -1, orderable: false, searchable: false }
