@@ -22,6 +22,18 @@ use \app\Sidecar\Access;
 
 class WorkbenchAccess {
 
+    /**
+     * Board tabs that cover more than one stored status.
+     *
+     * "Running" is what a person calls a task the agent is holding, whether the row says
+     * running or queued — which is why views/workbench/index.php already adds both for the
+     * badge. Kept here, beside the query that uses it, so the number and the list cannot
+     * mean different things again. Anything absent filters on itself.
+     */
+    public const STATUS_BUCKETS = [
+        'running' => ['running', 'queued'],
+    ];
+
     private Access $core;
     private \PDO $pdo;
     private int $memberId;
@@ -193,7 +205,19 @@ class WorkbenchAccess {
         if (!$this->current) return [];
         $conds = []; $params = [];
         foreach ([['status','status'],['task_type','task_type'],['instance_tag','instance_tag']] as [$fk,$col]) {
-            if (!empty($filters[$fk])) { $conds[] = "$col = ?"; $params[] = $filters[$fk]; }
+            if (empty($filters[$fk])) continue;
+            /* A board tab is a BUCKET, not always one stored status. The "Running" badge
+               counts running + queued, because from the outside both mean the agent has
+               the task — but the tab links to ?status=running and this matched that one
+               literal string, so the tab read "Running 1" and opened an empty list. The
+               count was right; the filter was a different idea of the same word. */
+            if ($fk === 'status') {
+                $wanted = self::STATUS_BUCKETS[$filters[$fk]] ?? [$filters[$fk]];
+                $conds[] = "$col IN (" . implode(',', array_fill(0, count($wanted), '?')) . ')';
+                foreach ($wanted as $w) $params[] = $w;
+                continue;
+            }
+            $conds[] = "$col = ?"; $params[] = $filters[$fk];
         }
         if (!empty($filters['priority'])) { $conds[] = "priority = ?"; $params[] = (int) $filters['priority']; }
         $where = $conds ? implode(' AND ', array_map(fn($c) => "($c)", $conds)) : '1';
