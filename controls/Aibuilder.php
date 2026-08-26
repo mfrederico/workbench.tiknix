@@ -119,7 +119,19 @@ class Aibuilder extends BuildControl {
     }
 
     /** base64url(payload) + "." + hex(HMAC-SHA256(payload, secret)) — mirrors the bridges. */
-    private function mintToken(string $sub, int $memberId): string {
+    /**
+     * @param string $engineWanted  Open the terminal on a SPECIFIC provider, e.g. 'zai'.
+     *                              Empty = the project's own engine, which is what every
+     *                              caller did before this existed.
+     *
+     * The engine has to be decided here rather than left to the jail, and it decides two
+     * things at once that must agree: which endpoint the CLI talks to (carried to the
+     * bridge as a token claim, which it turns into $ENGINE) and which credential store gets
+     * bound (AgentState::resolve, keyed per engine). Setting one without the other is the
+     * failure worth naming — credentials written to state/zai while the CLI still talks to
+     * Anthropic looks like a successful login that never takes effect.
+     */
+    private function mintToken(string $sub, int $memberId, string $engineWanted = ''): string {
         $cfg    = $this->cfg();
         $secret = (string)($cfg['token']['secret'] ?? '');
         $ttl    = (int)($cfg['token']['ttl'] ?? 120);
@@ -130,8 +142,17 @@ class Aibuilder extends BuildControl {
         // project you had already signed in for elsewhere.
         $dir    = '/var/www/html/default/' . $sub . '.' . $this->appNamespace();
         $engine = trim((string) @file_get_contents($dir . '/.aibuilder/engine')) ?: 'claude';
+        // A requested engine wins, but only one the registry knows — this value becomes
+        // $ENGINE in a shell, and the bridge allowlists it again on its side.
+        $engineWanted = trim($engineWanted);
+        if ($engineWanted !== '' && EngineRegistry::isValid($engineWanted)) $engine = $engineWanted;
+
         $payload = json_encode([
             'app' => $this->appNamespace(), 'sub' => $sub, 'member_id' => $memberId,
+            // The bridge reads this and sets ENGINE before spawning the jail. Without it the
+            // terminal always came up on the project's engine, so there was no way to sign
+            // in to a second provider from the browser at all.
+            'engine' => $engine,
             'agent_state' => \app\AgentState::resolve($memberId, $engine, $dir),
             'nonce' => bin2hex(random_bytes(8)),   // single-use: the bridge burns this on connect
             'exp' => time() + $ttl,
@@ -309,7 +330,8 @@ class Aibuilder extends BuildControl {
             'selected'       => $selected,
             'ab_needsInstall' => $needsInstall,
             'ab_sub'         => $selected ? $selected->slug : '',
-            'ab_token'       => $selected ? $this->mintToken($selected->slug, (int)$this->member->id) : '',
+            'ab_token'       => $selected ? $this->mintToken($selected->slug, (int)$this->member->id,
+                                                             (string) $this->getParam('engine', '')) : '',
             'ab_wspath'      => (string)($cfg['bridge']['ws_path'] ?? '/aibuilder/ws'),
             // The terminal PTY bridge (node runner) lives on CORE, so the xterm must
             // connect to core's host, not this sidecar's. wss://<core-host>. See coreWsBase().
@@ -385,7 +407,10 @@ class Aibuilder extends BuildControl {
         if (!$this->requireLevel($this->minLevel())) return;
         $inst = $this->accessibleInstance($this->getParam('id', 0));
         if (!$inst) { Flight::jsonError('No such instance', 404); return; }
-        Flight::jsonSuccess(['token' => $this->mintToken($inst->slug, (int)$this->member->id)]);
+        // Carries the engine too: a reconnect that silently dropped back to the project's
+        // provider would move you off z.ai mid-session without saying so.
+        Flight::jsonSuccess(['token' => $this->mintToken($inst->slug, (int)$this->member->id,
+                                                         (string) $this->getParam('engine', ''))]);
     }
 
     /** Path to the instance's jailed tmux control socket. */
