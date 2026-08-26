@@ -244,6 +244,21 @@ class Workbench extends BuildControl {
 
         $this->viewData['teams'] = $teams;
         $this->viewData['preselectedTeamId'] = $preselectedTeamId;
+        /* Engine+model pairs, and which one is preselected. The default is the PROJECT's
+           engine at its worker tier — the thing that would have run anyway — so the picker
+           changes what you can choose without changing what happens if you ignore it. */
+        $this->viewData['runChoices'] = \app\EngineRegistry::runMenu();
+        $projectEngine = \app\EngineRegistry::defaultEngine();
+        if ($this->selected) {
+            $dir = \Model_Instance::dirFrom((string) $this->selected['slug'], (string) ($this->selected['app'] ?? ''));
+            $f   = rtrim($dir, '/') . '/.aibuilder/engine';
+            if (is_file($f)) {
+                $fromFile = trim((string) @file_get_contents($f));
+                if (\app\EngineRegistry::isValid($fromFile)) $projectEngine = $fromFile;
+            }
+        }
+        $this->viewData['defaultRunChoice'] =
+            $projectEngine . ':' . \app\EngineRegistry::model($projectEngine, 'worker', 'sonnet');
         $this->viewData['taskTypes'] = $this->getTaskTypes();
         $this->viewData['priorities'] = $this->getPriorities();
         $this->viewData['authcontrolLevels'] = $this->getAuthcontrolLevels();
@@ -339,6 +354,17 @@ class Workbench extends BuildControl {
             $task->memberId = $this->member->id;
             $task->teamId = $teamId;
             $task->authcontrolLevel = $authcontrolLevel;
+            /* Engine + model as ONE choice, validated against what the registry actually
+               offers rather than parsed from the form. Both values leave PHP: the engine
+               becomes a shell assignment in jail-run.sh and the model a --model flag, so an
+               unrecognised pair is dropped here instead of failing inside the jail.
+               Unset leaves both null, which is the previous behaviour — jail-run.sh falls
+               back to the project's .aibuilder/engine and then the conf default. */
+            $pick = \app\EngineRegistry::parseRunChoice($this->getParam('run_with', ''));
+            if ($pick) {
+                $task->engine = $pick['engine'];
+                $task->model  = $pick['model'];
+            }
             $task->acceptanceCriteria = trim($this->getParam('acceptance_criteria', ''));
             $task->relatedFiles = json_encode(array_filter(explode("\n", $this->getParam('related_files', ''))));
             $task->tags = json_encode(array_filter(array_map('trim', explode(',', $this->getParam('tags', '')))));

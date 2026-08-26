@@ -123,6 +123,27 @@
                         </div>
 
                         <div class="row">
+                            <?php /* Which agent builds this — ONE choice, not two.
+                                     An engine list plus a model list lets someone pick z.ai with
+                                     opus: syntactically fine, meaningless to the provider, and it
+                                     fails at run time as an unhelpful API error. The pair is the
+                                     unit, and EngineRegistry::runMenu() only offers pairs that
+                                     exist on an engine that is actually available. */ ?>
+                            <?php if (!empty($runChoices)): ?>
+                            <div class="col-md-4 mb-3">
+                                <label for="run_with" class="form-label">Run with</label>
+                                <select class="form-select" id="run_with" name="run_with">
+                                    <?php foreach ($runChoices as $c): ?>
+                                        <option value="<?= htmlspecialchars($c['value']) ?>"
+                                            <?= ($c['value'] === ($defaultRunChoice ?? '')) ? 'selected' : '' ?>>
+                                            <?= htmlspecialchars($c['label']) ?>
+                                        </option>
+                                    <?php endforeach; ?>
+                                </select>
+                                <div class="form-text small">Defaults to this project's engine.</div>
+                            </div>
+                            <?php endif; ?>
+
                             <!-- Task Type -->
                             <div class="col-md-4 mb-3">
                                 <label for="task_type" class="form-label">Type</label>
