@@ -258,7 +258,7 @@ class Workbench extends BuildControl {
             }
         }
         $this->viewData['defaultRunChoice'] =
-            $projectEngine . ':' . \app\EngineRegistry::model($projectEngine, 'worker', 'sonnet');
+            $projectEngine . ':' . \app\EngineRegistry::model($projectEngine, 'worker');
         $this->viewData['taskTypes'] = $this->getTaskTypes();
         $this->viewData['priorities'] = $this->getPriorities();
         $this->viewData['authcontrolLevels'] = $this->getAuthcontrolLevels();
@@ -1959,11 +1959,10 @@ class Workbench extends BuildControl {
         // built the branch. (A different engine awaits non-claude interactive dispatch;
         // until then the model tier is the honest decorrelation lever.)
         $authorEngine  = EngineRegistry::isValid((string)$task->engine) ? (string)$task->engine : EngineRegistry::defaultEngine();
-        $workerModel   = EngineRegistry::model($authorEngine, 'worker', 'sonnet');
+        $workerModel   = EngineRegistry::model($authorEngine, 'worker');
         // The member resolving the conflict may override the resolver model in settings;
         // absent that, the engine's resolver tier (defaults to its frontier/planner model).
-        $resolverModel = MemberEnginePrefs::model((int)$this->member->id, $authorEngine, 'resolver',
-                            EngineRegistry::model($authorEngine, 'planner', 'opus'));
+        $resolverModel = MemberEnginePrefs::model((int)$this->member->id, $authorEngine, 'resolver');
 
         try {
             $runner = new ClaudeRunner($taskId, $this->member->id, $task->teamId, $ws, $this->member->level);

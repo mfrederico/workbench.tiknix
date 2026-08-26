@@ -921,7 +921,7 @@ class Aibuilder extends BuildControl {
         // task today (native non-claude dispatch is Phase A), so this --model must be a
         // claude-valid model — resolve the member's CLAUDE worker override, default sonnet.
         // Per-task engine selection still happens inside PlanExecutor via the registry.
-        $workerModel = MemberEnginePrefs::model((int)$this->member->id, 'claude', 'worker', 'sonnet');
+        $workerModel = MemberEnginePrefs::model((int)$this->member->id, 'claude', 'worker');
         // The launch block lives in core (app\PlanOrchestrator): it resolves the
         // orchestrator script, exports the per-instance workbench.db so plan state is
         // written where this plan actually lives, and refuses to report success for a
