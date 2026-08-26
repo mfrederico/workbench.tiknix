@@ -917,17 +917,16 @@ class Aibuilder extends BuildControl {
         }
 
         $dir = $this->instanceDir($inst->slug);
-        // Worker model for the orchestrator. The executor runs the claude CLI for every
-        // task today (native non-claude dispatch is Phase A), so this --model must be a
-        // claude-valid model — resolve the member's CLAUDE worker override, default sonnet.
-        // Per-task engine selection still happens inside PlanExecutor via the registry.
-        $workerModel = MemberEnginePrefs::model((int)$this->member->id, 'claude', 'worker');
+        // No worker model is passed any more. This resolved CLAUDE's worker tier and gave
+        // it to every task in the plan, on the premise that the executor ran the claude CLI
+        // regardless of engine. It no longer does: PlanExecutor dispatches each task on its
+        // own engine, so a plan on another provider was launched asking for sonnet.
         // The launch block lives in core (app\PlanOrchestrator): it resolves the
         // orchestrator script, exports the per-instance workbench.db so plan state is
         // written where this plan actually lives, and refuses to report success for a
         // command it cannot run.
         if (!\app\PlanOrchestrator::launch(
-            (int)$plan->id, (string)$inst->slug, $dir, (int)$this->member->level, $workerModel
+            (int)$plan->id, (string)$inst->slug, $dir, (int)$this->member->level
         )) {
             Flight::jsonError('Could not start the orchestrator.', 500);
             return;
