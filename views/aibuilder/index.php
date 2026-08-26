@@ -122,6 +122,30 @@ foreach ($instances as $__i) { if (!empty($__i->isDefault)) { $hasDefault = true
             </span>
           </div>
           <div class="card-body p-2 bg-body-tertiary position-relative">
+            <?php if (!empty($ab_keyNeeded)): ?>
+            <!-- This provider signs in with an API key and this member has not set one. The
+                 terminal is NOT opened: the jail would refuse and the session would die
+                 before a prompt appeared, which reads as a broken page rather than a missing
+                 credential. Send them to the provider's key page and to their settings. -->
+            <div class="alert alert-warning mb-2">
+              <h6 class="alert-heading">
+                <i class="bi bi-key me-1"></i><?= htmlspecialchars($ab_keyNeeded['label']) ?> needs your API key
+              </h6>
+              <p class="mb-2 small">
+                This provider signs in with an API key &mdash; the terminal's
+                <code>/login</code> is Anthropic's and cannot reach it.
+              </p>
+              <?php if ($ab_keyNeeded['keyUrl'] !== ''): ?>
+              <a href="<?= htmlspecialchars($ab_keyNeeded['keyUrl']) ?>" target="_blank" rel="noopener noreferrer"
+                 class="btn btn-sm btn-warning">
+                <i class="bi bi-box-arrow-up-right me-1"></i>Get a key from <?= htmlspecialchars($ab_keyNeeded['label']) ?>
+              </a>
+              <?php endif; ?>
+              <a href="<?= htmlspecialchars($ab_keyNeeded['settings']) ?>" class="btn btn-sm btn-outline-secondary">
+                <i class="bi bi-gear me-1"></i>Paste it into your settings
+              </a>
+            </div>
+            <?php endif; ?>
             <div id="ab-terminal"></div>
 
             <!-- Sign-in gate — the fake browser ($BROWSER in the jail) captured an OAuth
@@ -320,9 +344,17 @@ const AB = {
   wsPath: <?= json_encode($ab_wspath) ?>,
   csrf: <?= json_encode($csrfTok) ?>,
   has: <?= $ab_hasInstance ? 'true' : 'false' ?>,
+  // True when the chosen engine needs an API key this member has not set. The banner above
+  // the terminal explains it; connecting anyway would show the jail's refusal and then a
+  // dead session, which reads as a broken page rather than a missing credential.
+  keyNeeded: <?= !empty($ab_keyNeeded) ? 'true' : 'false' ?>,
   isDefault: <?= $ab_isDefault ? 'true' : 'false' ?>,
   url: <?= json_encode($ab_url ?? '') ?>,
   wsBase: <?= json_encode($ab_ws_base ?? '') ?>,
+  // The engine this page resolved to. Must ride along on every token refresh: the token
+  // carries the engine claim, and a refresh without it re-resolves to the default, which
+  // is how picking z.ai kept landing you in the claude session.
+  engine: <?= json_encode($ab_engine ?? '') ?>,
 };
 const esc = s => (s||'').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
 
@@ -342,10 +374,12 @@ if (createForm) createForm.addEventListener('submit', function (e) {
   }).catch(()=>{ msg.textContent='Network error.'; btn.disabled=false; });
 });
 
-if (AB.has) {
+// keyNeeded short-circuits the whole terminal block: no socket, no PTY, no reconnect loop.
+// The banner is the page's answer until they set a key.
+if (AB.has && !AB.keyNeeded) {
   const statusEl = document.getElementById('ab-status');
   const setStatus = t => { statusEl.textContent = '· ' + t; };
-  const freshToken = () => fetch('/aibuilder/refresh?id='+AB.id, {headers:{'X-Requested-With':'XMLHttpRequest'}})
+  const freshToken = () => fetch('/aibuilder/refresh?id='+AB.id+(AB.engine?'&engine='+encodeURIComponent(AB.engine):''), {headers:{'X-Requested-With':'XMLHttpRequest'}})
     .then(r=>r.json()).then(j=>(j.success&&j.data&&j.data.token)?j.data.token:AB.token).catch(()=>AB.token);
   // The PTY bridge runs on CORE; connect there (ab_ws_base) when set (sidecar), else same-host (core's own /aibuilder).
   const wsBase = AB.wsBase || ((location.protocol==='https:'?'wss':'ws') + '://' + location.host);
@@ -365,10 +399,57 @@ if (AB.has) {
       const sel=term.getSelection();
       if(sel && navigator.clipboard) navigator.clipboard.writeText(sel).catch(()=>{});
     });
-    // Right-click pastes from the clipboard into the PTY.
+    // Right-click pastes from the clipboard into the PTY — EXCEPT with Shift held, which
+    // hands the event to the browser so its native copy/paste menu opens.
+    //
+    // Shift is the right modifier to yield on because xterm already treats it that way:
+    // _shouldForceSelection() returns e.shiftKey off macOS, so Shift+drag selects locally
+    // instead of forwarding the mouse to tmux, even with `mouse on` set. Preventing the
+    // default unconditionally was overriding a bypass the terminal already implements.
+    //
+    // Ctrl+Shift+C is not an alternative — the browser claims it first. Selecting text
+    // copies it automatically (mouseup above), so the menu is mainly the paste route.
     el.addEventListener('contextmenu', ev=>{
+      if(ev.shiftKey) return;
       ev.preventDefault();
       if(navigator.clipboard) navigator.clipboard.readText().then(t=>{ if(t) term.paste(t); }).catch(()=>{});
+    });
+
+    // Ctrl+Shift belongs to the terminal while the terminal has focus.
+    //
+    // Ctrl+Shift+C/V are the terminal copy/paste bindings everywhere else, but in a browser
+    // Ctrl+Shift+C opens the element inspector — so the one shortcut people reach for is the
+    // one that does something else entirely. Handle the pair here, and swallow the rest of
+    // the Ctrl+Shift range so a stray combo doesn't fire a browser action mid-session.
+    //
+    // Scoped by focus: this is xterm's key handler, so it never runs while you are typing
+    // anywhere else on the page.
+    //
+    // LIMIT, and it is the browser's, not ours: a few combos are claimed above the page and
+    // cannot be preventDefault'ed — Ctrl+Shift+N/T/W/Q, and Ctrl+Shift+I/J in some builds.
+    // Those still reach the browser. Shift+drag (copy-on-select) and Shift+right-click stay
+    // as the routes that always work.
+    term.attachCustomKeyEventHandler(ev=>{
+      if(ev.type!=='keydown' || !ev.ctrlKey || !ev.shiftKey || ev.altKey) return true;
+      const k=ev.key.toUpperCase();
+      if(k==='C'){
+        const sel=term.getSelection();
+        // Only claim the key when there IS a selection. With none, Ctrl+Shift+C would
+        // otherwise silently do nothing instead of falling through to the browser.
+        if(sel){
+          ev.preventDefault();
+          if(navigator.clipboard) navigator.clipboard.writeText(sel).catch(()=>{});
+          return false;
+        }
+        return true;
+      }
+      if(k==='V'){
+        ev.preventDefault();
+        if(navigator.clipboard) navigator.clipboard.readText().then(t=>{ if(t) term.paste(t); }).catch(()=>{});
+        return false;
+      }
+      ev.preventDefault();   // any other Ctrl+Shift combo: don't let the browser act on it
+      return true;           // ...but let xterm forward it to the agent
     });
 
     // Input and resize are wired ONCE, against whatever socket is current. Binding

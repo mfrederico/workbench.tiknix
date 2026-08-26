@@ -244,7 +244,34 @@ class Aibuilder extends BuildControl {
      * so this covers BOTH the interactive terminal and task automation with no jail
      * or bridge changes. Merge-preserving: the operator's creds live in this dir too.
      */
-    private function ensureOAuthCapture(string $slug): void {
+    /**
+     * null when this engine can start, or the details of the key it is missing.
+     *
+     * Engines that sign in by OAuth (Anthropic's) always return null — they have no key to
+     * miss. For key engines this reports only on the MEMBER's key, deliberately: the
+     * operator's environment fallback is invisible to PHP, so a "no key" verdict here means
+     * "you have not set yours", which is the thing the member can act on.
+     */
+    private function engineKeyPrompt(string $engine): ?array {
+        $envVar = \app\EngineRegistry::authTokenEnv($engine);
+        if ($envVar === '') return null;                       // OAuth engine: nothing to set
+
+        $has = (string) \app\CoreDb::with(
+            fn() => \app\MemberEnginePrefs::token((int) $this->member->id, $engine)
+        );
+        if ($has !== '') return null;
+
+        return [
+            'engine'   => $engine,
+            'label'    => \app\EngineRegistry::label($engine),
+            'keyUrl'   => \app\EngineRegistry::keyUrl($engine),
+            // Same source projectPickerUrl() uses — the settings page lives on CORE, not
+            // on this sidecar, so a relative link would 404 here.
+            'settings' => rtrim((string) (\Flight::get('sidecar.core_url') ?? ''), '/') . '/member/settings',
+        ];
+    }
+
+    private function ensureOAuthCapture(string $slug, string $engine = 'claude'): void {
         if (!preg_match(self::SLUG_RE, $slug)) return;
         $dir = $this->instanceDir($slug);
         if (!is_dir($dir)) return;
@@ -262,8 +289,44 @@ class Aibuilder extends BuildControl {
         }
 
         // (2) Point Claude at it via the persisted per-instance settings.json.
-        $stateDir = $aib . '/state/claude';
+        /* The state dir for the ENGINE being opened, not always claude.
+           This was hardcoded to state/claude, so the fake $BROWSER that captures the OAuth
+           URL was only ever installed for one provider. Opening the terminal on another
+           engine pointed CLAUDE_CONFIG_DIR at a store with no settings.json, so the login
+           had nothing to capture it — and the sign-in gate never appeared.
+           Resolved through AgentState so it is the SAME directory jail-run.sh binds: the
+           member's store when there is one, the project's otherwise. Writing to a path the
+           jail does not mount is indistinguishable from not writing it at all. */
+        $stateDir = \app\AgentState::resolve((int) $this->member->id, $engine, $dir);
         if (!is_dir($stateDir)) @mkdir($stateDir, 0775, true);
+
+        /* (2a) This member's own API key for key-authenticated providers, handed to the jail
+           through the state dir it already binds.
+           Deliberately NOT sent via the bridge token: that token lives in page source, and a
+           member's API key has no business there. This write happens server-side and the file
+           never leaves the host. jail-run.sh prefers it over the operator's own key.
+           Removed when they clear it, so revoking in the UI actually revokes here — leaving a
+           stale file would keep authenticating them with a key they believe they deleted. */
+        $keyFile = $stateDir . '/auth-token';
+        if (\app\EngineRegistry::authTokenEnv($engine) !== '') {
+            /* Read through CoreDb: member settings live in CORE's database, while this
+               sidecar's default connection is the instance's own workbench.db. Reading it
+               unwrapped finds no settings table (or someone else's) and returns '' — which
+               is indistinguishable from "this member set no key", so the operator's key
+               would silently be used instead of theirs. */
+            $memberKey = (string) \app\CoreDb::with(
+                fn() => \app\MemberEnginePrefs::token((int) $this->member->id, $engine)
+            );
+            if ($memberKey !== '') {
+                if (@file_get_contents($keyFile) !== $memberKey) {
+                    @file_put_contents($keyFile, $memberKey);
+                    @chmod($keyFile, 0600);
+                }
+            } elseif (is_file($keyFile)) {
+                @unlink($keyFile);
+            }
+        }
+
         $file = $stateDir . '/settings.json';
         $settings = [];
         if (is_file($file)) {
@@ -318,7 +381,8 @@ class Aibuilder extends BuildControl {
 
         // Neutralize Claude's in-jail browser-open before the terminal opens, so a
         // first-run `claude` sign-in surfaces in the gate instead of a dead browser.
-        if ($selected) $this->ensureOAuthCapture($selected->slug);
+        if ($selected) $this->ensureOAuthCapture($selected->slug,
+                                                 $this->terminalEngine($selected->slug, (string) $this->getParam('engine', '')));
 
         // Share-management UI (owner-only team sharing) is part of the registry write-seam;
         // the read/terminal/plan path works without it. Selected instance's shares are read-only.
@@ -357,6 +421,15 @@ class Aibuilder extends BuildControl {
             'ab_engine'      => $selected
                 ? $this->terminalEngine($selected->slug, (string) $this->getParam('engine', ''))
                 : '',
+            /* Key-authenticated engine with no key for THIS member: the terminal would open,
+               the jail would refuse by name, and the session would die before the prompt.
+               Surface it as a link to the provider's key page instead of a dead terminal.
+               Only the member's own key is checked. The operator's fallback lives in the
+               bridge's environment, which PHP cannot see — so this asks the question it can
+               actually answer, and the jail still refuses loudly if neither exists. */
+            'ab_keyNeeded'   => $selected ? $this->engineKeyPrompt(
+                                                $this->terminalEngine($selected->slug, (string) $this->getParam('engine', ''))
+                                            ) : null,
             'ab_wspath'      => (string)($cfg['bridge']['ws_path'] ?? '/aibuilder/ws'),
             // The terminal PTY bridge (node runner) lives on CORE, so the xterm must
             // connect to core's host, not this sidecar's. wss://<core-host>. See coreWsBase().
