@@ -131,6 +131,25 @@ class Aibuilder extends BuildControl {
      * failure worth naming — credentials written to state/zai while the CLI still talks to
      * Anthropic looks like a successful login that never takes effect.
      */
+    /**
+     * Which engine a terminal for $sub runs on: the requested one, else the project's.
+     *
+     * ONE resolution point, used by both the token and the label beside it. Two copies of
+     * this rule would eventually disagree, and the way it would show up is the worst
+     * possible: a dropdown reading "GLM (z.ai)" over a session talking to Anthropic, so a
+     * /login there would look like it signed you in to z.ai and would not have.
+     *
+     * A requested engine has to be one the registry knows — this becomes $ENGINE for a
+     * spawned process, and the bridge allowlists it again independently.
+     */
+    private function terminalEngine(string $sub, string $wanted = ''): string {
+        $wanted = trim($wanted);
+        if ($wanted !== '' && EngineRegistry::isValid($wanted)) return $wanted;
+        $f = $this->instanceDir($sub) . '/.aibuilder/engine';
+        $fromFile = is_file($f) ? trim((string) @file_get_contents($f)) : '';
+        return ($fromFile !== '' && EngineRegistry::isValid($fromFile)) ? $fromFile : 'claude';
+    }
+
     private function mintToken(string $sub, int $memberId, string $engineWanted = ''): string {
         $cfg    = $this->cfg();
         $secret = (string)($cfg['token']['secret'] ?? '');
@@ -141,12 +160,7 @@ class Aibuilder extends BuildControl {
         // terminal fell back to the per-project dir and asked you to log in again for a
         // project you had already signed in for elsewhere.
         $dir    = '/var/www/html/default/' . $sub . '.' . $this->appNamespace();
-        $engine = trim((string) @file_get_contents($dir . '/.aibuilder/engine')) ?: 'claude';
-        // A requested engine wins, but only one the registry knows — this value becomes
-        // $ENGINE in a shell, and the bridge allowlists it again on its side.
-        $engineWanted = trim($engineWanted);
-        if ($engineWanted !== '' && EngineRegistry::isValid($engineWanted)) $engine = $engineWanted;
-
+        $engine  = $this->terminalEngine($sub, $engineWanted);
         $payload = json_encode([
             'app' => $this->appNamespace(), 'sub' => $sub, 'member_id' => $memberId,
             // The bridge reads this and sets ENGINE before spawning the jail. Without it the
@@ -332,6 +346,17 @@ class Aibuilder extends BuildControl {
             'ab_sub'         => $selected ? $selected->slug : '',
             'ab_token'       => $selected ? $this->mintToken($selected->slug, (int)$this->member->id,
                                                              (string) $this->getParam('engine', '')) : '',
+            /* The engines this terminal can be opened on, and which one it is on now.
+               menu() already filters to AVAILABLE engines, so z.ai appears here the moment
+               [engine.zai] available flips — no code change, which is the point of the
+               registry reading from ini.
+               The active one is resolved the same way mintToken() resolves it, because a
+               label that disagreed with the session would be worse than no label: you would
+               believe you were signed in to a provider you were not. */
+            'ab_engines'     => EngineRegistry::menu(),
+            'ab_engine'      => $selected
+                ? $this->terminalEngine($selected->slug, (string) $this->getParam('engine', ''))
+                : '',
             'ab_wspath'      => (string)($cfg['bridge']['ws_path'] ?? '/aibuilder/ws'),
             // The terminal PTY bridge (node runner) lives on CORE, so the xterm must
             // connect to core's host, not this sidecar's. wss://<core-host>. See coreWsBase().

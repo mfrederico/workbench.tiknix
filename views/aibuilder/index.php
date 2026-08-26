@@ -98,6 +98,24 @@ foreach ($instances as $__i) { if (!empty($__i->isDefault)) { $hasDefault = true
               <span id="ab-status" class="fw-normal text-body-secondary small">· connecting…</span>
             </span>
             <span class="d-flex align-items-center gap-2">
+              <?php /* Which provider this terminal talks to, and how to change it.
+                       RELOADS rather than switching live: a session is bound to its engine
+                       when the daemon spawns, so a dropdown that appeared to switch an open
+                       session would be lying about where the next keystroke goes.
+                       This is also the only way to sign in to a SECOND provider. /login
+                       writes to the credential store of whichever engine the terminal was
+                       opened with, so opening on Claude and logging in can only ever
+                       produce another Anthropic login, however many times you try. */ ?>
+              <?php if (!empty($ab_engines) && count($ab_engines) > 1): ?>
+                <select id="ab-engine" class="form-select form-select-sm w-auto"
+                        title="Which coding agent this terminal runs — changing it reopens the session">
+                  <?php foreach ($ab_engines as $eng => $lbl): ?>
+                    <option value="<?= htmlspecialchars($eng) ?>"<?= $eng === ($ab_engine ?? '') ? ' selected' : '' ?>>
+                      <?= htmlspecialchars($lbl) ?>
+                    </option>
+                  <?php endforeach; ?>
+                </select>
+              <?php endif; ?>
               <span class="text-body-secondary small d-none d-md-inline"><i class="bi bi-shield-lock me-1"></i>Sandboxed to <?= htmlspecialchars(($selected->slug) ?? '') ?>.tiknix</span>
               <?php if (!$ab_isDefault): ?><button id="ab-restart" class="btn btn-outline-secondary btn-sm" type="button" title="Restart the jailed session (applies updated sandbox settings)"><i class="bi bi-arrow-repeat me-1"></i>Restart</button><?php endif; ?>
               <button id="ab-delete" class="btn btn-outline-danger btn-sm" type="button" title="Delete this instance (danger zone)"><i class="bi bi-trash me-1"></i>Delete</button>
@@ -516,6 +534,21 @@ if (AB.has) {
         msg.textContent=(j.message||'Uploaded')+(errs.length?(' · '+errs.join('; ')):''); inp.value=''; loadUploads(); refreshChanges(); }
       else { msg.className='form-text text-danger'; msg.textContent=j.message||'Upload failed.'; }
     }).catch(()=>{ msg.className='form-text text-danger'; msg.textContent='Network error.'; }).finally(()=>btn.disabled=false);
+  });
+
+  // --- Engine picker: reopen the terminal on a different provider ---------------
+  // A reload, not a live switch. The jail's ENGINE is fixed when the daemon spawns, so
+  // the only honest way to change provider is to come back with a new token — and the
+  // running session has to be stopped first, or the old daemon keeps serving the socket
+  // and the page reconnects to the engine you just moved away from.
+  const engineSel=document.getElementById('ab-engine');
+  if(engineSel) engineSel.addEventListener('change',function(){
+    const eng=this.value;
+    this.disabled=true; setStatus('switching to '+eng+'…');
+    const go=()=>{ const u=new URL(location.href); u.searchParams.set('engine',eng); location.href=u.toString(); };
+    // Best effort: if the restart call fails the reload still happens, because arriving on
+    // the right engine with a stale session is recoverable and being stuck here is not.
+    post('/aibuilder/restart',{}).then(()=>setTimeout(go,700)).catch(go);
   });
 
   // --- Restart session (kills the jailed tmux server, then reloads for a fresh jail) ---
