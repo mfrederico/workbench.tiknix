@@ -619,13 +619,28 @@ $baseDomain = $baseUrl === '' ? '' : preg_replace('#^https?://#', '', rtrim($bas
                     <div class="card-header d-flex justify-content-between align-items-center">
                         <h5 class="mb-0">
                             <span class="spinner-border spinner-border-sm me-2" id="progressSpinner"></span>
-                            Claude is Working
+                            <?php
+                            /* Name the engine and model actually running this task. "Claude is
+                               Working" was written when claude was the only option; a task can
+                               now be moved between providers per task, and this page is where
+                               someone checks WHICH one is doing the work — reading the wrong
+                               vendor here is how you debug the wrong provider for ten minutes. */
+                            $runEngine = trim((string) ($task->engine ?? ''));
+                            $runModel  = trim((string) ($task->model ?? ''));
+                            if ($runEngine === '') {
+                                echo 'Agent is working';        // engine not recorded — do not guess a vendor
+                            } else {
+                                echo htmlspecialchars(\app\EngineRegistry::label($runEngine));
+                                if ($runModel !== '') echo ' <small class="text-muted">(' . htmlspecialchars($runModel) . ')</small>';
+                                echo ' is working';
+                            }
+                            ?>
                         </h5>
                         <small class="text-muted" id="lastUpdate">Updating...</small>
                     </div>
                     <div class="card-body">
                         <div id="progressContent">
-                            <p class="text-muted">Connecting to Claude runner...</p>
+                            <p class="text-muted">Connecting to the agent runner...</p>
                         </div>
                         <div id="snapshotContent" class="mt-3" style="display: none;">
                             <strong>Latest Activity:</strong>
