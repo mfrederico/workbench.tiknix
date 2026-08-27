@@ -150,7 +150,7 @@ class Aibuilder extends BuildControl {
         return ($fromFile !== '' && EngineRegistry::isValid($fromFile)) ? $fromFile : 'claude';
     }
 
-    private function mintToken(string $sub, int $memberId, string $engineWanted = ''): string {
+    private function mintToken(string $sub, int $memberId, string $engineWanted = '', bool $resume = false): string {
         $cfg    = $this->cfg();
         $secret = (string)($cfg['token']['secret'] ?? '');
         $ttl    = (int)($cfg['token']['ttl'] ?? 120);
@@ -168,6 +168,12 @@ class Aibuilder extends BuildControl {
             // in to a second provider from the browser at all.
             'engine' => $engine,
             'agent_state' => \app\AgentState::resolve($memberId, $engine, $dir),
+            /* Resume the agent's previous conversation instead of starting cold. The
+               transcript is already on disk in the state dir above — this only asks the
+               bridge to pass --continue when it spawns, so a terminal that dropped can be
+               picked up where it left off. Travels in the SIGNED payload, so a browser
+               cannot request it for a session that is not its own. */
+            'resume' => $resume,
             'nonce' => bin2hex(random_bytes(8)),   // single-use: the bridge burns this on connect
             'exp' => time() + $ttl,
         ]);
@@ -409,7 +415,8 @@ class Aibuilder extends BuildControl {
             'ab_needsInstall' => $needsInstall,
             'ab_sub'         => $selected ? $selected->slug : '',
             'ab_token'       => $selected ? $this->mintToken($selected->slug, (int)$this->member->id,
-                                                             (string) $this->getParam('engine', '')) : '',
+                                                             (string) $this->getParam('engine', ''),
+                                                             $this->getParam('resume', '') === '1') : '',
             /* The engines this terminal can be opened on, and which one it is on now.
                menu() already filters to AVAILABLE engines, so z.ai appears here the moment
                [engine.zai] available flips — no code change, which is the point of the
@@ -508,7 +515,8 @@ class Aibuilder extends BuildControl {
         // Carries the engine too: a reconnect that silently dropped back to the project's
         // provider would move you off z.ai mid-session without saying so.
         Flight::jsonSuccess(['token' => $this->mintToken($inst->slug, (int)$this->member->id,
-                                                         (string) $this->getParam('engine', ''))]);
+                                                         (string) $this->getParam('engine', ''),
+                                                         $this->getParam('resume', '') === '1')]);
     }
 
     /** Path to the instance's jailed tmux control socket. */

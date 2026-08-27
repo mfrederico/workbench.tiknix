@@ -117,7 +117,12 @@ foreach ($instances as $__i) { if (!empty($__i->isDefault)) { $hasDefault = true
                 </select>
               <?php endif; ?>
               <span class="text-body-secondary small d-none d-md-inline"><i class="bi bi-shield-lock me-1"></i>Sandboxed to <?= htmlspecialchars(($selected->slug) ?? '') ?>.tiknix</span>
-              <?php if (!$ab_isDefault): ?><button id="ab-restart" class="btn btn-outline-secondary btn-sm" type="button" title="Restart the jailed session (applies updated sandbox settings)"><i class="bi bi-arrow-repeat me-1"></i>Restart</button><?php endif; ?>
+              <?php if (!$ab_isDefault): ?><button id="ab-restart" class="btn btn-outline-secondary btn-sm" type="button" title="Restart the jailed session (applies updated sandbox settings)"><i class="bi bi-arrow-repeat me-1"></i>Restart</button>
+              <?php /* The agent's transcript outlives the terminal — it is stored per member,
+                       outside the jail — so a dropped session can be picked up rather than
+                       retyped. Only meaningful for a session that has ENDED; attaching to a
+                       live one already has its context on screen. */ ?>
+              <button id="ab-resume" class="btn btn-outline-secondary btn-sm" type="button" title="Reload the agent's last conversation in this project (claude --continue)"><i class="bi bi-clock-history me-1"></i>Resume last context</button><?php endif; ?>
               <button id="ab-delete" class="btn btn-outline-danger btn-sm" type="button" title="Delete this instance (danger zone)"><i class="bi bi-trash me-1"></i>Delete</button>
             </span>
           </div>
@@ -348,6 +353,9 @@ const AB = {
   // the terminal explains it; connecting anyway would show the jail's refusal and then a
   // dead session, which reads as a broken page rather than a missing credential.
   keyNeeded: <?= !empty($ab_keyNeeded) ? 'true' : 'false' ?>,
+  // Sticky for this page load: every token refresh must carry it too, or a reconnect
+  // mints a plain token and the resumed session quietly becomes a cold one.
+  resume: <?= (($_GET['resume'] ?? '') === '1') ? 'true' : 'false' ?>,
   isDefault: <?= $ab_isDefault ? 'true' : 'false' ?>,
   url: <?= json_encode($ab_url ?? '') ?>,
   wsBase: <?= json_encode($ab_ws_base ?? '') ?>,
@@ -379,7 +387,7 @@ if (createForm) createForm.addEventListener('submit', function (e) {
 if (AB.has && !AB.keyNeeded) {
   const statusEl = document.getElementById('ab-status');
   const setStatus = t => { statusEl.textContent = '· ' + t; };
-  const freshToken = () => fetch('/aibuilder/refresh?id='+AB.id+(AB.engine?'&engine='+encodeURIComponent(AB.engine):''), {headers:{'X-Requested-With':'XMLHttpRequest'}})
+  const freshToken = () => fetch('/aibuilder/refresh?id='+AB.id+(AB.engine?'&engine='+encodeURIComponent(AB.engine):'')+(AB.resume?'&resume=1':''), {headers:{'X-Requested-With':'XMLHttpRequest'}})
     .then(r=>r.json()).then(j=>(j.success&&j.data&&j.data.token)?j.data.token:AB.token).catch(()=>AB.token);
   // The PTY bridge runs on CORE; connect there (ab_ws_base) when set (sidecar), else same-host (core's own /aibuilder).
   const wsBase = AB.wsBase || ((location.protocol==='https:'?'wss':'ws') + '://' + location.host);
@@ -633,6 +641,21 @@ if (AB.has && !AB.keyNeeded) {
   });
 
   // --- Restart session (kills the jailed tmux server, then reloads for a fresh jail) ---
+  /* Resume: end the current session, then reload asking for --continue.
+     A restart is required, not incidental. The agent's conversation is chosen when the
+     daemon spawns, so --continue can only take effect on a NEW session; asking for it
+     while one is attached would change nothing and look broken. */
+  const resumeBtn=document.getElementById('ab-resume');
+  if(resumeBtn) resumeBtn.addEventListener('click',function(){
+    if(!confirm('Reload the agent\'s last conversation?\n\nThis restarts the terminal session. Anything on screen now is already saved to the transcript.')) return;
+    resumeBtn.disabled=true;
+    const u=new URL(location.href);
+    u.searchParams.set('resume','1');
+    if(AB.engine) u.searchParams.set('engine',AB.engine);   // stay on the same provider
+    post('/aibuilder/restart',{}).then(()=>{ setTimeout(()=>{ location.href=u.toString(); }, 700); })
+      .catch(()=>{ resumeBtn.disabled=false; });
+  });
+
   const restartBtn=document.getElementById('ab-restart');
   if(restartBtn) restartBtn.addEventListener('click',function(){
     if(!confirm('Restart this instance’s session? Anything running will stop and a fresh sandbox starts.')) return;
