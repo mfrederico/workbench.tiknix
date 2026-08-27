@@ -298,6 +298,7 @@
                 <div id="wbConsolBar" class="bg-dark text-white shadow rounded-pill px-3 py-2" style="display:none; position:fixed; left:50%; transform:translateX(-50%); bottom:1.25rem; z-index:1050; align-items:center; gap:.75rem;">
                     <span><i class="bi bi-check2-square me-1"></i><span id="wbConsolCount">0</span> selected</span>
                     <button id="wbConsolBtn" class="btn btn-warning btn-sm" type="button" disabled><i class="bi bi-union me-1"></i>Consolidate into one</button>
+                    <button id="wbDeleteBtn" class="btn btn-danger btn-sm" type="button"><i class="bi bi-trash me-1"></i>Delete</button>
                     <button id="wbConsolCancel" class="btn btn-outline-light btn-sm" type="button">Clear</button>
                 </div>
                 <div class="card">
@@ -565,11 +566,50 @@
                     var selected = new Set();
                     var bar, countEl, btn, cancel;
                     var BTN_HTML = '<i class="bi bi-union me-1"></i>Consolidate into one';
+                    /* Bulk delete. Names the count in the confirm and says what else goes with
+                       it, because this removes the task's workspace clone (~144MB), its logs and
+                       comments, and — for a plan — every subtask under it. Reports refusals
+                       individually rather than folding them into a success count. */
+                    function doBulkDelete(){
+                        var ids = Array.from(selected);
+                        if (!ids.length) return;
+                        if (!window.confirm(
+                            'Delete ' + ids.length + ' task(s)?\n\n' +
+                            'This also removes their workspaces, logs and comments. A plan takes its ' +
+                            'subtasks with it. This cannot be undone.')) return;
+                        var db = document.getElementById('wbDeleteBtn');
+                        var html = db.innerHTML;
+                        db.disabled = true; db.innerHTML = 'Deleting…';
+                        // Same CSRF mechanism as consolidate above — header AND field, since
+                        // the validator accepts either and copying only one is how these drift.
+                        var body = new URLSearchParams();
+                        ids.forEach(function(id){ body.append('ids[]', id); });
+                        body.append('_csrf_token', window.WB_CSRF || '');
+                        fetch('/workbench/bulkdelete', {
+                            method: 'POST',
+                            headers: {
+                                'X-Requested-With': 'XMLHttpRequest',
+                                'X-CSRF-TOKEN': window.WB_CSRF || '',
+                                'Content-Type': 'application/x-www-form-urlencoded'
+                            },
+                            body: body.toString()
+                        }).then(function(r){ return r.json(); }).then(function(j){
+                            if (!j.success) { window.alert(j.message || 'Delete failed'); db.disabled = false; db.innerHTML = html; return; }
+                            if (j.data && j.data.refused && j.data.refused.length) {
+                                window.alert('Deleted ' + j.data.deleted.length + '. Refused (no permission or in use): #' + j.data.refused.join(', #'));
+                            }
+                            window.location.reload();
+                        }).catch(function(){ window.alert('Network error'); db.disabled = false; db.innerHTML = html; });
+                    }
+
                     function refresh(){
                         if (!bar) return;
                         countEl.textContent = selected.size;
                         bar.style.display = selected.size > 0 ? 'flex' : 'none';
-                        btn.disabled = selected.size < 2;
+                        btn.disabled = selected.size < 2;      // consolidate needs two to merge
+                        // Delete is meaningful for a single task, so it enables at one.
+                        var del = document.getElementById('wbDeleteBtn');
+                        if (del) del.disabled = selected.size < 1;
                     }
                     // Re-apply checkbox state after DataTables recreates rows on sort/search/paginate.
                     // Plan-header checkboxes reflect "all my pending tasks are selected".
@@ -632,6 +672,8 @@
                         cancel = document.getElementById('wbConsolCancel');
                         if (cancel) cancel.addEventListener('click', function(){ selected.clear(); applyChecks(); refresh(); });
                         if (btn) btn.addEventListener('click', doConsolidate);
+                        var delBtn = document.getElementById('wbDeleteBtn');
+                        if (delBtn) delBtn.addEventListener('click', doBulkDelete);
                         refresh();
                     });
                 })();

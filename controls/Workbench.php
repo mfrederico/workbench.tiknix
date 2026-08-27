@@ -133,7 +133,11 @@ class Workbench extends BuildControl {
             'team_id' => $this->getParam('team_id'),
             'priority' => $this->getParam('priority'),
             'instance_tag' => $this->getParam('instance_tag'),
-            'order_by' => $this->getParam('order_by', 'updated_at DESC')
+            // EMPTY, not a default. Passing 'updated_at DESC' here overrode the board's
+            // own ordering (in-flight work first), so a running task stayed buried among its
+            // finished siblings no matter what that default said. An explicit ?order_by=
+            // still wins; absent one, the access layer decides.
+            'order_by' => $this->getParam('order_by', '')
         ];
 
         // Get visible tasks
@@ -1435,35 +1439,71 @@ class Workbench extends BuildControl {
     /**
      * Delete task
      */
-    public function delete($params = []) {
+    /**
+     * Delete many tasks at once, enforcing the SAME permission check as single delete.
+     *
+     * Imported backlogs (monday.com) leave rows nobody will ever run, and removing them one
+     * page at a time is why they linger. Each task is checked individually — a bulk action
+     * is not a permission shortcut — and the response says exactly which ids were refused
+     * rather than reporting a count that quietly hides them.
+     *
+     * POST /workbench/bulkdelete   ids[]=1&ids[]=2
+     */
+    public function bulkdelete($params = []) {
         if (!$this->requireLogin()) return;
-
-        $request = Flight::request();
-        if ($request->method !== 'POST') {
-            Flight::redirect('/workbench');
+        if (!Flight::csrf()->validateRequest()) {
+            Flight::jsonError('CSRF validation failed', 403);
             return;
         }
 
-        $taskId = (int)$this->getParam('id');
-        if (!$taskId) {
-            Flight::redirect('/workbench');
-            return;
+        $ids = (array) ($this->getParam('ids', []));
+        $ids = array_values(array_unique(array_filter(array_map('intval', $ids))));
+        if (!$ids) { Flight::jsonError('No tasks selected', 400); return; }
+
+        // A cap, because this destroys workspaces on disk and a runaway selection should not
+        // become a filesystem operation nobody can stop.
+        if (count($ids) > 100) { Flight::jsonError('Select 100 tasks or fewer at a time', 400); return; }
+
+        $deleted = []; $refused = []; $missing = []; $subtasks = 0;
+        foreach ($ids as $id) {
+            $task = Bean::load('workbenchtask', $id);
+            if (!$task->id)                                        { $missing[] = $id; continue; }
+            if (!$this->access->canDelete($this->member->id, $task)) { $refused[] = $id; continue; }
+            try {
+                $subtasks += $this->purgeTask($task);
+                $deleted[] = $id;
+            } catch (\Throwable $e) {
+                // Name it rather than folding it into a silent count.
+                $this->logger->error('Bulk delete failed for a task', ['task_id' => $id, 'error' => $e->getMessage()]);
+                $refused[] = $id;
+            }
         }
 
-        $task = Bean::load('workbenchtask', $taskId);
-        if (!$task->id) {
-            $this->flash('error', 'Task not found');
-            Flight::redirect('/workbench');
-            return;
-        }
+        $this->logger->info('Bulk delete', ['member_id' => $this->member->id, 'deleted' => $deleted, 'refused' => $refused]);
+        Flight::jsonSuccess([
+            'deleted'  => $deleted,
+            'refused'  => $refused,
+            'missing'  => $missing,
+            'subtasks' => $subtasks,
+        ], sprintf('Deleted %d task(s)%s%s',
+            count($deleted),
+            $subtasks ? " and {$subtasks} subtask(s)" : '',
+            $refused ? ' — ' . count($refused) . ' refused' : ''
+        ));
+    }
 
-        if (!$this->access->canDelete($this->member->id, $task)) {
-            $this->flash('error', 'Access denied');
-            Flight::redirect('/workbench/view?id=' . $taskId);
-            return;
-        }
-
-        try {
+    /**
+     * Everything deleting a task actually entails, in one place.
+     *
+     * Not just a row: a task owns a running agent, an nginx proxy file, a workspace clone
+     * of ~144MB, its logs/snapshots/comments, and — if it is a plan parent — an
+     * orchestrator and a whole subtask chain. Bulk delete must do all of it too, and a
+     * second copy of this list would drift the moment either changed.
+     *
+     * @return int subtasks removed alongside it
+     */
+    private function purgeTask($task): int {
+        $taskId = (int) $task->id;
             // Kill any running sessions
             if ($task->tmuxSession) {
                 $workspacePath = !empty($task->projectPath) ? $task->projectPath : null;
@@ -1516,10 +1556,46 @@ class Workbench extends BuildControl {
                 $subtaskCount++;
             }
 
-            // Remember the instance so we return to the same filtered workbench view.
-            $instanceTag = (string)($task->instanceTag ?? '');
-
             Bean::trash($task);
+
+        // No flash and no redirect here: this is the WORK, and its two callers report it
+        // differently — one redirects a browser, the other answers JSON for a bulk action.
+        return $subtaskCount;
+    }
+
+    public function delete($params = []) {
+        if (!$this->requireLogin()) return;
+
+        $request = Flight::request();
+        if ($request->method !== 'POST') {
+            Flight::redirect('/workbench');
+            return;
+        }
+
+        $taskId = (int)$this->getParam('id');
+        if (!$taskId) {
+            Flight::redirect('/workbench');
+            return;
+        }
+
+        $task = Bean::load('workbenchtask', $taskId);
+        if (!$task->id) {
+            $this->flash('error', 'Task not found');
+            Flight::redirect('/workbench');
+            return;
+        }
+
+        if (!$this->access->canDelete($this->member->id, $task)) {
+            $this->flash('error', 'Access denied');
+            Flight::redirect('/workbench/view?id=' . $taskId);
+            return;
+        }
+
+        try {
+            // Kill any running sessions
+            // Everything this entails lives in purgeTask(), shared with bulk delete.
+            $instanceTag  = (string) ($task->instanceTag ?? '');
+            $subtaskCount = $this->purgeTask($task);
 
             $this->logger->info('Task deleted', ['task_id' => $taskId, 'member_id' => $this->member->id, 'subtasks' => $subtaskCount]);
 
