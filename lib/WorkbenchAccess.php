@@ -249,7 +249,23 @@ class WorkbenchAccess {
         }
         if (!empty($filters['priority'])) { $conds[] = "priority = ?"; $params[] = (int) $filters['priority']; }
         $where = $conds ? implode(' AND ', array_map(fn($c) => "($c)", $conds)) : '1';
-        $orderBy = $filters['order_by'] ?? 'created_at DESC';
+        /* IN-FLIGHT WORK FIRST, then newest.
+         *
+         * created_at DESC alone could not surface it: a plan's subtasks are all ingested in
+         * the same second, so they share a timestamp and the sort cannot separate them. A
+         * running task therefore sat below its own finished siblings — plan #111's live
+         * subtask was twelfth on the board while seven merged ones ranked above it.
+         *
+         * Ordered by what the reader is looking for: something is happening (running),
+         * something is about to (queued/pending), everything else is history. Ties still
+         * break by date, then by id so the order is stable between page loads. */
+        $orderBy = $filters['order_by'] ?? "CASE status
+                WHEN 'running'  THEN 0
+                WHEN 'queued'   THEN 1
+                WHEN 'conflict' THEN 2
+                WHEN 'failed'   THEN 3
+                WHEN 'pending'  THEN 4
+                ELSE 5 END ASC, created_at DESC, id DESC";
         try {
             return Bean::find('workbenchtask', "$where ORDER BY $orderBy", $params);
         } catch (\Throwable $e) {
