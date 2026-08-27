@@ -1903,7 +1903,23 @@ class Workbench extends BuildControl {
             $promptSent = $runner->sendPrompt($prompt);
 
             if (!$promptSent) {
-                $this->logger->warning('Failed to send prompt to Claude session', ['task_id' => $taskId]);
+                /* STOP. sendPrompt() already checked the two things that matter — the text
+                   landed, and the agent then started — and answered no. Logging a warning
+                   and marking the task `running` anyway is how a session sat at an empty
+                   prompt while the board said it was working: the runner was right and the
+                   caller overruled it.
+
+                   Left at `queued`, which is exactly what happened: the session exists, the
+                   brief did not reach it. The session stays alive on purpose — you can open
+                   the Terminal and see the idle prompt for yourself — and Run tries again. */
+                $this->logger->error('Prompt did not reach the agent; leaving the task queued', ['task_id' => $taskId]);
+                $task->status          = 'queued';
+                $task->progressMessage = 'The brief did not reach the agent — its session is open but idle. Press Run to try again.';
+                $task->updatedAt       = date('Y-m-d H:i:s');
+                Bean::store($task);
+                $this->logTaskEvent($taskId, 'error', 'system', 'Prompt did not reach the agent; task left queued');
+                Flight::jsonError('The agent session started but the brief did not reach it. Press Run to try again.', 409);
+                return;
             }
 
             // Update status to running
