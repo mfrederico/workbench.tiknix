@@ -652,7 +652,7 @@ class Workbench extends BuildControl {
         try {
             $runner = new PlanRunner(
                 $slug, $instanceDir, (int)$this->member->id,
-                (int)$this->member->level, (string)($inst->engine ?: 'claude')
+                (int)$this->member->level, (string)($inst->engine ?? '')
             );
             $runner->start($this->buildConsolidationGoal($tasks), $ids);
         } catch (\Throwable $e) {
@@ -928,7 +928,10 @@ class Workbench extends BuildControl {
 
         $dir = '/var/www/html/default/' . $instance->slug . '.' . ($instance->app ?: 'tiknix');
         $runner = new PlanRunner((string) $instance->slug, $dir, (int) $this->member->id,
-                                 (int) $this->member->level, (string) ($instance->engine ?: 'claude'));
+                                 // '' not 'claude': an instance row with no engine should fall
+                                 // through to the PROJECT's own .aibuilder/engine, which
+                                 // AgentContext consults. Substituting claude here overruled it.
+                                 (int) $this->member->level, (string) ($instance->engine ?? ''));
         if (!$runner->running()) {
             Flight::jsonSuccess(['stopped' => false], 'No planner is running for this project.');
             return;
@@ -3420,13 +3423,13 @@ class Workbench extends BuildControl {
         if (!is_file($dir . '/public/index.php')) {
             Flight::jsonError('That project is not on disk any more.', 409); return;
         }
-        if (!$this->agentSignedIn($dir, (string) ($inst->engine ?: 'claude'))) {
+        if (!$this->agentSignedIn($dir, (string) ($inst->engine ?? ''))) {
             Flight::jsonError('This project has not signed in to Claude yet, so the planner cannot run.', 409); return;
         }
 
         try {
             $runner = new PlanRunner($slug, $dir, (int)$this->member->id,
-                (int)$this->member->level, (string)($inst->engine ?: 'claude'));
+                (int)$this->member->level, (string)($inst->engine ?? ''));
             // The same refusal that stranded it in the first place. Say so plainly —
             // "try again when that finishes" is actionable; a generic failure is not.
             if ($runner->running()) {
