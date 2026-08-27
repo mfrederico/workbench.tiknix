@@ -371,6 +371,15 @@ class Workbench extends BuildControl {
             $task->description = trim($this->getParam('description', ''));
             $task->taskType = $this->getParam('task_type', 'feature');
             $task->priority = (int)$this->getParam('priority', 3);
+            /* Engine+model as ONE pick (app\EngineRegistry::parseRunChoice), never two
+               fields: engine=zai with model=opus is syntactically fine, means nothing to
+               the provider, and fails at run time as an unhelpful API error. An empty
+               submission leaves the task where it is rather than clearing it. */
+            $pick = \app\EngineRegistry::parseRunChoice($this->getParam('run_with', ''));
+            if ($pick) {
+                $task->engine = $pick['engine'];
+                $task->model  = $pick['model'];
+            }
             $task->status = 'pending';
             $task->memberId = $this->member->id;
             $task->teamId = $teamId;
@@ -1311,6 +1320,27 @@ class Workbench extends BuildControl {
 
         $this->viewData['title'] = 'Edit Task';
         $this->viewData['task'] = $task;
+        /* The engine is chosen when a task is CREATED and was then unchangeable — a task
+           assigned to a provider that later ran out of quota, or that turned out to be the
+           wrong fit, could only be moved by editing the database row. Same picker and same
+           values as the create form, so there is one way to express this choice. */
+        $choices = \app\EngineRegistry::runMenu();
+        $this->viewData['runChoices'] = $choices;
+        /* Match an OFFERED option, never a constructed string. A task carries engine and
+           model separately and the model is often null, so "zai:" matched nothing and the
+           browser silently selected the first option in the list — opening this page on a
+           z.ai task showed "Claude Code" and saving would have moved it. Prefer the exact
+           pair, fall back to the engine's first offered model, and select nothing when the
+           engine is unknown rather than pointing at someone else's. */
+        $curEngine = trim((string) ($task->engine ?? ''));
+        $curModel  = trim((string) ($task->model ?? ''));
+        $current   = '';
+        foreach ($choices as $c) {
+            if ($c['engine'] !== $curEngine) continue;
+            if ($curModel !== '' && $c['model'] === $curModel) { $current = $c['value']; break; }
+            if ($current === '') $current = $c['value'];      // first for this engine
+        }
+        $this->viewData['currentRunChoice'] = $current;
         $this->viewData['teams'] = $teams;
         $this->viewData['taskTypes'] = $this->getTaskTypes();
         $this->viewData['priorities'] = $this->getPriorities();

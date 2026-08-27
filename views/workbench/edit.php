@@ -67,6 +67,30 @@
                             </div>
                         </div>
 
+                        <?php if (!empty($runChoices)): ?>
+                        <div class="row">
+                            <!-- Engine + model, as ONE choice. Offered here because a task's
+                                 provider is decided at creation and could not be changed
+                                 afterwards: a task assigned to a provider that later ran out
+                                 of quota had to be moved by editing the database. -->
+                            <div class="col-md-6 mb-3">
+                                <label for="run_with" class="form-label">Run with</label>
+                                <select class="form-select" id="run_with" name="run_with">
+                                    <?php foreach ($runChoices as $c): ?>
+                                        <option value="<?= htmlspecialchars($c['value']) ?>"
+                                            <?= $c['value'] === ($currentRunChoice ?? '') ? 'selected' : '' ?>>
+                                            <?= htmlspecialchars($c['label']) ?>
+                                        </option>
+                                    <?php endforeach; ?>
+                                </select>
+                                <div class="form-text small">
+                                    Runs on YOUR credentials for the engine you pick. Changing this
+                                    takes effect the next time the task runs.
+                                </div>
+                            </div>
+                        </div>
+                        <?php endif; ?>
+
                         <div class="row">
                             <!-- Base Branch -->
                             <div class="col-md-6 mb-3">
