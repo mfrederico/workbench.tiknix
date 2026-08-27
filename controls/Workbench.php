@@ -968,7 +968,25 @@ class Workbench extends BuildControl {
             'SELECT MAX(id) FROM workbenchtask WHERE instance_id = ? AND parent_task_id IS NULL',
             [(int)$inst->id]
         );
-        Flight::jsonSuccess(['running' => TmuxManager::exists($session), 'newest_plan_id' => $newest]);
+        /* Liveness, not just presence. The planner runs plain `claude -p`, so planner.log
+           stays empty for the whole run and the process sits at 0% CPU between API turns —
+           a working decompose is indistinguishable from a wedged one, and a 17-minute run
+           was reported as hung on exactly that. The CLI's transcript grows every turn, so
+           its size and age are the progress signal. Null means "cannot tell", which the UI
+           must not render as either working or stuck. */
+        $running  = TmuxManager::exists($session);
+        $dir      = \Model_Instance::dirFrom((string) $inst->slug, (string) ($inst->app ?? ''));
+        $activity = null;
+        if ($running) {
+            $runner   = new PlanRunner((string) $inst->slug, $dir, (int) $this->member->id,
+                                       (int) $this->member->level, (string) ($inst->engine ?? ''));
+            $activity = $runner->activity();
+        }
+        Flight::jsonSuccess([
+            'running'        => $running,
+            'newest_plan_id' => $newest,
+            'activity'       => $activity,
+        ]);
     }
 
     /** Absolute path to a plan subtask's executor agent log (stream-json), or '' if unknown. */
