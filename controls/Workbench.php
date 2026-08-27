@@ -1658,6 +1658,15 @@ class Workbench extends BuildControl {
         // Always regenerate .mcp.json at run time with current config
         // This ensures correct baseurl from config.ini and fresh API key
         if ($workspacePath && is_dir($workspacePath)) {
+            /* Engine config, every run — same reason the MCP config is rewritten here rather
+               than at clone time. The clone happens once, on a task's FIRST run; after that
+               the task has a branch and every retry reuses the workspace. conf/*.ini is
+               gitignored, so a clone never carries it and jail-run finds no [engine.<name>]:
+               task #110 failed five times on 'no anthropic_base_url in [engine.zai]'. Doing
+               it at clone time alone fixed new tasks and left 47 of 48 existing workspaces
+               broken. */
+            \app\GitService::ensureEngineConfig($workspacePath, (string) $task->instanceTag);
+
             // REFUSE, do not degrade. A worktree without its project's own MCP target is
             // the exact condition this change exists to prevent, so it stops the run.
             try {
