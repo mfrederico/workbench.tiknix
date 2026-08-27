@@ -292,8 +292,18 @@ class Workbench extends BuildControl {
         }
         $this->viewData['engineAuth'] = $engineAuth;
         // Kept for the form-level notice, but about the engine the form DEFAULTS to.
-        $this->viewData['agentSignedIn'] = $engineAuth[(string) ($this->selected['engine'] ?? 'claude')] ?? false;
-        $this->viewData['agentSignedInEngine'] = (string) ($this->selected['engine'] ?? 'claude');
+        /* $projectEngine, resolved above from .aibuilder/engine — NOT
+           $this->selected['engine'], which is not a key this array carries. That read
+           silently produced 'claude' for every project, so a project running z.ai was told
+           it had no credentials for claude, naming an engine it does not use. My own
+           fallback, added hours before I removed the same pattern elsewhere. */
+        $this->viewData['agentSignedIn']       = $engineAuth[$projectEngine] ?? false;
+        $this->viewData['agentSignedInEngine'] = $projectEngine;
+        // The picker changes client-side, so the notice needs the whole map to follow it.
+        $this->viewData['engineLabels'] = array_combine(
+            array_keys($engineAuth),
+            array_map(fn($e) => \app\EngineRegistry::label($e), array_keys($engineAuth))
+        );
 
         $this->render('workbench/create', $this->viewData);
     }

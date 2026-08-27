@@ -83,13 +83,19 @@
                                 <a href="<?= htmlspecialchars($projectPickerUrl) ?>" target="_top" class="small">Work on a different project</a>
                             </div>
                             <div class="form-text">This task will be built against the project you are working on.</div>
-                            <?php if (isset($agentSignedIn) && !$agentSignedIn): ?>
-                                <?php /* The one thing that stops a new project building, said where
-                                         the spec is being written rather than five minutes later. */ ?>
-                                <div class="alert alert-warning mt-2 mb-0 py-2 small">
+                            <?php /* Rendered whenever ANY offered engine lacks credentials, then shown
+                                     or hidden by the picker — the warning is about the engine you
+                                     SELECTED, not the project's default. It nagged about claude while
+                                     z.ai was picked and working. Server-rendered visible only when the
+                                     default itself is unusable, so it is right before any JS runs. */ ?>
+                            <?php if (!empty($engineAuth) && in_array(false, $engineAuth, true)): ?>
+                                <div id="wb-engine-warning"
+                                     class="alert alert-warning mt-2 mb-0 py-2 small<?= !empty($agentSignedIn) ? ' d-none' : '' ?>"
+                                     data-auth='<?= htmlspecialchars(json_encode($engineAuth), ENT_QUOTES) ?>'
+                                     data-labels='<?= htmlspecialchars(json_encode($engineLabels ?? []), ENT_QUOTES) ?>'>
                                     <i class="bi bi-exclamation-triangle me-1"></i>
-                                    <strong>You have no credentials for this project's default engine
-                                    (<?= htmlspecialchars($agentSignedInEngine ?? '') ?>).</strong>
+                                    <strong>You have no credentials for
+                                    <span id="wb-engine-name"><?= htmlspecialchars($engineLabels[$agentSignedInEngine] ?? ($agentSignedInEngine ?? '')) ?></span>.</strong>
                                     Agents run on YOUR credentials, not the project's, so either pick an
                                     engine above that you are signed in to, open the
                                     <a href="/aibuilder">Terminal</a> and run <code>/login</code> there,
@@ -346,3 +352,26 @@
     });
 })();
 </script>
+<script>
+/* Keep the credentials warning pointed at the engine actually selected.
+   The picker is client-side, so a server-rendered notice froze on the project default and
+   kept warning about an engine the member had already switched away from. */
+(function () {
+  const box  = document.getElementById('wb-engine-warning');
+  const pick = document.getElementById('run_with');
+  if (!box || !pick) return;
+  const auth   = JSON.parse(box.dataset.auth   || '{}');
+  const labels = JSON.parse(box.dataset.labels || '{}');
+  const name   = document.getElementById('wb-engine-name');
+  const sync = () => {
+    // run_with is "engine:model"; the engine is what credentials attach to.
+    const engine = String(pick.value || '').split(':')[0];
+    const ok = auth[engine] !== false;          // unknown engine: do not invent a problem
+    box.classList.toggle('d-none', ok);
+    if (!ok && name) name.textContent = labels[engine] || engine;
+  };
+  pick.addEventListener('change', sync);
+  sync();
+})();
+</script>
+
