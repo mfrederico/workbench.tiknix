@@ -108,6 +108,7 @@
                         <div class="mb-3">
                             <label for="title" class="form-label">Title <span class="text-danger">*</span></label>
                             <input type="text" class="form-control" id="title" name="title" required
+                                   value="<?= htmlspecialchars($prefill['title'] ?? '') ?>"
                                    placeholder="Describe what needs to be done">
                         </div>
 
@@ -126,7 +127,7 @@
                         <div class="mb-3">
                             <label for="description" class="form-label">Description</label>
                             <textarea class="form-control" id="description" name="description" rows="4"
-                                      placeholder="Provide detailed context for Claude..."></textarea>
+                                      placeholder="Provide detailed context for the agent..."><?= htmlspecialchars($prefill['body'] ?? '') ?></textarea>
                             <div class="form-text">Be specific about what you want. Include relevant code paths, requirements, and constraints.</div>
                         </div>
 
@@ -303,6 +304,44 @@
                             </button>
                             <a href="/workbench" class="btn btn-outline-secondary">Cancel</a>
                         </div>
+
+                        <?php if (!empty($recentPrompts)): ?>
+                        <?php /* Previous goals for THIS project. A decompose that fails to launch
+                                 produces no task and therefore nothing on the board, so without
+                                 this the only record of what you asked for was a file on disk.
+                                 "Reuse" only refills the form — you still press Decompose. */ ?>
+                        <hr class="my-4">
+                        <h6 class="text-body-secondary mb-2">
+                            <i class="bi bi-clock-history me-1"></i>Earlier goals for this project
+                        </h6>
+                        <div class="list-group list-group-flush small">
+                            <?php foreach ($recentPrompts as $pr):
+                                $built  = !empty($pr['plan_uid']);
+                                $failed = !$built && !empty($pr['last_error']);
+                            ?>
+                            <div class="list-group-item d-flex justify-content-between align-items-start gap-3 px-0">
+                                <div class="flex-grow-1">
+                                    <div class="fw-semibold"><?= htmlspecialchars((string)($pr['title'] ?? '(untitled)')) ?></div>
+                                    <div class="text-body-secondary">
+                                        <?= htmlspecialchars(substr((string)($pr['created_at'] ?? ''), 0, 16)) ?>
+                                        <?php if ($built): ?>
+                                            · <span class="text-success">produced a plan</span>
+                                        <?php elseif ($failed): ?>
+                                            · <span class="text-danger">never ran</span>
+                                            — <?= htmlspecialchars(substr((string)$pr['last_error'], 0, 90)) ?>
+                                        <?php else: ?>
+                                            · <span class="text-body-secondary">no plan recorded</span>
+                                        <?php endif; ?>
+                                    </div>
+                                </div>
+                                <a class="btn btn-outline-secondary btn-sm text-nowrap"
+                                   href="/workbench/create?prompt=<?= (int)$pr['id'] ?>">
+                                    <i class="bi bi-arrow-counterclockwise me-1"></i>Reuse
+                                </a>
+                            </div>
+                            <?php endforeach; ?>
+                        </div>
+                        <?php endif; ?>
                         <div class="form-text mt-2">
                             <strong>Create Task</strong> saves a single task. <strong>Decompose into plan</strong>
                             feeds the Description (e.g. your uploaded <code>.md</code> goal document) to the Builder

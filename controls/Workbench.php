@@ -229,6 +229,43 @@ class Workbench extends BuildControl {
 
         $this->viewData['title'] = 'Create Task';
 
+        /* PAST GOALS, AND A WAY BACK TO THEM.
+         *
+         * A decompose that fails to launch leaves nothing on the board — no row, no button —
+         * because a task only exists once a plan has been produced and ingested. The goal IS
+         * recorded (promptlog, and .aibuilder/plan-goal.md), but nothing in the interface
+         * showed it, so a failed decompose looked like work that had vanished and the only
+         * way back was retyping it.
+         *
+         * Read through CoreDb: promptlog lives in core, while this sidecar's default
+         * connection is the instance's own database. */
+        $this->viewData['recentPrompts'] = [];
+        $this->viewData['prefill'] = ['title' => '', 'body' => ''];
+        if ($this->selected) {
+            $tag = (string) ($this->selected['slug'] ?? '') . '.' . ($this->selected['app'] ?: 'tiknix');
+            $rows = (array) \app\CoreDb::with(
+                fn() => \app\PromptLog::forMember((int) $this->member->id, '', 8, $tag),
+                []
+            );
+            $this->viewData['recentPrompts'] = $rows;
+
+            // ?prompt=<id> puts a previous goal back in the form. Nothing is re-run behind
+            // your back — you still press Decompose, so every gate applies as normal.
+            $wantId = (int) $this->getParam('prompt', 0);
+            if ($wantId > 0) {
+                $one = \app\CoreDb::with(
+                    fn() => \app\PromptLog::find($wantId, (int) $this->member->id),
+                    null
+                );
+                if ($one) {
+                    $this->viewData['prefill'] = [
+                        'title' => (string) ($one['title'] ?? ''),
+                        'body'  => (string) ($one['body'] ?? ''),
+                    ];
+                }
+            }
+        }
+
         // Pre-select team if specified
         $preselectedTeamId = $this->getParam('team_id');
 
