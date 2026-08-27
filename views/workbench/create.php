@@ -56,6 +56,61 @@
                     <h4 class="mb-0">Create Task</h4>
                 </div>
                 <div class="card-body">
+                    <?php if (!empty($recentPrompts)):
+                        /* Earlier goals first, because the common reason for opening this page
+                           is picking up something you already asked for. Split by the only fact
+                           that distinguishes them: a plan_uid means a plan was produced; its
+                           absence means the goal never became one, whatever the reason. */
+                        $built = $unrun = [];
+                        foreach ($recentPrompts as $pr) {
+                            if (!empty($pr['plan_uid'])) { $built[] = $pr; } else { $unrun[] = $pr; }
+                        }
+                    ?>
+                    <ul class="nav nav-tabs small mb-0" role="tablist">
+                        <li class="nav-item" role="presentation">
+                            <button class="nav-link <?= $unrun ? 'active' : '' ?>" data-bs-toggle="tab"
+                                    data-bs-target="#wbGoalsUnrun" type="button" role="tab">
+                                Never ran <span class="badge bg-secondary ms-1"><?= count($unrun) ?></span>
+                            </button>
+                        </li>
+                        <li class="nav-item" role="presentation">
+                            <button class="nav-link <?= $unrun ? '' : 'active' ?>" data-bs-toggle="tab"
+                                    data-bs-target="#wbGoalsBuilt" type="button" role="tab">
+                                Produced a plan <span class="badge bg-secondary ms-1"><?= count($built) ?></span>
+                            </button>
+                        </li>
+                    </ul>
+                    <div class="tab-content border border-top-0 rounded-bottom p-2 mb-4">
+                        <?php foreach ([['wbGoalsUnrun', $unrun, (bool)$unrun], ['wbGoalsBuilt', $built, !$unrun]] as [$paneId, $rows, $isActive]): ?>
+                        <div class="tab-pane fade <?= $isActive ? 'show active' : '' ?>" id="<?= $paneId ?>" role="tabpanel">
+                            <?php if (!$rows): ?>
+                                <div class="text-body-secondary small py-2">Nothing here.</div>
+                            <?php else: ?>
+                            <div class="list-group list-group-flush small">
+                                <?php foreach ($rows as $pr): ?>
+                                <div class="list-group-item d-flex justify-content-between align-items-start gap-3 px-0 py-2">
+                                    <div class="flex-grow-1">
+                                        <div class="fw-semibold"><?= htmlspecialchars((string)($pr['title'] ?? '(untitled)')) ?></div>
+                                        <div class="text-body-secondary">
+                                            <?= htmlspecialchars(substr((string)($pr['created_at'] ?? ''), 0, 16)) ?>
+                                            <?php if (!empty($pr['last_error'])): ?>
+                                                — <span class="text-danger"><?= htmlspecialchars(substr((string)$pr['last_error'], 0, 90)) ?></span>
+                                            <?php endif; ?>
+                                        </div>
+                                    </div>
+                                    <a class="btn btn-outline-secondary btn-sm text-nowrap"
+                                       href="/workbench/create?prompt=<?= (int)$pr['id'] ?>">
+                                        <i class="bi bi-arrow-counterclockwise me-1"></i>Reuse
+                                    </a>
+                                </div>
+                                <?php endforeach; ?>
+                            </div>
+                            <?php endif; ?>
+                        </div>
+                        <?php endforeach; ?>
+                    </div>
+                    <?php endif; ?>
+
                     <form method="POST" action="/workbench/store">
                         <?php foreach ($csrf as $name => $value): ?>
                             <input type="hidden" name="<?= $name ?>" value="<?= $value ?>">
@@ -305,43 +360,6 @@
                             <a href="/workbench" class="btn btn-outline-secondary">Cancel</a>
                         </div>
 
-                        <?php if (!empty($recentPrompts)): ?>
-                        <?php /* Previous goals for THIS project. A decompose that fails to launch
-                                 produces no task and therefore nothing on the board, so without
-                                 this the only record of what you asked for was a file on disk.
-                                 "Reuse" only refills the form — you still press Decompose. */ ?>
-                        <hr class="my-4">
-                        <h6 class="text-body-secondary mb-2">
-                            <i class="bi bi-clock-history me-1"></i>Earlier goals for this project
-                        </h6>
-                        <div class="list-group list-group-flush small">
-                            <?php foreach ($recentPrompts as $pr):
-                                $built  = !empty($pr['plan_uid']);
-                                $failed = !$built && !empty($pr['last_error']);
-                            ?>
-                            <div class="list-group-item d-flex justify-content-between align-items-start gap-3 px-0">
-                                <div class="flex-grow-1">
-                                    <div class="fw-semibold"><?= htmlspecialchars((string)($pr['title'] ?? '(untitled)')) ?></div>
-                                    <div class="text-body-secondary">
-                                        <?= htmlspecialchars(substr((string)($pr['created_at'] ?? ''), 0, 16)) ?>
-                                        <?php if ($built): ?>
-                                            · <span class="text-success">produced a plan</span>
-                                        <?php elseif ($failed): ?>
-                                            · <span class="text-danger">never ran</span>
-                                            — <?= htmlspecialchars(substr((string)$pr['last_error'], 0, 90)) ?>
-                                        <?php else: ?>
-                                            · <span class="text-body-secondary">no plan recorded</span>
-                                        <?php endif; ?>
-                                    </div>
-                                </div>
-                                <a class="btn btn-outline-secondary btn-sm text-nowrap"
-                                   href="/workbench/create?prompt=<?= (int)$pr['id'] ?>">
-                                    <i class="bi bi-arrow-counterclockwise me-1"></i>Reuse
-                                </a>
-                            </div>
-                            <?php endforeach; ?>
-                        </div>
-                        <?php endif; ?>
                         <div class="form-text mt-2">
                             <strong>Create Task</strong> saves a single task. <strong>Decompose into plan</strong>
                             feeds the Description (e.g. your uploaded <code>.md</code> goal document) to the Builder
