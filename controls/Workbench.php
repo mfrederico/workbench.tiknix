@@ -1111,9 +1111,18 @@ class Workbench extends BuildControl {
                     Bean::store($task);
                 }
             } else {
-                // Session ended but status not updated - check if completed or failed
+                /* The agent's tmux session is gone while the task still read `running`.
+                   Recorded in errorMessage as well as progressMessage: the task view renders
+                   the error, so writing only a progress line left a task marked failed with
+                   nothing on screen saying why — indistinguishable from a task that failed
+                   inside the agent. Says what to do about it, because this one is almost
+                   always recoverable: nothing was lost but the session. */
                 $task->status = 'failed';
                 $task->progressMessage = 'Session ended unexpectedly';
+                $task->errorMessage = 'The agent session ended before this task reported a result — '
+                    . 'usually the terminal bridge restarting, the jail being killed, or the session '
+                    . 'being reaped. Any work the agent committed is still in its branch. Press Run to '
+                    . 'start it again.';
                 $task->updatedAt = date('Y-m-d H:i:s');
                 Bean::store($task);
             }
