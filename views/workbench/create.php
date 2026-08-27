@@ -88,10 +88,12 @@
                                          the spec is being written rather than five minutes later. */ ?>
                                 <div class="alert alert-warning mt-2 mb-0 py-2 small">
                                     <i class="bi bi-exclamation-triangle me-1"></i>
-                                    <strong>This project has not signed in to Claude yet.</strong>
-                                    Agents run inside this project's own jail with its own credentials, so
-                                    open the <a href="/aibuilder">Terminal</a> and run <code>/login</code>
-                                    in its terminal once. Until then a plan cannot be decomposed or built.
+                                    <strong>You have no credentials for this project's default engine
+                                    (<?= htmlspecialchars($agentSignedInEngine ?? '') ?>).</strong>
+                                    Agents run on YOUR credentials, not the project's, so either pick an
+                                    engine above that you are signed in to, open the
+                                    <a href="/aibuilder">Terminal</a> and run <code>/login</code> there,
+                                    or add that engine's API key in Settings.
                                 </div>
                             <?php endif; ?>
                         </div>
@@ -133,14 +135,22 @@
                             <div class="col-md-4 mb-3">
                                 <label for="run_with" class="form-label">Run with</label>
                                 <select class="form-select" id="run_with" name="run_with">
-                                    <?php foreach ($runChoices as $c): ?>
+                                    <?php foreach ($runChoices as $c):
+                                        /* Marked, not hidden. A member who has no credentials for an
+                                           engine still needs to see it exists — hiding it makes the
+                                           menu look like the engine was never offered. */
+                                        $usable = ($engineAuth[$c['engine']] ?? true); ?>
                                         <option value="<?= htmlspecialchars($c['value']) ?>"
                                             <?= ($c['value'] === ($defaultRunChoice ?? '')) ? 'selected' : '' ?>>
-                                            <?= htmlspecialchars($c['label']) ?>
+                                            <?= htmlspecialchars($c['label']) ?><?= $usable ? '' : ' — no credentials' ?>
                                         </option>
                                     <?php endforeach; ?>
                                 </select>
-                                <div class="form-text small">Defaults to this project's engine.</div>
+                                <div class="form-text small">
+                                    Defaults to this project's engine. Runs on YOUR credentials for the
+                                    engine you pick, so a choice marked <em>no credentials</em> cannot run
+                                    until you sign in to it (or add its API key in Settings).
+                                </div>
                             </div>
                             <?php endif; ?>
 

@@ -279,10 +279,21 @@ class Workbench extends BuildControl {
         $this->viewData['projectPickerUrl'] = \app\Sidecar\Sso::projectPickerUrl();
         // A project nobody has signed in for cannot build. Say so on the form, where the
         // decision to write a spec is being made, rather than after it is submitted.
-        $this->viewData['agentSignedIn'] = $this->agentSignedIn(
-            '/var/www/html/default/' . $this->selected['slug'] . '.' . ($this->selected['app'] ?: 'tiknix'),
-            (string) ($this->selected['engine'] ?? 'claude')
-        );
+        $projDir = '/var/www/html/default/' . $this->selected['slug'] . '.' . ($this->selected['app'] ?: 'tiknix');
+        /* PER ENGINE, because the member picks one. Computing a single flag from the
+           project's engine told a member signed in to one provider that they were not
+           signed in at all, and named the wrong provider while doing it. The picker uses
+           this map to mark the choices that cannot run for THIS member. */
+        $engineAuth = [];
+        foreach (\app\EngineRegistry::runMenu() as $choice) {
+            $eng = (string) ($choice['engine'] ?? '');
+            if ($eng === '' || isset($engineAuth[$eng])) continue;
+            $engineAuth[$eng] = $this->agentSignedIn($projDir, $eng);
+        }
+        $this->viewData['engineAuth'] = $engineAuth;
+        // Kept for the form-level notice, but about the engine the form DEFAULTS to.
+        $this->viewData['agentSignedIn'] = $engineAuth[(string) ($this->selected['engine'] ?? 'claude')] ?? false;
+        $this->viewData['agentSignedInEngine'] = (string) ($this->selected['engine'] ?? 'claude');
 
         $this->render('workbench/create', $this->viewData);
     }
@@ -489,10 +500,28 @@ class Workbench extends BuildControl {
             return;
         }
 
+        /* THE MEMBER'S CHOICE DECIDES, not the project's default.
+         *
+         * The run_with picker is on this form; a member selects the engine they have
+         * credentials for. This used to gate on $instance->engine and ignore the pick
+         * entirely, so a project set to one provider refused a member who had chosen the
+         * other and was correctly signed in to it — with a message naming Claude while it
+         * was actually checking z.ai. The project engine stays the DEFAULT for anyone who
+         * expresses no preference; it is not a rule about whose credentials get used. */
+        $runPick    = \app\EngineRegistry::parseRunChoice($this->getParam('run_with', ''));
+        $runEngine  = $runPick['engine'] ?? (string) ($instance->engine ?: \app\EngineRegistry::defaultEngine());
+        $runModel   = $runPick['model']  ?? '';
+
         // Say it BEFORE spending five minutes failing at it.
-        if (!$this->agentSignedIn($instanceDir, (string) ($instance->engine ?: 'claude'))) {
-            $this->flash('error', 'This project has not signed in to Claude yet, so the planner cannot run. '
-                . 'Open the Terminal tab with this project selected and run /login there, then try again.');
+        if (!$this->agentSignedIn($instanceDir, $runEngine)) {
+            $label = \app\EngineRegistry::label($runEngine);
+            // Name the engine actually checked. "Not signed in to Claude" while testing a
+            // different provider sends people to /login for an account that was never the
+            // problem, and key-authenticated engines have no /login at all.
+            $this->flash('error', \app\EngineRegistry::authTokenEnv($runEngine) !== ''
+                ? "You have no API key set for {$label}, so the planner cannot run. Add one in Settings, or pick a different engine."
+                : "You have not signed in to {$label} yet, so the planner cannot run. "
+                  . 'Open the Terminal tab with this project selected and run /login there, then try again.');
             Flight::redirect('/aibuilder');
             return;
         }
@@ -519,9 +548,11 @@ class Workbench extends BuildControl {
         ]);
 
         try {
+            // Same engine the gate just approved — checking one and running another is how
+            // a build ends up on a provider the member never chose.
             $runner = new PlanRunner(
                 $slug, $instanceDir, (int)$this->member->id,
-                (int)$this->member->level, (string)($instance->engine ?: 'claude')
+                (int)$this->member->level, $runEngine
             );
             // $promptId travels with it so ingest can link the plan back to this goal.
             $runner->start($goal, [], $autoBuild, $promptId);
