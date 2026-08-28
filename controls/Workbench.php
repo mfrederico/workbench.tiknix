@@ -1927,7 +1927,13 @@ class Workbench extends BuildControl {
             $task->updatedAt = date('Y-m-d H:i:s');
             Bean::store($task);
 
-            $this->logTaskEvent($taskId, 'info', 'system', 'Claude session started by ' . ($this->member->displayName ?? $this->member->email));
+            // Name the engine that actually started, not the one this code was written for.
+            // A task on another provider still logged "Claude session started", and this is
+            // the first line someone reads when working out what ran.
+            $startedOn = trim((string) ($task->engine ?? '')) !== ''
+                ? \app\EngineRegistry::label((string) $task->engine)
+                : 'Agent';
+            $this->logTaskEvent($taskId, 'info', 'system', $startedOn . ' session started by ' . ($this->member->displayName ?? $this->member->email));
 
             $this->logger->info('Claude session started', [
                 'task_id' => $taskId,
