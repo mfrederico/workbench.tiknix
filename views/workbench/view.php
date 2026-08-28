@@ -137,7 +137,14 @@ $baseDomain = $baseUrl === '' ? '' : preg_replace('#^https?://#', '', rtrim($bas
                         // SUBTASK must not: Run starts the agent alone and leaves the plan
                         // stalled, while Fix & retry (below, plan-aware) re-opens the plan
                         // and relaunches the orchestrator so the tasks behind it move too.
-                        $runnable = ['pending', 'failed'];
+                        /* `queued` is runnable. It used to be a moment in transit — spawned,
+                           about to start — so offering Run made no sense. It is now also a
+                           RESTING state: the session exists and the brief never reached it,
+                           which run() records rather than pretending the task is working.
+                           That is precisely the state a person needs to retry, and without
+                           this the page offered Force Reset and Mark Complete but no way to
+                           simply try again. */
+                        $runnable = ['pending', 'failed', 'queued'];
                         if (empty($task->parentTaskId)) $runnable[] = 'conflict';
 
                         // A PLAN PARENT is never runnable as a task — it is a header, and
