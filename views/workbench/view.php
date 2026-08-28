@@ -158,7 +158,20 @@ $baseDomain = $baseUrl === '' ? '' : preg_replace('#^https?://#', '', rtrim($bas
                         <?php if ($canRun && !$isPlanParent && in_array($task->status, $runnable, true)): ?>
                             <button class="btn btn-success" onclick="runTask(<?= $task->id ?>)">
                                 <i class="bi bi-play-fill"></i>
-                                <?= $task->status === 'conflict' ? 'Retry (resolve conflict)' : 'Run with Claude' ?>
+                                <?php
+                                /* Name the engine this task will actually run on. "Run with
+                                   Claude" was written when claude was the only option; the
+                                   engine is now per task and editable, so the button was
+                                   promising the wrong provider on anything else. */
+                                if ($task->status === 'conflict') {
+                                    echo 'Retry (resolve conflict)';
+                                } else {
+                                    $runEng = trim((string) ($task->engine ?? ''));
+                                    echo $runEng === ''
+                                        ? 'Run'      // engine not recorded — do not name a vendor
+                                        : 'Run with ' . htmlspecialchars(\app\EngineRegistry::label($runEng));
+                                }
+                                ?>
                             </button>
                         <?php endif; ?>
 
@@ -189,16 +202,23 @@ $baseDomain = $baseUrl === '' ? '' : preg_replace('#^https?://#', '', rtrim($bas
                             </button>
                         <?php endif; ?>
 
-                        <?php // Always offer a finish path while active — a worker can finish (or
-                              // wedge) without the status flipping to 'awaiting', and completing
-                              // stops the session first, so this is safe either way. ?>
+                        <?php /* A finish path while active: a worker can finish (or wedge) without
+                                 the status flipping to 'awaiting', and completing stops the session
+                                 first, so this is safe either way.
+                                 MERGE is offered only for `running`. A queued task's brief never
+                                 reached its agent, so there is no work on its branch — "Mark
+                                 Complete & merge" there invites merging nothing, or worse, whatever
+                                 a previous attempt left behind. Finishing without a merge stays
+                                 available: deciding you no longer need a task is legitimate. */ ?>
                         <?php if ($canRun && in_array($task->status, ['running', 'queued'])): ?>
                             <button class="btn btn-outline-success" onclick="markComplete(<?= $task->id ?>)">
                                 <i class="bi bi-check-circle"></i> Mark Complete <span class="small">(no merge)</span>
                             </button>
+                            <?php if ($task->status === 'running'): ?>
                             <button class="btn btn-success" onclick="markCompleteMerge(<?= $task->id ?>)">
                                 <i class="bi bi-check2-circle"></i> Mark Complete <span class="small">(&amp; merge)</span>
                             </button>
+                            <?php endif; ?>
                         <?php endif; ?>
 
                         <?php if ($canRun && $task->status === 'paused'): ?>
