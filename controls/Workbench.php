@@ -3795,6 +3795,12 @@ class Workbench extends BuildControl {
      * *.db/*.sqlite noise is ignored — mirrors the plan executor's significantDirt.
      */
     private function instanceDirtyFiles(string $dir): string {
+        $paths = $this->instanceDirtyPaths($dir);
+        return implode(', ', array_slice($paths, 0, 5)) . (count($paths) > 5 ? ' …' : '');
+    }
+
+    /** The same set as instanceDirtyFiles(), as paths — for callers that must act on them. */
+    private function instanceDirtyPaths(string $dir): array {
         $out = [];
         exec('git -C ' . escapeshellarg($dir) . ' status --porcelain 2>/dev/null', $out);
         $paths = [];
@@ -3813,7 +3819,64 @@ class Workbench extends BuildControl {
             if (preg_match('#\.(db|sqlite)$|(^|/)public/uploads/#i', $p)) continue;
             $paths[] = $p;
         }
-        return implode(', ', array_slice($paths, 0, 5)) . (count($paths) > 5 ? ' …' : '');
+        return $paths;
+    }
+
+    /**
+     * Commit an instance's pre-existing local edits onto its own branch so a task merge
+     * can proceed, instead of refusing and sending someone to a shell.
+     *
+     * Committing is the right move here rather than stashing or discarding, because this
+     * is a LIVE instance: a stash would silently revert whatever the running site is
+     * currently serving (someone's hand-patch disappears mid-merge), and a discard would
+     * destroy it outright. A commit changes nothing on disk — the site keeps serving
+     * exactly what it served a second ago — while putting the content somewhere git can
+     * always get it back from.
+     *
+     * Scope is deliberately the same set the guard blocks on: tracked, non-runtime files.
+     * Untracked files are left alone (git aborts a merge itself rather than clobber one)
+     * and the runtime DB has its own shield.
+     *
+     * @return array{ok:bool, files:array, error:string}
+     */
+    private function absorbInstanceEdits(string $instDir, int $taskId): array {
+        $paths = $this->instanceDirtyPaths($instDir);
+        if (!$paths) return ['ok' => true, 'files' => [], 'error' => ''];
+
+        $run = function (array $args) use ($instDir): array {
+            $cmd = 'git -C ' . escapeshellarg($instDir);
+            foreach ($args as $a) $cmd .= ' ' . escapeshellarg($a);
+            $out = []; $code = 0;
+            exec($cmd . ' 2>&1', $out, $code);
+            return ['ok' => $code === 0, 'out' => trim(implode("\n", $out))];
+        };
+
+        // Stage exactly these paths. `-A` is needed for tracked files the instance DELETED
+        // (a plain `git add` on a path that no longer exists fails the whole command with
+        // "pathspec did not match any files", which would block the merge over a deletion
+        // we are perfectly able to record). It stays safe because it is SCOPED to these
+        // pathspecs — it cannot reach the runtime DB or any untracked file outside them.
+        $add = $run(array_merge(['add', '-A', '--'], $paths));
+        if (!$add['ok']) return ['ok' => false, 'files' => $paths, 'error' => 'could not stage them (' . $add['out'] . ')'];
+
+        $msg = "Local instance edits, committed automatically before merging task #{$taskId}\n\n"
+             . "These were uncommitted tracked changes already present in the instance when the\n"
+             . "merge ran. They are committed as-is, unreviewed, so the working tree is clean\n"
+             . "enough for git to merge without silently discarding them. Nothing on disk\n"
+             . "changed. To see what they were: git show --stat HEAD\n\n"
+             . implode("\n", array_map(fn($p) => '  ' . $p, $paths));
+        $commit = $run(['commit', '-m', $msg, '--']);
+        if (!$commit['ok']) {
+            $run(array_merge(['reset', 'HEAD', '--'], $paths));   // leave the tree as we found it
+            return ['ok' => false, 'files' => $paths, 'error' => 'could not commit them (' . $commit['out'] . ')'];
+        }
+
+        $this->logTaskEvent($taskId, 'info', 'system',
+            'Merge: committed ' . count($paths) . ' pre-existing local instance edit(s) onto '
+            . 'the instance branch first — ' . implode(', ', array_slice($paths, 0, 5))
+            . (count($paths) > 5 ? ' …' : ''));
+
+        return ['ok' => true, 'files' => $paths, 'error' => ''];
     }
 
     /**
@@ -3900,10 +3963,15 @@ class Workbench extends BuildControl {
         $instDir = $this->instanceDirForTask($task);
         if ($instDir !== null) {
             // Instance task: merge into the live instance repo's checked-out branch.
-            $dirty = $this->instanceDirtyFiles($instDir);
-            if ($dirty !== '') {
+            // Pre-existing local edits used to stop the merge dead and send someone to a
+            // shell. Commit them onto the instance's own branch instead — recoverable,
+            // and it leaves the running site byte-identical. Only a git failure blocks now.
+            $absorbed = $this->absorbInstanceEdits($instDir, (int)$task->id);
+            if (!$absorbed['ok']) {
                 return ['merged' => false, 'pushed' => false,
-                        'reason' => 'the instance has uncommitted code changes (' . $dirty . ') — commit or discard them first'];
+                        'reason' => 'the instance has uncommitted code changes ('
+                                  . implode(', ', array_slice($absorbed['files'], 0, 5)) . ') and they '
+                                  . $absorbed['error'] . ' — resolve them in the instance and merge again'];
             }
             $fetch = $git($instDir, ['fetch', $ws, $br]);
             if (!$fetch['ok']) {
@@ -3925,7 +3993,12 @@ class Workbench extends BuildControl {
             }
             $restoreDb();
             return ['merged' => true, 'pushed' => true,
-                    'reason' => 'merged into ' . $base . ' on ' . ($task->instanceTag ?: 'the instance')];
+                    'reason' => 'merged into ' . $base . ' on ' . ($task->instanceTag ?: 'the instance')
+                              . ($absorbed['files']
+                                 ? ' (committed ' . count($absorbed['files']) . ' pre-existing local edit(s) first: '
+                                   . implode(', ', array_slice($absorbed['files'], 0, 5))
+                                   . (count($absorbed['files']) > 5 ? ' …' : '') . ')'
+                                 : '')];
         }
 
         // Non-instance task: merge into base in the clone and push to origin.
