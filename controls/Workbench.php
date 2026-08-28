@@ -1927,12 +1927,12 @@ class Workbench extends BuildControl {
             $task->updatedAt = date('Y-m-d H:i:s');
             Bean::store($task);
 
-            // Name the engine that actually started, not the one this code was written for.
-            // A task on another provider still logged "Claude session started", and this is
-            // the first line someone reads when working out what ran.
-            $startedOn = trim((string) ($task->engine ?? '')) !== ''
-                ? \app\EngineRegistry::label((string) $task->engine)
-                : 'Agent';
+            /* ASK THE RUNNER what it dispatched on. Reading $task->engine and substituting
+               'Agent' when empty was a fallback dressed as a label: an empty row does not
+               mean unknown — the task still runs, on the project's engine — so the generic
+               word hid which provider actually did the work, in the first line anyone reads
+               when working that out. resolvedEngine() is the same answer the launcher used. */
+            $startedOn = \app\EngineRegistry::label($runner->resolvedEngine());
             $this->logTaskEvent($taskId, 'info', 'system', $startedOn . ' session started by ' . ($this->member->displayName ?? $this->member->email));
 
             $this->logger->info('Claude session started', [
