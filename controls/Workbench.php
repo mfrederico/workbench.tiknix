@@ -1154,7 +1154,18 @@ class Workbench extends BuildControl {
         // view's poller touch them — its ClaudeRunner session name won't match, so
         // exists() returns false and it would race the executor by force-failing a
         // live subtask.
-        $isPlanManaged = !empty($task->planRef)
+        /* A plan PARENT is plan-managed too, and every marker below belongs to a SUBTASK:
+           a parent has no plan_ref, no worktree branch and no agent session of its own,
+           because its work happens in its subtasks' sessions under an orchestrator. So the
+           most plan-managed row in the system read as unmanaged, and opening the plan page
+           while it built marked it `failed` with "Session ended unexpectedly" — against a
+           session it never had. Plan #142 showed status=failed beside plan_status=building
+           with two subtasks still running.
+
+           isPlan() is the authoritative test and exists so the board, the reaper and the
+           task view cannot answer this differently. The reaper simply never asked it. */
+        $isPlanManaged = $task->isPlan()
+            || !empty($task->planRef)
             || !empty($task->worktreeBranch)
             || TmuxManager::isPlanSession((string)$task->agentSession);
         if (!$isPlanManaged && $task->status === 'running') {
