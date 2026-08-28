@@ -11,7 +11,7 @@
             <a href="/workbench/logs?id=<?= $task->id ?>" class="btn btn-outline-secondary <?= empty($filterLevel) && empty($filterType) ? 'active' : '' ?>">All</a>
             <a href="/workbench/logs?id=<?= $task->id ?>&level=error" class="btn btn-outline-danger <?= $filterLevel === 'error' ? 'active' : '' ?>">Errors</a>
             <a href="/workbench/logs?id=<?= $task->id ?>&level=warning" class="btn btn-outline-warning <?= $filterLevel === 'warning' ? 'active' : '' ?>">Warnings</a>
-            <a href="/workbench/logs?id=<?= $task->id ?>&type=claude" class="btn btn-outline-primary <?= $filterType === 'claude' ? 'active' : '' ?>">Claude</a>
+            <a href="/workbench/logs?id=<?= $task->id ?>&type=claude" class="btn btn-outline-primary <?= $filterType === 'claude' ? 'active' : '' ?>">Agent</a>
         </div>
     </div>
 

@@ -497,7 +497,7 @@ $baseDomain = $baseUrl === '' ? '' : preg_replace('#^https?://#', '', rtrim($bas
                         <div class="rounded-circle bg-primary text-white d-flex align-items-center justify-content-center me-2" style="width: 32px; height: 32px;">
                             <i class="bi bi-robot"></i>
                         </div>
-                        <h5 class="mb-0">Claude's Last Message</h5>
+                        <h5 class="mb-0"><?= htmlspecialchars(trim((string)($task->engine ?? '')) !== '' ? \app\EngineRegistry::label((string)$task->engine) : 'Agent') ?>'s Last Message</h5>
                         <small class="text-muted ms-auto"><?= date('M j, g:i A', strtotime($lastClaudeMessage['created_at'])) ?></small>
                     </div>
                     <div class="card-body">
@@ -686,7 +686,7 @@ $baseDomain = $baseUrl === '' ? '' : preg_replace('#^https?://#', '', rtrim($bas
                     <!-- Add Message Form (at top) -->
                     <form id="commentForm" class="mb-4">
                         <div class="mb-2">
-                            <textarea class="form-control" id="commentContent" name="content" rows="2" placeholder="Send instructions or respond to Claude..."></textarea>
+                            <textarea class="form-control" id="commentContent" name="content" rows="2" placeholder="Send instructions or respond to the agent..."></textarea>
                         </div>
                         <!-- Image preview area -->
                         <div id="imagePreviewContainer" class="mb-2" style="display: none;">
@@ -1179,7 +1179,7 @@ async function resumeTask(id) {
 }
 
 async function stopTask(id) {
-    if (!confirm('Stop the Claude runner? Progress may be lost.')) return;
+    if (!confirm('Stop the agent? Progress may be lost.')) return;
     const formData = new FormData();
     formData.append('id', id);
     formData.append('_csrf_token', csrfToken);

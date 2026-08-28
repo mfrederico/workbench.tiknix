@@ -298,7 +298,7 @@
                             <label for="acceptance_criteria" class="form-label">Acceptance Criteria</label>
                             <textarea class="form-control" id="acceptance_criteria" name="acceptance_criteria" rows="3"
                                       placeholder="What conditions must be met for this task to be complete?"></textarea>
-                            <div class="form-text">Claude will use these to verify the work is done correctly.</div>
+                            <div class="form-text">The agent will use these to verify the work is done correctly.</div>
                         </div>
 
                         <!-- Related Files -->
