@@ -259,13 +259,22 @@ class WorkbenchAccess {
          * Ordered by what the reader is looking for: something is happening (running),
          * something is about to (queued/pending), everything else is history. Ties still
          * break by date, then by id so the order is stable between page loads. */
-        $orderBy = $filters['order_by'] ?? "CASE status
+        $default = "CASE status
                 WHEN 'running'  THEN 0
                 WHEN 'queued'   THEN 1
                 WHEN 'conflict' THEN 2
                 WHEN 'failed'   THEN 3
                 WHEN 'pending'  THEN 4
                 ELSE 5 END ASC, created_at DESC, id DESC";
+        // A caller-supplied order_by used to be interpolated straight into the SQL below,
+        // which SQLite happily accepts subselects in — a boolean-blind exfiltration oracle
+        // over workbench.db for any logged-in member. It is now validated against a fixed
+        // column allowlist; anything that is not one or more "<column> [ASC|DESC]" clauses
+        // over those columns falls back to the default sort. Nothing in the UI sends this
+        // parameter, so the allowlist costs a real caller nothing.
+        // ?: not ?? — the caller passes the key with an EMPTY value when it has no
+        // preference, and ?? only catches a missing key.
+        $orderBy = self::safeOrderBy(($filters['order_by'] ?? '') ?: '', $default);
         try {
             return Bean::find('workbenchtask', "$where ORDER BY $orderBy", $params);
         } catch (\Throwable $e) {
@@ -281,6 +290,38 @@ class WorkbenchAccess {
             ]);
             return [];
         }
+    }
+
+    /**
+     * Validate a caller-supplied ORDER BY against a fixed column allowlist.
+     *
+     * Accepts one or more comma-separated "<column> [ASC|DESC]" clauses where every column
+     * is one of the sortable columns below. Anything else — a function, a subselect, a
+     * column not on the list, stray punctuation — returns the default sort unchanged. This
+     * is an allowlist, not an escaper: the value is still interpolated into the query, so
+     * it must be proven to contain only known-safe tokens rather than merely cleaned.
+     */
+    private static function safeOrderBy(string $requested, string $default): string {
+        $requested = trim($requested);
+        if ($requested === '') return $default;
+
+        // Columns a human would legitimately sort the board by. Not every column — only
+        // these are offered, so a new column is not silently sortable-and-injectable.
+        static $sortable = [
+            'id', 'title', 'task_type', 'priority', 'status',
+            'created_at', 'updated_at', 'completed_at', 'run_count',
+        ];
+
+        $clauses = array_map('trim', explode(',', $requested));
+        $safe = [];
+        foreach ($clauses as $clause) {
+            if (!preg_match('/^([a-z_]+)(?:\s+(asc|desc))?$/i', $clause, $m)) return $default;
+            $col = strtolower($m[1]);
+            if (!in_array($col, $sortable, true)) return $default;
+            $dir = isset($m[2]) ? strtoupper($m[2]) : 'ASC';
+            $safe[] = $col . ' ' . $dir;
+        }
+        return $safe ? implode(', ', $safe) : $default;
     }
 
     /** Status counts for the selected instance. */
