@@ -179,6 +179,35 @@ class Workbench extends BuildControl {
             }
         }
 
+        // Phase PROGRESS: how many of each plan's subtasks are built (merged/completed) vs
+        // total — one grouped query, so the board can show "Phase N — X/Y built" without
+        // loading every child. array_keys() is 0-indexed, so it is safe in the IN() binding.
+        if ($planMeta) {
+            $pids = array_keys($planMeta);
+            $ph2  = implode(',', array_fill(0, count($pids), '?'));
+            foreach (Bean::getAll(
+                "SELECT parent_task_id pid, COUNT(*) total,
+                        SUM(CASE WHEN status IN ('merged','completed') THEN 1 ELSE 0 END) built
+                 FROM workbenchtask WHERE parent_task_id IN ($ph2) GROUP BY parent_task_id", $pids) as $row) {
+                $pid = (int) $row['pid'];
+                if (isset($planMeta[$pid])) {
+                    $planMeta[$pid]['total'] = (int) $row['total'];
+                    $planMeta[$pid]['built'] = (int) $row['built'];
+                }
+            }
+        }
+
+        // The saved goal (business plan / spec) this project's phases descend from — the
+        // provenance root, and what the "Continue to next phase" button re-decomposes.
+        $goalDoc = '';
+        if ($this->selected) {
+            $gf = '/var/www/html/default/' . $this->selected['slug'] . '.'
+                . ($this->selected['app'] ?: 'tiknix') . '/.aibuilder/plan-goal.md';
+            if (is_file($gf)) $goalDoc = (string) file_get_contents($gf);
+        }
+        $this->viewData['planGoal']     = $goalDoc;
+        $this->viewData['hasSavedGoal']  = $goalDoc !== '';
+
         $this->viewData['tasks'] = $tasks;
         $this->viewData['counts'] = $counts;
         $this->viewData['teams'] = $teams;
@@ -509,6 +538,81 @@ class Workbench extends BuildControl {
     private function wantsAutoBuild(): bool {
         $v = $this->getParam('auto_build', '');
         return in_array((string)$v, ['1', 'on', 'true', 'yes'], true);
+    }
+
+    /**
+     * POST /workbench/continuephase — decompose the NEXT phase of the current project's goal.
+     *
+     * The planner grounds on what is already built (its brief reuses the codebase), so
+     * re-running the SAME saved goal yields the next logical phase rather than repeating —
+     * that is how "phase 2" arrived on top of a merged "phase 1". This is the deliberate
+     * "continue": the goal is read from disk (.aibuilder/plan-goal.md, the last decompose's
+     * goal) instead of re-posting it. Draft by default; "run it straight through" is honored
+     * when ticked (auto_build). Mirrors decompose(); the only difference is WHERE the goal
+     * comes from.
+     */
+    public function continuephase($params = []) {
+        if (!$this->requireLogin()) return;
+        $request = Flight::request();
+        if ($request->method !== 'POST') { Flight::redirect('/workbench'); return; }
+        if (!Flight::csrf()->validateRequest()) { $this->flash('error', 'Invalid CSRF token'); Flight::redirect('/workbench'); return; }
+
+        $instance = $this->selected ? $this->access->instanceMeta((int) $this->selected['id']) : null;
+        if (!$instance || !$instance->id || !$this->access->canAccessInstance((int)$this->member->id, (int)$instance->id)) {
+            $this->flash('error', 'Choose a project to work on before planning against it.');
+            Flight::redirect(\app\Sidecar\Sso::projectPickerUrl());
+            return;
+        }
+
+        $slug = (string) $instance->slug;
+        $app  = $instance->app ?: 'tiknix';
+        $instanceDir = '/var/www/html/default/' . $slug . '.' . $app;
+        if (!is_file($instanceDir . '/public/index.php')) { $this->flash('error', 'That instance is not available on disk.'); Flight::redirect('/workbench'); return; }
+
+        // The SAVED goal — the same document the earlier phase(s) came from.
+        $goal = trim((string) @file_get_contents($instanceDir . '/.aibuilder/plan-goal.md'));
+        if (mb_strlen($goal) < 20) {
+            $this->flash('error', 'No saved goal to continue from — decompose a goal first, then Continue picks up the next phase.');
+            Flight::redirect('/workbench');
+            return;
+        }
+
+        $runEngine = (string) ($instance->engine ?: \app\EngineRegistry::defaultEngine());
+        if (!$this->agentSignedIn($instanceDir, $runEngine)) {
+            $label = \app\EngineRegistry::label($runEngine);
+            $this->flash('error', \app\EngineRegistry::authTokenEnv($runEngine) !== ''
+                ? "You have no API key set for {$label}, so the planner cannot run. Add one in Settings, or pick a different engine."
+                : "You have not signed in to {$label} yet — open the Terminal with this project selected and run /login, then try again.");
+            Flight::redirect('/aibuilder');
+            return;
+        }
+
+        // Draft by default; "run it straight through" (auto_build) is honored when ticked.
+        $autoBuild = $this->wantsAutoBuild();
+
+        $promptId = \app\PromptLog::record([
+            'member_id'    => (int) $this->member->id,
+            'source'       => \app\PromptLog::SOURCE_DECOMPOSE,
+            'title'        => 'Continue: next phase',
+            'body'         => $goal,
+            'instance_id'  => (int) $instance->id,
+            'instance_tag' => $slug . '.' . $app,
+            'auto_build'   => $autoBuild,
+        ]);
+
+        try {
+            $runner = new PlanRunner($slug, $instanceDir, (int) $this->member->id, (int) $this->member->level, $runEngine);
+            $runner->start($goal, [], $autoBuild, $promptId);
+        } catch (\Throwable $e) {
+            $this->flash('error', 'Could not start the planner: ' . $e->getMessage());
+            Flight::redirect('/workbench');
+            return;
+        }
+
+        $this->flash('success', $autoBuild
+            ? 'Planning the next phase — it will build straight through once ingested.'
+            : 'Planning the next phase — it will land as a draft to review.');
+        Flight::redirect('/workbench?decomposing=1');
     }
 
     /**

@@ -118,6 +118,59 @@
 
         <!-- Task List -->
         <div class="col-lg-9 col-md-8">
+
+            <?php
+            /* Goal -> phases provenance + progress. Each phase is a plan parent (a task with
+               subtasks); progress is its subtasks built (merged/completed) over total. Shown
+               only when this project has a decomposed goal on disk. */
+            $__phases = [];
+            foreach (($planMeta ?? []) as $__pm) { if (isset($__pm['total'])) $__phases[] = $__pm; }
+            usort($__phases, fn($a, $b) => ((int)$a['id'] <=> (int)$b['id']));
+            if (!empty($hasSavedGoal) || $__phases):
+            ?>
+            <div class="card mb-3 border-primary-subtle">
+              <div class="card-body py-3">
+                <div class="d-flex align-items-center gap-2 mb-2">
+                  <i class="bi bi-diagram-3 text-primary"></i>
+                  <span class="fw-semibold">Goal &rarr; phases</span>
+                  <?php if (!empty($hasSavedGoal)): ?>
+                  <button class="btn btn-sm btn-link text-decoration-none ms-auto p-0" type="button" data-bs-toggle="collapse" data-bs-target="#goalDoc">View goal</button>
+                  <?php endif; ?>
+                </div>
+                <?php if (!empty($hasSavedGoal)): ?>
+                <div class="collapse mb-2" id="goalDoc">
+                  <div class="border rounded bg-body-tertiary p-2 small" style="max-height:220px; overflow:auto; white-space:pre-wrap"><?= htmlspecialchars(mb_substr((string)$planGoal, 0, 6000)) ?></div>
+                </div>
+                <?php endif; ?>
+                <?php if ($__phases): ?>
+                <div class="d-flex flex-column gap-2">
+                  <?php foreach ($__phases as $__i => $__ph): $__t = (int)($__ph['total'] ?? 0); $__b = (int)($__ph['built'] ?? 0); $__p = $__t ? (int)round($__b * 100 / $__t) : 0; $__done = $__t > 0 && $__b === $__t; ?>
+                  <div class="d-flex align-items-center gap-2">
+                    <span class="badge text-bg-<?= $__done ? 'success' : 'secondary' ?> text-nowrap" style="min-width:4.5rem">Phase <?= $__i + 1 ?></span>
+                    <a href="/workbench/view?id=<?= (int)$__ph['id'] ?>" class="text-truncate small text-decoration-none" style="max-width:20rem" title="<?= htmlspecialchars((string)$__ph['title']) ?>"><?= htmlspecialchars((string)$__ph['title']) ?></a>
+                    <div class="progress flex-grow-1" style="height:8px; min-width:5rem" role="progressbar" aria-valuenow="<?= $__p ?>" aria-valuemin="0" aria-valuemax="100">
+                      <div class="progress-bar bg-<?= $__done ? 'success' : 'primary' ?>" style="width:<?= $__p ?>%"></div>
+                    </div>
+                    <span class="small text-body-secondary text-nowrap"><?= $__b ?>/<?= $__t ?> built</span>
+                  </div>
+                  <?php endforeach; ?>
+                </div>
+                <?php endif; ?>
+                <?php if (!empty($hasSavedGoal)): ?>
+                <form method="post" action="/workbench/continuephase" class="d-flex align-items-center gap-2 mt-3 flex-wrap">
+                  <?php foreach (($csrf ?? []) as $__cn => $__cv): ?><input type="hidden" name="<?= htmlspecialchars($__cn) ?>" value="<?= htmlspecialchars($__cv) ?>"><?php endforeach; ?>
+                  <button type="submit" class="btn btn-primary btn-sm"><i class="bi bi-arrow-right-circle me-1"></i>Continue to next phase</button>
+                  <div class="form-check form-switch mb-0 small">
+                    <input class="form-check-input" type="checkbox" role="switch" id="cpAuto" name="auto_build" value="1">
+                    <label class="form-check-label text-body-secondary" for="cpAuto">Run it straight through</label>
+                  </div>
+                  <span class="small text-body-secondary">Grounds on what&rsquo;s built, plans the next phase.</span>
+                </form>
+                <?php endif; ?>
+              </div>
+            </div>
+            <?php endif; ?>
+
             <!-- Status filter — moved above the task list -->
             <ul class="nav nav-pills mb-3 gap-1 flex-wrap">
                 <?php foreach ($statusTabs as $sKey => $sInfo): [$sLabel, $sIcon, $sColor, $sCount] = $sInfo; $sActive = ((string)($filters['status'] ?? '')) === $sKey; ?>
