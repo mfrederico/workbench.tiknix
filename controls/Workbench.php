@@ -4436,6 +4436,13 @@ class Workbench extends BuildControl {
      * @param string $dir Directory path to delete
      */
     private function recursiveDelete(string $dir): void {
+        // NEVER follow a symlink. is_dir()/is_file() resolve through links, so a symlink
+        // to a directory — e.g. a composer PATH-repository package under vendor/
+        // (vendor/clicksimple/billing-client -> /var/www/.../billing-client) — would be
+        // treated as a real subdirectory: we would recurse INTO the link's target and
+        // delete files OUTSIDE this workspace, then rmdir() the symlink itself and fail
+        // with "rmdir(...): Not a directory". Remove the link, leave its target alone.
+        if (is_link($dir)) { @unlink($dir); return; }
         if (!is_dir($dir)) {
             return;
         }
@@ -4443,7 +4450,9 @@ class Workbench extends BuildControl {
         $files = array_diff(scandir($dir), ['.', '..']);
         foreach ($files as $file) {
             $path = $dir . '/' . $file;
-            if (is_dir($path)) {
+            if (is_link($path)) {
+                unlink($path);                  // a link (to a dir or file): unlink, never follow
+            } elseif (is_dir($path)) {
                 $this->recursiveDelete($path);
             } else {
                 unlink($path);
