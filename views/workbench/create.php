@@ -255,19 +255,8 @@
                         </div>
 
                         <div class="row">
-                            <!-- Base Branch -->
-                            <div class="col-md-6 mb-3">
-                                <label for="base_branch" class="form-label">Base Branch</label>
-                                <select class="form-select" id="base_branch" name="base_branch">
-                                    <?php foreach ($branches ?? ['main'] as $branch): ?>
-                                        <option value="<?= htmlspecialchars(($branch) ?? '') ?>" <?= $branch === ($currentBranch ?? 'main') ? 'selected' : '' ?>>
-                                            <?= htmlspecialchars(($branch) ?? '') ?>
-                                            <?= $branch === ($currentBranch ?? 'main') ? '(current)' : '' ?>
-                                        </option>
-                                    <?php endforeach; ?>
-                                </select>
-                                <div class="form-text">Branch to create this task from. PR will merge back into this branch. Only pushed branches are shown.</div>
-                            </div>
+                            <!-- Base Branch — always main for now; the picker is hidden. -->
+                            <input type="hidden" id="base_branch" name="base_branch" value="main">
 
                             <!-- Test-DB source -->
                             <div class="col-md-6 mb-3">
