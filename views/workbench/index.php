@@ -156,6 +156,12 @@
                   <?php endforeach; ?>
                 </div>
                 <?php endif; ?>
+                <?php if (!empty($goalComplete)): ?>
+                <div class="alert alert-success py-2 px-3 small mt-2 mb-0">
+                  <i class="bi bi-check-circle-fill me-1"></i><strong>Goal complete</strong> &mdash; the planner reports everything this goal calls for is already built.
+                  <div class="text-success-emphasis mt-1"><?= htmlspecialchars(mb_substr((string)$goalComplete, 0, 400)) ?></div>
+                </div>
+                <?php endif; ?>
                 <?php if (!empty($hasSavedGoal)): ?>
                 <form method="post" action="/workbench/continuephase" class="d-flex align-items-center gap-2 mt-3 flex-wrap">
                   <?php foreach (($csrf ?? []) as $__cn => $__cv): ?><input type="hidden" name="<?= htmlspecialchars($__cn) ?>" value="<?= htmlspecialchars($__cv) ?>"><?php endforeach; ?>

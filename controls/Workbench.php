@@ -199,14 +199,18 @@ class Workbench extends BuildControl {
 
         // The saved goal (business plan / spec) this project's phases descend from — the
         // provenance root, and what the "Continue to next phase" button re-decomposes.
-        $goalDoc = '';
+        $goalDoc = ''; $goalComplete = '';
         if ($this->selected) {
-            $gf = '/var/www/html/default/' . $this->selected['slug'] . '.'
-                . ($this->selected['app'] ?: 'tiknix') . '/.aibuilder/plan-goal.md';
-            if (is_file($gf)) $goalDoc = (string) file_get_contents($gf);
+            $ab = '/var/www/html/default/' . $this->selected['slug'] . '.'
+                . ($this->selected['app'] ?: 'tiknix') . '/.aibuilder';
+            if (is_file($ab . '/plan-goal.md'))     $goalDoc      = (string) file_get_contents($ab . '/plan-goal.md');
+            // The planner writes this when it judges the goal already built (see PlanRunner's
+            // brief). Its presence = "no next phase"; cleared on the next decompose.
+            if (is_file($ab . '/plan-complete.md')) $goalComplete = (string) file_get_contents($ab . '/plan-complete.md');
         }
         $this->viewData['planGoal']     = $goalDoc;
         $this->viewData['hasSavedGoal']  = $goalDoc !== '';
+        $this->viewData['goalComplete']  = $goalComplete;
 
         $this->viewData['tasks'] = $tasks;
         $this->viewData['counts'] = $counts;
