@@ -29,6 +29,18 @@ class WorkbenchDb {
         $key = self::key($slug);
         $dir = rtrim($instanceDir, '/') . '/data';
         if (!is_dir($dir)) @mkdir($dir, 0775, true);
+
+        // Create the DB file GROUP-WRITABLE up front. An isolated instance's pool
+        // (tiknix-i<id>) reaches this DB through an ACL grant, but SQLite would create it
+        // 0644 — whose group bits cap the file's ACL mask at r-- and null the grant, so the
+        // pool gets "attempt to write a readonly database". umask can't fix this (SQLite's
+        // base mode is 0644 either way); only making the file 0664 lifts the mask to rw.
+        // Only the file's OWNER may chmod it, which is this process at creation — so do it
+        // here, before SQLite touches it. Idempotent; a no-op on a non-isolated install.
+        $dbFile = $dir . '/workbench.db';
+        if (!is_file($dbFile)) @touch($dbFile);
+        @chmod($dbFile, 0664);
+
         if (!Bean::hasDatabase($key)) {
             // DELIBERATELY UNCACHED — the sixth argument is not an oversight.
             //
