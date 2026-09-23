@@ -3391,8 +3391,11 @@ class Workbench extends BuildControl {
                 ]
             ]);
 
-        } catch (Exception $e) {
-            Flight::jsonError('Failed to add comment', 500);
+        } catch (\Throwable $e) {
+            // Throwable, not Exception: a missing class is an Error, and it escaped this
+            // catch as a bare 500 with nothing in this sidecar's log (2026-09-23).
+            $this->logger->error('Workbench: comment failed', ['task_id' => $taskId, 'err' => get_class($e) . ': ' . $e->getMessage()]);
+            Flight::jsonError('Failed to add comment: ' . $e->getMessage(), 500);
         }
     }
 
