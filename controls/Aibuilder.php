@@ -269,6 +269,20 @@ class Aibuilder extends BuildControl {
      * operator's environment fallback is invisible to PHP, so a "no key" verdict here means
      * "you have not set yours", which is the thing the member can act on.
      */
+    /** [mc-<id> => "<name> — your key"] for the member's own Anthropic-protocol connections that can run. */
+    private function ownConnectionEngines(int $memberId): array {
+        $out = [];
+        try {
+            foreach (\Model_Modelconnection::forMember($memberId) as $c) {
+                if ($c->box()->runProblems() !== []) continue;   // chat-only or keyless: it cannot open a terminal
+                $out[$c->box()->engineName()] = (string) $c->name . ' — your key';
+            }
+        } catch (\RuntimeException $e) {
+            $this->logger->error('Terminal: could not list the member\'s model connections', ['member_id' => $memberId, 'err' => $e->getMessage()]);
+        }
+        return $out;
+    }
+
     private function engineKeyPrompt(string $engine): ?array {
         // A platform engine that authenticates by key (z.ai) runs on the SERVER's key; a
         // member's own key for it is a model connection now (core Connections → Models,
@@ -416,7 +430,11 @@ class Aibuilder extends BuildControl {
                The active one is resolved the same way mintToken() resolves it, because a
                label that disagreed with the session would be worse than no label: you would
                believe you were signed in to a provider you were not. */
-            'ab_engines'     => EngineRegistry::menu(),
+            // The platform's engines, then THIS member's own model connections (core
+            // Connections → Models) — "GLM (z.ai) — your key" runs on the member's managed
+            // key; the platform "zai" runs on the server's. AgentContext refuses anyone
+            // else's connection, so listing only your own is presentation, not the gate.
+            'ab_engines'     => EngineRegistry::menu() + $this->ownConnectionEngines($mid),
             'ab_engine'      => $termEngine,
             /* Key-authenticated engine with no key for THIS member: the terminal would open,
                the jail would refuse by name, and the session would die before the prompt.

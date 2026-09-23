@@ -131,12 +131,12 @@ foreach ($instances as $__i) { if (!empty($__i->isDefault)) { $hasDefault = true
             <!-- Informational only: a key engine runs on the server's key; a member's own key is a model connection. The terminal still opens. -->
             <div class="alert alert-info mb-2 small">
               <h6 class="alert-heading">
-                <i class="bi bi-key me-1"></i><?= htmlspecialchars($ab_keyNote['label']) ?> runs on the server's key
+                <i class="bi bi-key me-1"></i>This is the platform's <?= htmlspecialchars($ab_keyNote['label']) ?>, on the server's key
               </h6>
               <p class="mb-2 small">
-                This provider signs in with an API key &mdash; the terminal's <code>/login</code> is
-                Anthropic's and cannot reach it. To use <em>your own</em> key, add it as a model
-                connection and choose it under &ldquo;Build with&rdquo;.
+                The terminal's <code>/login</code> is Anthropic's and cannot sign in to this provider. To use
+                <em>your own</em> key, add it on Connections &rarr; Models &mdash; it then appears in the engine
+                picker above as &ldquo;&hellip; &mdash; your key&rdquo;.
               </p>
               <?php if ($ab_keyNote['keyUrl'] !== ''): ?>
               <a href="<?= htmlspecialchars($ab_keyNote['keyUrl']) ?>" target="_blank" rel="noopener noreferrer"
