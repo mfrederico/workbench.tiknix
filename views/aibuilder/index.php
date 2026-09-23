@@ -144,7 +144,7 @@ foreach ($instances as $__i) { if (!empty($__i->isDefault)) { $hasDefault = true
                 <i class="bi bi-box-arrow-up-right me-1"></i>Get a key from <?= htmlspecialchars($ab_keyNote['label']) ?>
               </a>
               <?php endif; ?>
-              <a href="<?= htmlspecialchars($ab_keyNote['settings']) ?>" class="btn btn-sm btn-outline-secondary">
+              <a href="<?= htmlspecialchars($ab_keyNote['settings']) ?>" target="_top" class="btn btn-sm btn-outline-secondary">
                 <i class="bi bi-plug me-1"></i>Connections &rarr; Models
               </a>
             </div>
