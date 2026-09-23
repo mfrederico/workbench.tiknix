@@ -127,28 +127,32 @@ foreach ($instances as $__i) { if (!empty($__i->isDefault)) { $hasDefault = true
             </span>
           </div>
           <div class="card-body p-2 bg-body-tertiary position-relative">
-            <?php if (!empty($ab_keyNeeded)): ?>
-            <!-- This provider signs in with an API key and this member has not set one. The
-                 terminal is NOT opened: the jail would refuse and the session would die
-                 before a prompt appeared, which reads as a broken page rather than a missing
-                 credential. Send them to the provider's key page and to their settings. -->
-            <div class="alert alert-warning mb-2">
+            <?php if (!empty($ab_keyNote)): ?>
+            <!-- Informational only: a key engine runs on the server's key; a member's own key is a model connection. The terminal still opens. -->
+            <div class="alert alert-info mb-2 small">
               <h6 class="alert-heading">
-                <i class="bi bi-key me-1"></i><?= htmlspecialchars($ab_keyNeeded['label']) ?> needs your API key
+                <i class="bi bi-key me-1"></i><?= htmlspecialchars($ab_keyNote['label']) ?> runs on the server's key
               </h6>
               <p class="mb-2 small">
-                This provider signs in with an API key &mdash; the terminal's
-                <code>/login</code> is Anthropic's and cannot reach it.
+                This provider signs in with an API key &mdash; the terminal's <code>/login</code> is
+                Anthropic's and cannot reach it. To use <em>your own</em> key, add it as a model
+                connection and choose it under &ldquo;Build with&rdquo;.
               </p>
-              <?php if ($ab_keyNeeded['keyUrl'] !== ''): ?>
-              <a href="<?= htmlspecialchars($ab_keyNeeded['keyUrl']) ?>" target="_blank" rel="noopener noreferrer"
+              <?php if ($ab_keyNote['keyUrl'] !== ''): ?>
+              <a href="<?= htmlspecialchars($ab_keyNote['keyUrl']) ?>" target="_blank" rel="noopener noreferrer"
                  class="btn btn-sm btn-warning">
-                <i class="bi bi-box-arrow-up-right me-1"></i>Get a key from <?= htmlspecialchars($ab_keyNeeded['label']) ?>
+                <i class="bi bi-box-arrow-up-right me-1"></i>Get a key from <?= htmlspecialchars($ab_keyNote['label']) ?>
               </a>
               <?php endif; ?>
-              <a href="<?= htmlspecialchars($ab_keyNeeded['settings']) ?>" class="btn btn-sm btn-outline-secondary">
-                <i class="bi bi-gear me-1"></i>Paste it into your settings
+              <a href="<?= htmlspecialchars($ab_keyNote['settings']) ?>" class="btn btn-sm btn-outline-secondary">
+                <i class="bi bi-plug me-1"></i>Connections &rarr; Models
               </a>
+            </div>
+            <?php endif; ?>
+            <?php if (!empty($ab_termError)): ?>
+            <div class="alert alert-danger mb-2">
+              <i class="bi bi-exclamation-octagon me-1"></i>The terminal cannot open:
+              <?= htmlspecialchars($ab_termError) ?>
             </div>
             <?php endif; ?>
             <div id="ab-terminal"></div>

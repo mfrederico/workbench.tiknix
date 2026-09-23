@@ -150,6 +150,17 @@ class Aibuilder extends BuildControl {
         return ($fromFile !== '' && EngineRegistry::isValid($fromFile)) ? $fromFile : 'claude';
     }
 
+    /**
+     * The terminal's engine, model and credential store — through the SAME resolver every
+     * runner uses (app\AgentContext), so a member building on their own model connection
+     * (core Connections → Models) gets it here too, materialized into their state dir.
+     * Throws when the member's choice cannot run; callers say so instead of opening claude.
+     */
+    private function terminalContext(string $sub, int $memberId, string $engineWanted = ''): \app\AgentContext {
+        $dir = '/var/www/html/default/' . $sub . '.' . $this->appNamespace();
+        return \app\AgentContext::for($memberId, 'worker', $dir, $this->terminalEngine($sub, $engineWanted));
+    }
+
     private function mintToken(string $sub, int $memberId, string $engineWanted = '', bool $resume = false): string {
         $cfg    = $this->cfg();
         $secret = (string)($cfg['token']['secret'] ?? '');
@@ -159,15 +170,15 @@ class Aibuilder extends BuildControl {
         // binds the same store the planner and the build agents use. Without it the
         // terminal fell back to the per-project dir and asked you to log in again for a
         // project you had already signed in for elsewhere.
-        $dir    = '/var/www/html/default/' . $sub . '.' . $this->appNamespace();
-        $engine  = $this->terminalEngine($sub, $engineWanted);
+        $ctx     = $this->terminalContext($sub, $memberId, $engineWanted);
+        $engine  = $ctx->engine;
         $payload = json_encode([
             'app' => $this->appNamespace(), 'sub' => $sub, 'member_id' => $memberId,
             // The bridge reads this and sets ENGINE before spawning the jail. Without it the
             // terminal always came up on the project's engine, so there was no way to sign
             // in to a second provider from the browser at all.
             'engine' => $engine,
-            'agent_state' => \app\AgentState::resolve($memberId, $engine, $dir),
+            'agent_state' => $ctx->stateDir,
             /* Resume the agent's previous conversation instead of starting cold. The
                transcript is already on disk in the state dir above — this only asks the
                bridge to pass --continue when it spawns, so a terminal that dropped can be
@@ -259,21 +270,16 @@ class Aibuilder extends BuildControl {
      * "you have not set yours", which is the thing the member can act on.
      */
     private function engineKeyPrompt(string $engine): ?array {
-        $envVar = \app\EngineRegistry::authTokenEnv($engine);
-        if ($envVar === '') return null;                       // OAuth engine: nothing to set
-
-        $has = (string) \app\CoreDb::with(
-            fn() => \app\MemberEnginePrefs::token((int) $this->member->id, $engine)
-        );
-        if ($has !== '') return null;
-
+        // A platform engine that authenticates by key (z.ai) runs on the SERVER's key; a
+        // member's own key for it is a model connection now (core Connections → Models,
+        // z.ai preset), chosen under "Build with". Say that, once, on key engines.
+        if (\app\EngineRegistry::authTokenEnv($engine) === '') return null;
         return [
             'engine'   => $engine,
             'label'    => \app\EngineRegistry::label($engine),
             'keyUrl'   => \app\EngineRegistry::keyUrl($engine),
-            // Same source projectPickerUrl() uses — the settings page lives on CORE, not
-            // on this sidecar, so a relative link would 404 here.
-            'settings' => rtrim((string) (\Flight::get('sidecar.core_url') ?? ''), '/') . '/member/settings',
+            // Core's page, not this sidecar's: a relative link would 404 here.
+            'settings' => rtrim((string) (\Flight::get('sidecar.core_url') ?? ''), '/') . '/connections#models',
         ];
     }
 
@@ -306,32 +312,9 @@ class Aibuilder extends BuildControl {
         $stateDir = \app\AgentState::resolve((int) $this->member->id, $engine, $dir);
         if (!is_dir($stateDir)) @mkdir($stateDir, 0775, true);
 
-        /* (2a) This member's own API key for key-authenticated providers, handed to the jail
-           through the state dir it already binds.
-           Deliberately NOT sent via the bridge token: that token lives in page source, and a
-           member's API key has no business there. This write happens server-side and the file
-           never leaves the host. jail-run.sh prefers it over the operator's own key.
-           Removed when they clear it, so revoking in the UI actually revokes here — leaving a
-           stale file would keep authenticating them with a key they believe they deleted. */
-        $keyFile = $stateDir . '/auth-token';
-        if (\app\EngineRegistry::authTokenEnv($engine) !== '') {
-            /* Read through CoreDb: member settings live in CORE's database, while this
-               sidecar's default connection is the instance's own workbench.db. Reading it
-               unwrapped finds no settings table (or someone else's) and returns '' — which
-               is indistinguishable from "this member set no key", so the operator's key
-               would silently be used instead of theirs. */
-            $memberKey = (string) \app\CoreDb::with(
-                fn() => \app\MemberEnginePrefs::token((int) $this->member->id, $engine)
-            );
-            if ($memberKey !== '') {
-                if (@file_get_contents($keyFile) !== $memberKey) {
-                    @file_put_contents($keyFile, $memberKey);
-                    @chmod($keyFile, 0600);
-                }
-            } elseif (is_file($keyFile)) {
-                @unlink($keyFile);
-            }
-        }
+        /* (2a) — writing the member's per-engine key into the state dir — was removed
+           2026-09-23. A member's own key is a model connection now; AgentContext::for writes
+           its endpoint.env + auth-token here when the member builds on it. */
 
         $file = $stateDir . '/settings.json';
         $settings = [];
@@ -387,8 +370,16 @@ class Aibuilder extends BuildControl {
 
         // Neutralize Claude's in-jail browser-open before the terminal opens, so a
         // first-run `claude` sign-in surfaces in the gate instead of a dead browser.
-        if ($selected) $this->ensureOAuthCapture($selected->slug,
-                                                 $this->terminalEngine($selected->slug, (string) $this->getParam('engine', '')));
+        $termEngine = ''; $termError = '';
+        if ($selected) {
+            try {
+                $termEngine = $this->terminalContext($selected->slug, $mid, (string) $this->getParam('engine', ''))->engine;
+                $this->ensureOAuthCapture($selected->slug, $termEngine);
+            } catch (\RuntimeException $e) {
+                $termError = $e->getMessage();   // e.g. the model connection chosen for builds is gone
+                $this->logger->error('Terminal: engine could not be resolved', ['instance' => $selected->slug, 'member_id' => $mid, 'err' => $termError]);
+            }
+        }
 
         // Share-management UI (owner-only team sharing) is part of the registry write-seam;
         // the read/terminal/plan path works without it. Selected instance's shares are read-only.
@@ -414,7 +405,8 @@ class Aibuilder extends BuildControl {
             'selected'       => $selected,
             'ab_needsInstall' => $needsInstall,
             'ab_sub'         => $selected ? $selected->slug : '',
-            'ab_token'       => $selected ? $this->mintToken($selected->slug, (int)$this->member->id,
+            'ab_termError'   => $termError,
+            'ab_token'       => ($selected && $termError === '') ? $this->mintToken($selected->slug, (int)$this->member->id,
                                                              (string) $this->getParam('engine', ''),
                                                              $this->getParam('resume', '') === '1') : '',
             /* The engines this terminal can be opened on, and which one it is on now.
@@ -425,18 +417,19 @@ class Aibuilder extends BuildControl {
                label that disagreed with the session would be worse than no label: you would
                believe you were signed in to a provider you were not. */
             'ab_engines'     => EngineRegistry::menu(),
-            'ab_engine'      => $selected
-                ? $this->terminalEngine($selected->slug, (string) $this->getParam('engine', ''))
-                : '',
+            'ab_engine'      => $termEngine,
             /* Key-authenticated engine with no key for THIS member: the terminal would open,
                the jail would refuse by name, and the session would die before the prompt.
                Surface it as a link to the provider's key page instead of a dead terminal.
                Only the member's own key is checked. The operator's fallback lives in the
                bridge's environment, which PHP cannot see — so this asks the question it can
                actually answer, and the jail still refuses loudly if neither exists. */
-            'ab_keyNeeded'   => $selected ? $this->engineKeyPrompt(
-                                                $this->terminalEngine($selected->slug, (string) $this->getParam('engine', ''))
-                                            ) : null,
+            // A NOTE, never a gate: the server's key lives in the bridge's environment, which
+            // PHP cannot see, so nothing here can know the terminal would fail. The jail
+            // refuses by name when there is no key. (ab_keyNeeded gated the terminal on the
+            // member's own key, which no longer exists.)
+            'ab_keyNeeded'   => null,
+            'ab_keyNote'     => ($selected && $termEngine !== '') ? $this->engineKeyPrompt($termEngine) : null,
             'ab_wspath'      => (string)($cfg['bridge']['ws_path'] ?? '/aibuilder/ws'),
             // The terminal PTY bridge (node runner) lives on CORE, so the xterm must
             // connect to core's host, not this sidecar's. wss://<core-host>. See coreWsBase().
@@ -514,9 +507,13 @@ class Aibuilder extends BuildControl {
         if (!$inst) { Flight::jsonError('No such instance', 404); return; }
         // Carries the engine too: a reconnect that silently dropped back to the project's
         // provider would move you off z.ai mid-session without saying so.
-        Flight::jsonSuccess(['token' => $this->mintToken($inst->slug, (int)$this->member->id,
-                                                         (string) $this->getParam('engine', ''),
-                                                         $this->getParam('resume', '') === '1')]);
+        try {
+            $tok = $this->mintToken($inst->slug, (int)$this->member->id, (string) $this->getParam('engine', ''), $this->getParam('resume', '') === '1');
+        } catch (\RuntimeException $e) {
+            Flight::jsonError($e->getMessage(), 409);
+            return;
+        }
+        Flight::jsonSuccess(['token' => $tok]);
     }
 
     /** Path to the instance's jailed tmux control socket. */
