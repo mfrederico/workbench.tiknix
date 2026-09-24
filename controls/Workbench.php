@@ -1680,8 +1680,8 @@ class Workbench extends BuildControl {
             // Clean up workspace directory
             if (!empty($task->projectPath) && is_dir($task->projectPath)) {
                 try {
-                    $wsManager = new WorkspaceManager();
-                    $wsManager->destroy($task->projectPath);
+                    // A worktree through git; a legacy clone only inside core's projects/.
+                    GitService::removeTaskWorkspace($task->projectPath);
                     $this->logger->info('Workspace deleted', ['path' => $task->projectPath]);
                 } catch (Exception $e) {
                     $this->logger->warning('Failed to delete workspace', ['error' => $e->getMessage()]);
@@ -1838,7 +1838,7 @@ class Workbench extends BuildControl {
         // up on a prior approve), the stored branch is stale and there is nothing to run
         // against — a null path would fall through to the main app and be rejected. Drop
         // the stale branch so a fresh workspace + branch get rebuilt from the instance.
-        if (!empty($task->branchName) && (empty($task->projectPath) || !is_dir($task->projectPath . '/.git'))) {
+        if (!empty($task->branchName) && !GitService::isWorkspace($task->projectPath)) {
             $this->logTaskEvent($taskId, 'info', 'system', 'Workspace was gone — rebuilding a fresh one from the instance.');
             $task->branchName = null;
         }
@@ -1878,33 +1878,30 @@ class Workbench extends BuildControl {
                     if ($useHead) $baseBranch = $head;
                 }
 
-                // Clone repository into isolated workspace (clones the base branch)
-                $mainGit = new GitService();
-                // instanceTag scopes the workspace. Without it three projects' task
-                // 26 share one directory and clone over each other — see
-                // GitService::getWorkspacePath.
-                $workspacePath = $mainGit->cloneToWorkspace(
-                    $this->member->id, $task->id, $cloneUrl, $baseBranch, (string) $task->instanceTag);
-                $task->projectPath = $workspacePath;
-
-                $srcLabel = $instDir !== null ? ($task->instanceTag ?: 'instance') : 'main';
-                $this->logTaskEvent($taskId, 'info', 'system', "Created workspace: {$workspacePath} (from {$srcLabel}:{$baseBranch})");
-
-                // Create GitService for the workspace
-                $gitService = new GitService($workspacePath);
-
                 $branchName = GitService::generateBranchName(
                     $this->member->username ?? $this->member->email,
                     $task->id,
                     $task->title
                 );
 
-                // Create new branch from the cloned base branch
-                $gitService->createBranch($branchName, $baseBranch);
+                if ($instDir !== null) {
+                    // A WORKTREE inside the project (.aibuilder/wt/solo-<id>) on the task's
+                    // own branch — the same mechanism plan tasks use. It used to be a clone
+                    // in core's projects/ tree, which the project's MCP server and preview
+                    // (walled to the project) could not read. See GitService::addTaskWorktree.
+                    $workspacePath = GitService::addTaskWorktree($instDir, (int) $task->id, $branchName, $baseBranch);
+                    $this->logTaskEvent($taskId, 'info', 'system', "Created workspace: {$workspacePath} (worktree of {$task->instanceTag} on {$branchName}, from {$baseBranch})");
+                } else {
+                    // Not an instance task: a clone of the main repo, as before.
+                    $mainGit = new GitService();
+                    $workspacePath = $mainGit->cloneToWorkspace(
+                        $this->member->id, $task->id, $cloneUrl, $baseBranch, (string) $task->instanceTag);
+                    (new GitService($workspacePath))->createBranch($branchName, $baseBranch);
+                    $this->logTaskEvent($taskId, 'info', 'system', "Created workspace: {$workspacePath} (from main:{$baseBranch}), branch {$branchName}");
+                }
+                $task->projectPath = $workspacePath;
                 $task->branchName = $branchName;
                 $task->baseBranch = $baseBranch; // Store the actual base branch used
-
-                $this->logTaskEvent($taskId, 'info', 'system', "Created branch: {$branchName} from {$baseBranch}");
 
             } catch (Exception $e) {
                 $this->logger->error('Failed to create workspace/branch', ['error' => $e->getMessage()]);
@@ -1937,7 +1934,8 @@ class Workbench extends BuildControl {
                     $cand = $instDir . '/database/' . $inst->slug . '.db';
                     if (is_file($cand)) $liveDbPath = $cand;
                 }
-                $wsManager = new WorkspaceManager();
+                // The PROJECT's vendor for its worktree (its own dependencies); core's otherwise.
+                $wsManager = new WorkspaceManager(null, $instDir);
                 $wsInfo = $wsManager->initialize($workspacePath, $task->proxyHash, false, $liveDbPath);
                 $this->logTaskEvent($taskId, 'info', 'system', "Initialized workspace: {$wsInfo['baseurl']}"
                     . ($liveDbPath ? ' (seeded from the instance\'s live data)' : ' (fresh database)'));
@@ -2131,7 +2129,7 @@ class Workbench extends BuildControl {
         // against it — that path falls through to the main app and the agent guard rejects
         // it. Rebuild a fresh instance workspace via run(), which self-heals the stale
         // branch, re-clones from the instance, and spawns. Keeps the same task + history.
-        if (!$workspacePath || !is_dir($workspacePath . '/.git')) {
+        if (!GitService::isWorkspace($workspacePath)) {
             $task->status = 'pending';
             $task->errorMessage = null;
             $task->updatedAt = date('Y-m-d H:i:s');
@@ -2257,7 +2255,7 @@ class Workbench extends BuildControl {
 
         $ws = (string)($task->projectPath ?? '');
         $br = (string)($task->branchName ?? '');
-        if ($ws === '' || !is_dir($ws . '/.git') || $br === '') {
+        if ($ws === '' || !GitService::isWorkspace($ws) || $br === '') {
             Flight::jsonError('This task has no workspace/branch to resolve — use Re-run to rebuild it.', 409);
             return;
         }
@@ -2731,8 +2729,16 @@ class Workbench extends BuildControl {
 
             // Delete workspace if requested
             if ($deleteWorkspace && $workspacePath && is_dir($workspacePath)) {
-                $this->recursiveDelete($workspacePath);
+                $wasWorktree = GitService::isTaskWorktree($workspacePath);
+                GitService::removeTaskWorkspace($workspacePath);
                 $this->logTaskEvent($taskId, 'info', 'system', "Deleted workspace: {$workspacePath}");
+                // A worktree's branch lives in the project. Once merged it is spent: delete it
+                // with -d, which git refuses for a branch whose commits are not merged.
+                $projDir = $wasWorktree ? $this->instanceDirForTask($task) : null;
+                if ($merged && $projDir !== null && !empty($task->branchName)) {
+                    exec('git -C ' . escapeshellarg($projDir) . ' branch -d ' . escapeshellarg((string) $task->branchName) . ' 2>&1', $bdOut, $bdCode);
+                    if ($bdCode !== 0) $this->logTaskEvent($taskId, 'warning', 'system', 'Kept branch ' . $task->branchName . ': ' . implode(' ', $bdOut));
+                }
                 $task->projectPath = null;
                 $workspaceDeleted = true;
             }
@@ -3055,12 +3061,16 @@ class Workbench extends BuildControl {
             $initMessages = [];
             if (empty($task->proxyHash)) $task->proxyHash = bin2hex(random_bytes(6));
 
-            // Pull the branch work + set up a fresh isolated db/config for the preview.
-            exec(sprintf('cd %s && git pull origin %s 2>&1',
-                escapeshellarg($task->projectPath), escapeshellarg($task->branchName)), $pullOutput, $pullCode);
-            if ($pullCode === 0) $initMessages[] = "Pulled latest changes from {$task->branchName}";
+            // Pull the branch work + set up a fresh isolated db/config for the preview. A task
+            // WORKTREE is that branch already — its commits are in it, and its origin is the
+            // project's own remote, not the project — so only a legacy clone pulls.
+            if (!GitService::isTaskWorktree($task->projectPath)) {
+                exec(sprintf('cd %s && git pull origin %s 2>&1',
+                    escapeshellarg($task->projectPath), escapeshellarg($task->branchName)), $pullOutput, $pullCode);
+                if ($pullCode === 0) $initMessages[] = "Pulled latest changes from {$task->branchName}";
+            }
 
-            $wsManager = new WorkspaceManager();
+            $wsManager = new WorkspaceManager(null, $this->instanceDirForTask($task));
             $wsManager->initialize($task->projectPath, $task->proxyHash);
             $initMessages[] = "Fresh database created with admin/admin1234";
 
@@ -4049,7 +4059,7 @@ class Workbench extends BuildControl {
         $ws   = (string)($task->projectPath ?? '');
         $br   = (string)($task->branchName ?? '');
         $base = (string)($task->baseBranch ?: 'main');
-        if ($ws === '' || !is_dir($ws . '/.git')) {
+        if ($ws === '' || !GitService::isWorkspace($ws)) {
             return ['merged' => false, 'pushed' => false, 'reason' => 'workspace no longer available to merge from'];
         }
         if ($br === '') {
@@ -4146,7 +4156,7 @@ class Workbench extends BuildControl {
         $ws   = (string)($task->projectPath ?? '');
         $br   = (string)($task->branchName ?? '');
         $base = (string)($task->baseBranch ?: 'main');
-        if ($ws === '' || !is_dir($ws . '/.git') || $br === '') return null;
+        if ($ws === '' || !GitService::isWorkspace($ws) || $br === '') return null;
         $out = []; $code = 0;
         exec('git -C ' . escapeshellarg($ws) . ' diff --numstat ' . escapeshellarg($base . '...HEAD') . ' 2>/dev/null', $out, $code);
         if ($code !== 0) return null;
@@ -4178,7 +4188,7 @@ class Workbench extends BuildControl {
         $br   = (string)($task->branchName ?? '');
         $base = (string)($task->baseBranch ?: 'main');
         $patch = ''; $note = '';
-        if ($ws === '' || !is_dir($ws . '/.git') || $br === '') {
+        if ($ws === '' || !GitService::isWorkspace($ws) || $br === '') {
             $note = 'No workspace branch is available for this task — it may have been merged or cleaned up.';
         } else {
             $out = [];
