@@ -4381,7 +4381,9 @@ class Workbench extends BuildControl {
             if (!empty($task->projectPath)) {
                 // Workspace mode - already on correct branch
                 $serverCmd = sprintf(
-                    'cd %s && php -S 0.0.0.0:%d server.php; echo "Server stopped. Press Enter to close..."; read',
+                    // 4 workers: server.php asks this same server whether the app can produce
+                    // an image (else it shows a placeholder), which a single worker would deadlock.
+                    'cd %s && PHP_CLI_SERVER_WORKERS=4 php -S 0.0.0.0:%d server.php; echo "Server stopped. Press Enter to close..."; read',
                     escapeshellarg($projectPath),
                     $task->assignedPort
                 );
