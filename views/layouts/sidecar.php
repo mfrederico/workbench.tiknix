@@ -27,14 +27,16 @@ $__facet = $__onBuilder ? 'builder' : (strpos($__p, '/workbench/prompts') === 0 
 </head>
 <body>
 <nav class="navbar navbar-expand bg-body-tertiary border-bottom px-3 py-1">
-  <span class="navbar-brand fw-semibold d-flex align-items-center gap-1" style="font-size:.95rem"><i class="bi bi-hammer"></i> Build</span>
-  <ul class="nav nav-pills ms-2 gap-1">
-    <li class="nav-item"><a class="nav-link py-1 px-2 <?= $__facet === 'board' ? 'active' : '' ?>" href="/workbench"><i class="bi bi-kanban me-1"></i>Task Board</a></li>
-    <li class="nav-item"><a class="nav-link py-1 px-2 <?= $__onBuilder ? 'active' : '' ?>" href="/aibuilder"><i class="bi bi-robot me-1"></i>Terminal</a></li>
+  <?php /* Below sm (phones) every item is its icon alone — labels stay for screen readers
+           and as a tooltip — so the bar keeps one row instead of spilling off the side. */ ?>
+  <span class="navbar-brand fw-semibold d-flex align-items-center gap-1 me-2" style="font-size:.95rem"><i class="bi bi-hammer"></i><span class="d-none d-sm-inline"> Build</span></span>
+  <ul class="nav nav-pills gap-1 flex-nowrap">
+    <li class="nav-item"><a class="nav-link py-1 px-2 <?= $__facet === 'board' ? 'active' : '' ?>" href="/workbench" title="Task Board"><i class="bi bi-kanban me-sm-1"></i><span class="d-none d-sm-inline">Task Board</span><span class="visually-hidden d-sm-none">Task Board</span></a></li>
+    <li class="nav-item"><a class="nav-link py-1 px-2 <?= $__onBuilder ? 'active' : '' ?>" href="/aibuilder" title="Terminal"><i class="bi bi-robot me-sm-1"></i><span class="d-none d-sm-inline">Terminal</span><span class="visually-hidden d-sm-none">Terminal</span></a></li>
     <?php /* The prompt log belongs beside the two surfaces that produce it — the board's
              forms and the Terminal — rather than in core's nav, which is where you pick a
              project rather than work on one. */ ?>
-    <li class="nav-item"><a class="nav-link py-1 px-2 <?= (($__facet ?? '') === 'prompts') ? 'active' : '' ?>" href="/workbench/prompts"><i class="bi bi-chat-left-quote me-1"></i>Prompts</a></li>
+    <li class="nav-item"><a class="nav-link py-1 px-2 <?= (($__facet ?? '') === 'prompts') ? 'active' : '' ?>" href="/workbench/prompts" title="Prompts"><i class="bi bi-chat-left-quote me-sm-1"></i><span class="d-none d-sm-inline">Prompts</span><span class="visually-hidden d-sm-none">Prompts</span></a></li>
   </ul>
   <?php /* Stuck on something that looks like the platform rather than your app? Tiknix
            support, about THIS project: core's Support page with it filled in (Contact::index
@@ -46,7 +48,7 @@ $__facet = $__onBuilder ? 'builder' : (strpos($__p, '/workbench/prompts') === 0 
   $__support = rtrim((string) Flight::get('sidecar.core_url'), '/') . '/contact' . ($__slug !== '' ? '?project=' . rawurlencode($__slug) : ''); ?>
   <a class="ms-auto small text-decoration-none d-flex align-items-center gap-1" target="_top"
      href="<?= htmlspecialchars($__support) ?>" title="Ask Tiknix support about this project">
-    <i class="bi bi-life-preserver"></i><span class="d-none d-sm-inline">Tiknix support</span></a>
+    <i class="bi bi-life-preserver"></i><span class="d-none d-sm-inline">Tiknix support</span><span class="visually-hidden d-sm-none">Tiknix support</span></a>
 </nav>
 <?php
 /* THE BIG ONE. A session/usage limit blocks every decompose, build and terminal for this

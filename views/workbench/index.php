@@ -1,12 +1,14 @@
 <div class="container-fluid py-4">
-    <div class="d-flex justify-content-between align-items-center mb-4">
-        <h1 class="h2">Task Board</h1>
-        <div>
-            <a href="<?= htmlspecialchars((string)Flight::get('sidecar.core_url')) ?>/firehose" target="_top" class="btn btn-outline-danger me-2" title="Errors captured live from your instances">
-                <i class="bi bi-fire"></i> Firehose
+    <?php /* Wraps on a phone: the title takes its own line and the secondary buttons are
+             icons (label kept as tooltip + for screen readers); New Task keeps its words. */ ?>
+    <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-4">
+        <h1 class="h2 mb-0">Task Board</h1>
+        <div class="d-flex flex-wrap align-items-center gap-2">
+            <a href="<?= htmlspecialchars((string)Flight::get('sidecar.core_url')) ?>/firehose" target="_top" class="btn btn-outline-danger" title="Firehose — errors captured live from your instances">
+                <i class="bi bi-fire"></i><span class="d-none d-sm-inline"> Firehose</span><span class="visually-hidden d-sm-none">Firehose</span>
             </a>
-            <a href="<?= htmlspecialchars((string)Flight::get('sidecar.core_url')) ?>/teams" target="_top" class="btn btn-outline-secondary me-2">
-                <i class="bi bi-people"></i> Teams
+            <a href="<?= htmlspecialchars((string)Flight::get('sidecar.core_url')) ?>/teams" target="_top" class="btn btn-outline-secondary" title="Teams">
+                <i class="bi bi-people"></i><span class="d-none d-sm-inline"> Teams</span><span class="visually-hidden d-sm-none">Teams</span>
             </a>
             <?php
             $createParams = [];
@@ -25,8 +27,8 @@
                      invites people to go looking for a setting that is not
                      missing — the connection belongs to a different project. */ ?>
             <?php if (!empty($hasMonday)): ?>
-                <a href="/workbench/monday" class="btn btn-outline-primary me-2">
-                    <i class="bi bi-box-arrow-in-down"></i> Import from monday.com
+                <a href="/workbench/monday" class="btn btn-outline-primary" title="Import from monday.com">
+                    <i class="bi bi-box-arrow-in-down"></i><span class="d-none d-sm-inline"> Import from monday.com</span><span class="visually-hidden d-sm-none">Import from monday.com</span>
                 </a>
                 <?php /* The import gate only stops work that was ALREADY closed when
                          you looked. Boards move on afterwards, which is the common
@@ -38,9 +40,9 @@
                     <?php foreach (($csrf ?? []) as $cn => $cv): ?>
                         <input type="hidden" name="<?= htmlspecialchars($cn) ?>" value="<?= htmlspecialchars($cv) ?>">
                     <?php endforeach; ?>
-                    <button type="submit" class="btn btn-outline-secondary me-2"
+                    <button type="submit" class="btn btn-outline-secondary"
                             title="Re-read imported items from monday: flags any that were finished, cancelled or deleted, and pulls in changed titles and briefs. Never deletes a task, and never touches its status, comments or branch.">
-                        <i class="bi bi-arrow-repeat"></i> Sync with monday
+                        <i class="bi bi-arrow-repeat"></i><span class="d-none d-sm-inline"> Sync with monday</span><span class="visually-hidden d-sm-none">Sync with monday</span>
                     </button>
                 </form>
             <?php endif; ?>

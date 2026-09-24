@@ -89,7 +89,9 @@ foreach ($instances as $__i) { if (!empty($__i->isDefault)) { $hasDefault = true
       <!-- Builder surface: Terminal -->
       <div class="col-lg-8">
         <div class="card shadow-sm">
-          <div class="card-header d-flex justify-content-between align-items-center">
+          <?php /* Wraps on a phone, and the buttons are icons there (label as tooltip and
+                   for screen readers): unwrapped, Resume and Delete ran off the right edge. */ ?>
+          <div class="card-header d-flex flex-wrap justify-content-between align-items-center gap-2">
             <span class="fw-semibold">
               <i class="bi bi-terminal me-1"></i>Terminal
               <?php /* Connection state belongs on the thing it describes. In the project
@@ -97,7 +99,7 @@ foreach ($instances as $__i) { if (!empty($__i->isDefault)) { $hasDefault = true
                        disconnected" — when it is only ever about this panel's socket. */ ?>
               <span id="ab-status" class="fw-normal text-body-secondary small">· connecting…</span>
             </span>
-            <span class="d-flex align-items-center gap-2">
+            <span class="d-flex flex-wrap align-items-center gap-2">
               <?php /* Which provider this terminal talks to, and how to change it.
                        RELOADS rather than switching live: a session is bound to its engine
                        when the daemon spawns, so a dropdown that appeared to switch an open
@@ -117,13 +119,13 @@ foreach ($instances as $__i) { if (!empty($__i->isDefault)) { $hasDefault = true
                 </select>
               <?php endif; ?>
               <span class="text-body-secondary small d-none d-md-inline"><i class="bi bi-shield-lock me-1"></i>Sandboxed to <?= htmlspecialchars(($selected->slug) ?? '') ?>.tiknix</span>
-              <?php if (!$ab_isDefault): ?><button id="ab-restart" class="btn btn-outline-secondary btn-sm" type="button" title="Restart the jailed session (applies updated sandbox settings)"><i class="bi bi-arrow-repeat me-1"></i>Restart</button>
+              <?php if (!$ab_isDefault): ?><button id="ab-restart" class="btn btn-outline-secondary btn-sm" type="button" title="Restart the jailed session (applies updated sandbox settings)"><i class="bi bi-arrow-repeat me-sm-1"></i><span class="d-none d-sm-inline">Restart</span><span class="visually-hidden d-sm-none">Restart</span></button>
               <?php /* The agent's transcript outlives the terminal — it is stored per member,
                        outside the jail — so a dropped session can be picked up rather than
                        retyped. Only meaningful for a session that has ENDED; attaching to a
                        live one already has its context on screen. */ ?>
-              <button id="ab-resume" class="btn btn-outline-secondary btn-sm" type="button" title="Reload the agent's last conversation in this project (claude --continue)"><i class="bi bi-clock-history me-1"></i>Resume last context</button><?php endif; ?>
-              <button id="ab-delete" class="btn btn-outline-danger btn-sm" type="button" title="Delete this instance (danger zone)"><i class="bi bi-trash me-1"></i>Delete</button>
+              <button id="ab-resume" class="btn btn-outline-secondary btn-sm" type="button" title="Reload the agent's last conversation in this project (claude --continue)"><i class="bi bi-clock-history me-sm-1"></i><span class="d-none d-sm-inline">Resume last context</span><span class="visually-hidden d-sm-none">Resume last context</span></button><?php endif; ?>
+              <button id="ab-delete" class="btn btn-outline-danger btn-sm" type="button" title="Delete this instance (danger zone)"><i class="bi bi-trash me-sm-1"></i><span class="d-none d-sm-inline">Delete</span><span class="visually-hidden d-sm-none">Delete</span></button>
             </span>
           </div>
           <div class="card-body p-2 bg-body-tertiary position-relative">
