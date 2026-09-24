@@ -88,6 +88,26 @@ class Workbench extends BuildControl {
         return $label;
     }
 
+    /**
+     * The address a task's test server is reachable at: https://preview-<slug>-<hash>.<domain>.
+     * openresty forwards it to the task's port through the .proxy file autoStartTestServer
+     * writes (/etc/nginx/xpi/determine_proxy.lua). ONE builder, used for that proxy file's
+     * host and for the workspace's own [app] baseurl — they used to be built separately, and
+     * the workspace side fell back to <hash>.localhost.
+     *
+     * @throws \RuntimeException when this install has not been told its public domain
+     */
+    private function testServerUrl($task): string {
+        $domain = preg_replace('#^https?://#', '', $this->serverBaseurl());
+        if ($domain === '') {
+            throw new \RuntimeException('The test server has no public address: set [sidecar] core_url in conf/config.ini.');
+        }
+        if (empty($task->proxyHash)) {
+            throw new \RuntimeException("Task #{$task->id} has no proxy hash, so its test server has no address yet.");
+        }
+        return 'https://' . self::previewLabel((string) $task->proxyHash, (string) $task->instanceTag) . '.' . $domain;
+    }
+
     protected function serverBaseurl(): string {
         // NO localhost fallback. It used to end `?: 'https://localhost'`, and that
         // single default is the whole bug: a preview genuinely live at
@@ -1936,7 +1956,7 @@ class Workbench extends BuildControl {
                 }
                 // The PROJECT's vendor for its worktree (its own dependencies); core's otherwise.
                 $wsManager = new WorkspaceManager(null, $instDir);
-                $wsInfo = $wsManager->initialize($workspacePath, $task->proxyHash, false, $liveDbPath);
+                $wsInfo = $wsManager->initialize($workspacePath, $this->testServerUrl($task), false, $liveDbPath);
                 $this->logTaskEvent($taskId, 'info', 'system', "Initialized workspace: {$wsInfo['baseurl']}"
                     . ($liveDbPath ? ' (seeded from the instance\'s live data)' : ' (fresh database)'));
             } catch (Exception $e) {
@@ -3072,15 +3092,16 @@ class Workbench extends BuildControl {
                 if ($pullCode === 0) $initMessages[] = "Pulled latest changes from {$task->branchName}";
             }
 
-            $wsManager = new WorkspaceManager(null, $this->instanceDirForTask($task));
-            $wsManager->initialize($task->projectPath, $task->proxyHash);
-            $initMessages[] = "Fresh database created with admin/admin1234";
-
             // The PREVIEW is just a symlink at the capricorn-auto-routed path pointing at the
-            // workspace clone — capricorn serves {host}.com → {host}/public/index.php directly.
+            // workspace — capricorn serves {host}.com → {host}/public/index.php directly.
             // No php -S, no proxy file, NO PORT. Temporary; removed on stop / cleanup.
             $slug = preg_replace('/[^a-z0-9]/', '', strtolower(explode('.', (string) $task->instanceTag)[0])) ?: 'ws';
             $host = "{$slug}-{$task->proxyHash}.tiknix";        // e.g. bidsurge-4b1234ba0a55.tiknix
+
+            // The workspace's own baseurl is the address it is served at here.
+            $wsManager = new WorkspaceManager(null, $this->instanceDirForTask($task));
+            $wsManager->initialize($task->projectPath, "https://{$host}.com");
+            $initMessages[] = "Fresh database created with admin/admin1234";
             $link = '/var/www/html/default/' . $host;
             $target = rtrim($task->projectPath, '/');
             // Safety: only ever link to a workspace clone under the default docroot.
@@ -4369,11 +4390,12 @@ class Workbench extends BuildControl {
             // Create .proxy file for subdomain routing
             // File format: proxyhost=X\nproxyport=Y (lua loadEnvFile expects key=value)
             // Filename: .proxy.{hash}.{domain} (no TLD - nginx lua strips it)
+            $testUrl = $this->testServerUrl($task);
             if (!empty($task->proxyHash)) {
-                $baseDomain = preg_replace('#^https?://#', '', $this->serverBaseurl());
-                // Strip TLD (e.g., .com, .net) - nginx lua expects domain without TLD
-                $baseDomain = preg_replace('/\.[a-z]{2,}$/i', '', $baseDomain);
-                $proxyFile = "/var/www/html/.proxy." . self::previewLabel($task->proxyHash, (string) $task->instanceTag) . ".{$baseDomain}";
+                // The proxy file is named for the host WITHOUT its TLD — determine_proxy.lua
+                // looks up /var/www/html/.proxy.<name> with the TLD already stripped.
+                $proxyName = preg_replace('/\.[a-z]{2,}$/i', '', (string) parse_url($testUrl, PHP_URL_HOST));
+                $proxyFile = "/var/www/html/.proxy.{$proxyName}";
                 $proxyContent = "proxyhost=127.0.0.1\nproxyport={$task->assignedPort}";
                 if (file_put_contents($proxyFile, $proxyContent) !== false) {
                     $task->proxyFile = $proxyFile;
@@ -4381,13 +4403,6 @@ class Workbench extends BuildControl {
             }
 
             Bean::store($task);
-
-            $baseDomain = $baseDomain ?? preg_replace('#^https?://#', '', $this->serverBaseurl());
-            // Empty $baseDomain means this install has not been told its public
-            // domain (see serverBaseurl) — say the port rather than invent a host.
-            $testUrl = (!empty($task->proxyHash) && $baseDomain !== '')
-                ? 'https://' . self::previewLabel($task->proxyHash, (string) $task->instanceTag) . '.' . $baseDomain
-                : "http://localhost:{$task->assignedPort}";
 
             $this->logTaskEvent($task->id, 'info', 'system', "Test server auto-started on port {$task->assignedPort}");
 
