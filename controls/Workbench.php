@@ -159,8 +159,11 @@ class Workbench extends BuildControl {
         $this->bustTaskCache();
 
         // Get filter parameters
+        // Finished work is demoted: no status chosen = "active" (everything not finished);
+        // ?status=all is the whole board, ?status=finished just the done ones.
+        $statusParam = (string) ($this->getParam('status') ?? '');
         $filters = [
-            'status' => $this->getParam('status'),
+            'status' => $statusParam === '' ? 'active' : ($statusParam === 'all' ? '' : $statusParam),
             'task_type' => $this->getParam('type'),
             'team_id' => $this->getParam('team_id'),
             'priority' => $this->getParam('priority'),
@@ -177,6 +180,13 @@ class Workbench extends BuildControl {
 
         // Get task counts
         $counts = $this->access->getTaskCounts($this->member->id);
+
+        // What is live right now — awaiting its person, or held by an agent — for the card
+        // at the top, whichever tab is showing. Awaiting first: that is the one waiting on YOU.
+        $live = $this->access->getVisibleTasks($this->member->id, ['status' => 'live']);
+        usort($live, fn($a, $b) => [(string) $a->status !== 'awaiting', -(int) $a->id] <=> [(string) $b->status !== 'awaiting', -(int) $b->id]);
+        $this->viewData['liveTasks'] = $live;
+        $this->viewData['statusTab'] = $statusParam === '' ? 'active' : $statusParam;
 
         // Get user's teams for filter dropdown
         $teams = $this->access->getMemberTeams($this->member->id);

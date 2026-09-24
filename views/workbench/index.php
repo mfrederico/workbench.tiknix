@@ -66,7 +66,7 @@
     <?php
     // Preserve the "other" active filter when building links, so switching instance
     // keeps the status filter and switching status keeps the instance.
-    $statusQ = !empty($filters['status']) ? (string)$filters['status'] : '';
+    $statusQ = ($statusTab ?? 'active') === 'active' ? '' : (string) $statusTab;
     $tagQ    = !empty($filters['instance_tag']) ? (string)$filters['instance_tag'] : '';
     $tagLink = function (string $tag) use ($statusQ) {
         $qs = [];
@@ -76,16 +76,20 @@
     };
     $statusLink = function (string $status) use ($tagQ) {
         $qs = [];
-        if ($status !== '') $qs['status'] = $status;
+        if ($status !== '' && $status !== 'active') $qs['status'] = $status;
         if ($tagQ !== '')   $qs['instance_tag'] = $tagQ;
         return '/workbench' . ($qs ? '?' . http_build_query($qs) : '');
     };
+    // Active is the default: finished work (merged / completed / resolved) is demoted to
+    // its own tab rather than filling the board.
     $statusTabs = [
-        ''          => ['All',       'grid-1x2',     'secondary', (int)($counts['total'] ?? 0)],
-        'pending'   => ['Pending',   'circle',       'secondary', (int)($counts['pending'] ?? 0)],
+        'active'    => ['Active',    'lightning',    'primary',   (int)($counts['active'] ?? 0)],
+        'awaiting'  => ['Awaiting',  'hourglass-split', 'warning', (int)($counts['awaiting'] ?? 0)],
         'running'   => ['Running',   'play-circle',  'primary',   (int)(($counts['running'] ?? 0) + ($counts['queued'] ?? 0))],
-        'completed' => ['Completed', 'check-circle', 'success',   (int)($counts['completed'] ?? 0)],
+        'pending'   => ['Pending',   'circle',       'secondary', (int)($counts['pending'] ?? 0)],
         'failed'    => ['Failed',    'x-circle',     'danger',    (int)($counts['failed'] ?? 0)],
+        'finished'  => ['Finished',  'check-circle', 'success',   (int)($counts['finished'] ?? 0)],
+        'all'       => ['All',       'grid-1x2',     'secondary', (int)($counts['total'] ?? 0)],
     ];
     ?>
     <div class="row">
@@ -120,6 +124,30 @@
 
         <!-- Task List -->
         <div class="col-lg-9 col-md-8">
+
+            <?php /* What is live right now, whatever tab is showing: awaiting (waiting on its
+                     person — first) and running/queued (an agent has it). Each opens the task. */ ?>
+            <?php if (!empty($liveTasks)): ?>
+            <div class="card shadow-sm mb-3 border-primary-subtle">
+                <div class="card-header d-flex align-items-center gap-2 py-2">
+                    <i class="bi bi-activity text-primary"></i><span class="fw-semibold">In progress</span>
+                    <span class="badge bg-primary rounded-pill"><?= count($liveTasks) ?></span>
+                </div>
+                <div class="list-group list-group-flush">
+                    <?php foreach ($liveTasks as $lt): $isAwaiting = (string) $lt->status === 'awaiting'; ?>
+                    <a class="list-group-item list-group-item-action d-flex align-items-center gap-2 py-2" href="/workbench/view?id=<?= (int) $lt->id ?>">
+                        <?php if ($isAwaiting): ?>
+                            <span class="badge text-bg-warning" title="Waiting on you"><i class="bi bi-hourglass-split me-1"></i>awaiting</span>
+                        <?php else: ?>
+                            <span class="badge text-bg-primary"><span class="spinner-border spinner-border-sm me-1" style="width:.6rem;height:.6rem" role="status"></span><?= htmlspecialchars((string) $lt->status) ?></span>
+                        <?php endif; ?>
+                        <span class="text-truncate flex-grow-1"><span class="text-body-secondary">#<?= (int) $lt->id ?></span> <?= htmlspecialchars((string) $lt->title) ?></span>
+                        <?php if (!empty($lt->progressMessage)): ?><span class="small text-body-secondary text-truncate d-none d-md-inline" style="max-width:40%"><?= htmlspecialchars((string) $lt->progressMessage) ?></span><?php endif; ?>
+                    </a>
+                    <?php endforeach; ?>
+                </div>
+            </div>
+            <?php endif; ?>
 
             <?php
             /* Goal -> phases provenance + progress. Each phase is a plan parent (a task with
@@ -181,7 +209,7 @@
 
             <!-- Status filter — moved above the task list -->
             <ul class="nav nav-pills mb-3 gap-1 flex-wrap">
-                <?php foreach ($statusTabs as $sKey => $sInfo): [$sLabel, $sIcon, $sColor, $sCount] = $sInfo; $sActive = ((string)($filters['status'] ?? '')) === $sKey; ?>
+                <?php foreach ($statusTabs as $sKey => $sInfo): [$sLabel, $sIcon, $sColor, $sCount] = $sInfo; $sActive = ($statusTab ?? 'active') === $sKey; ?>
                 <li class="nav-item">
                     <a class="nav-link <?= $sActive ? 'active' : '' ?>" href="<?= htmlspecialchars($statusLink($sKey)) ?>">
                         <i class="bi bi-<?= $sIcon ?>"></i> <?= $sLabel ?>

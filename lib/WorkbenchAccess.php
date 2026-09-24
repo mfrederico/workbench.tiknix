@@ -30,9 +30,8 @@ class WorkbenchAccess {
      * badge. Kept here, beside the query that uses it, so the number and the list cannot
      * mean different things again. Anything absent filters on itself.
      */
-    public const STATUS_BUCKETS = [
-        'running' => ['running', 'queued'],
-    ];
+    /** Core's, not a copy: the board's tabs and core's filter are one idea of each word. */
+    public const STATUS_BUCKETS = \app\TaskAccessControl::STATUS_BUCKETS;
 
     private Access $core;
     private \PDO $pdo;
@@ -239,6 +238,13 @@ class WorkbenchAccess {
                the task — but the tab links to ?status=running and this matched that one
                literal string, so the tab read "Running 1" and opened an empty list. The
                count was right; the filter was a different idea of the same word. */
+            if ($fk === 'status' && $filters[$fk] === 'active') {
+                // The default view: everything not finished (TaskAccessControl::FINISHED).
+                $fin = \app\TaskAccessControl::FINISHED;
+                $conds[] = "$col NOT IN (" . implode(',', array_fill(0, count($fin), '?')) . ')';
+                foreach ($fin as $w) $params[] = $w;
+                continue;
+            }
             if ($fk === 'status') {
                 $wanted = self::STATUS_BUCKETS[$filters[$fk]] ?? [$filters[$fk]];
                 $conds[] = "$col IN (" . implode(',', array_fill(0, count($wanted), '?')) . ')';
@@ -326,15 +332,21 @@ class WorkbenchAccess {
 
     /** Status counts for the selected instance. */
     public function getTaskCounts(int $memberId): array {
-        $counts = ['pending'=>0,'queued'=>0,'running'=>0,'completed'=>0,'failed'=>0,'paused'=>0,'total'=>0];
+        $counts = ['pending'=>0,'queued'=>0,'running'=>0,'awaiting'=>0,'completed'=>0,'failed'=>0,'paused'=>0,'total'=>0];
         if (!$this->current) return $counts;
         try {
+            // Every status, not a fixed list: awaiting, merged and resolved went uncounted.
             foreach (Bean::getAll("SELECT status, COUNT(*) c FROM workbenchtask GROUP BY status") as $r) {
-                $s = (string) $r['status'];
-                if (isset($counts[$s])) $counts[$s] = (int) $r['c'];
+                $counts[(string) $r['status']] = (int) $r['c'];
                 $counts['total'] += (int) $r['c'];
             }
-        } catch (\Throwable $e) {}
+        } catch (\Throwable $e) {
+            error_log('ERROR WorkbenchAccess::getTaskCounts: ' . $e->getMessage());
+        }
+        // The board's buckets, from the same rows so a tab and its badge agree.
+        $counts['finished'] = 0;
+        foreach (\app\TaskAccessControl::FINISHED as $st) $counts['finished'] += (int) ($counts[$st] ?? 0);
+        $counts['active'] = $counts['total'] - $counts['finished'];
         return $counts;
     }
 
