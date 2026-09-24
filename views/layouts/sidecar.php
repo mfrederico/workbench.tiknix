@@ -36,6 +36,17 @@ $__facet = $__onBuilder ? 'builder' : (strpos($__p, '/workbench/prompts') === 0 
              project rather than work on one. */ ?>
     <li class="nav-item"><a class="nav-link py-1 px-2 <?= (($__facet ?? '') === 'prompts') ? 'active' : '' ?>" href="/workbench/prompts"><i class="bi bi-chat-left-quote me-1"></i>Prompts</a></li>
   </ul>
+  <?php /* Stuck on something that looks like the platform rather than your app? Tiknix
+           support, about THIS project: core's Support page with it filled in (Contact::index
+           takes ?project= only for a project the member can reach). _top: it is core's page,
+           not something to open inside this frame. $selected is an array on the board and a
+           bean on the Terminal. */
+  $__sel  = $selected ?? null;
+  $__slug = is_array($__sel) ? (string) ($__sel['slug'] ?? '') : (string) ($__sel->slug ?? '');
+  $__support = rtrim((string) Flight::get('sidecar.core_url'), '/') . '/contact' . ($__slug !== '' ? '?project=' . rawurlencode($__slug) : ''); ?>
+  <a class="ms-auto small text-decoration-none d-flex align-items-center gap-1" target="_top"
+     href="<?= htmlspecialchars($__support) ?>" title="Ask Tiknix support about this project">
+    <i class="bi bi-life-preserver"></i><span class="d-none d-sm-inline">Tiknix support</span></a>
 </nav>
 <?php
 /* THE BIG ONE. A session/usage limit blocks every decompose, build and terminal for this
