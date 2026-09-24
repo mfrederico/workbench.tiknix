@@ -3831,6 +3831,16 @@ class Workbench extends BuildControl {
 
     /** Absolute git repo dir for a task's instance, or null if not instance-tagged / missing. */
     private function instanceDirForTask($task): ?string {
+        // A task row lives in ONE project's workbench.db — the selected project's, which is
+        // the database this request opened (selectInstance). Filed without its project —
+        // create_task over MCP never set it, which is 111 of Serenity's rows — it belongs to
+        // that project all the same, and run() used to treat it as "not an instance task"
+        // and clone core's main repo instead. Stamp it, once.
+        if (empty($task->instanceId) && !empty($this->selected['id'])) {
+            $task->instanceId  = (int) $this->selected['id'];
+            $task->instanceTag = $this->selected['slug'] . '.' . ($this->selected['app'] ?: 'tiknix');
+            Bean::store($task);
+        }
         if (empty($task->instanceId)) return null;
         $inst = $this->access->instanceMeta((int)$task->instanceId);
         if (!$inst->id) return null;
