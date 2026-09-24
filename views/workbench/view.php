@@ -1919,8 +1919,11 @@ async function declineTask(id) {
                 </div>
 
                 <div class="form-check mb-2">
+                    <?php /* Ticked for a worktree: once merged its work is in the project and its
+                             branch is deleted only if merged (git branch -d), so nothing is lost —
+                             and left unticked, 37 merged tasks' copies sat on disk. */ ?>
                     <input class="form-check-input" type="checkbox" id="approveDeleteWorkspace"
-                           <?= empty($task->projectPath) ? 'disabled' : '' ?>>
+                           <?= empty($task->projectPath) ? 'disabled' : (\app\GitService::isTaskWorktree($task->projectPath) ? 'checked' : '') ?>>
                     <label class="form-check-label" for="approveDeleteWorkspace">
                         <i class="bi bi-folder-x me-1 text-danger"></i>
                         Delete workspace files
