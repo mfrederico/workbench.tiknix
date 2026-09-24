@@ -2536,6 +2536,7 @@ class Workbench extends BuildControl {
             // Mark as completed (or merged when a local merge actually landed) and
             // clear session fields.
             $task->status = $merged ? 'merged' : 'completed';
+            $task->progressMessage = $merged ? 'Merged' : 'Completed';
             if ($merged) $task->mergedAt = date('Y-m-d H:i:s');
             $task->completedAt = date('Y-m-d H:i:s');
             $task->tmuxSession = null;
@@ -2746,6 +2747,7 @@ class Workbench extends BuildControl {
             // Mark task as merged or completed — only 'merged' when a real merge
             // (GitHub PR or local) actually landed, never silently on failure.
             $task->status = $merged ? 'merged' : 'completed';
+            $task->progressMessage = $merged ? 'Merged' : 'Completed';
             $task->completedAt = date('Y-m-d H:i:s');
             $task->reviewedBy = $this->member->id;
             $task->reviewedAt = date('Y-m-d H:i:s');
