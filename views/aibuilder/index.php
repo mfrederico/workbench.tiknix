@@ -53,11 +53,12 @@ foreach ($instances as $__i) { if (!empty($__i->isDefault)) { $hasDefault = true
 </style>
 
 <div class="container-fluid py-4 ab-page">
-  <div class="d-flex flex-wrap align-items-center justify-content-between gap-3 mb-2 mb-sm-3">
+  <?php /* Not on a phone: the heading and tagline repeat what the Build bar and the
+           terminal's own header already say, and the terminal needs the room. */ ?>
+  <div class="d-none d-sm-flex flex-wrap align-items-center justify-content-between gap-3 mb-3">
     <div>
-      <h1 class="h3 fw-bold mb-0"><i class="bi bi-robot me-2"></i>Terminal</h1>
-      <?php /* Not on a phone: there the terminal needs the room more than the tagline. */ ?>
-      <p class="text-body-secondary mb-0 d-none d-sm-block">Build software with AI. Every instance is sandboxed — checkpoint and roll back any change.</p>
+      <h1 class="h3 fw-bold mb-0"><i class="bi bi-terminal me-2"></i>Terminal</h1>
+      <p class="text-body-secondary mb-0">Build software with AI. Every instance is sandboxed — checkpoint and roll back any change.</p>
     </div>
     <?php
     /* Nothing about the PROJECT belongs here. Which one you are in, where it goes live
