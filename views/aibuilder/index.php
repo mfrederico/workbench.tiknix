@@ -20,6 +20,13 @@ foreach ($instances as $__i) { if (!empty($__i->isDefault)) { $hasDefault = true
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.min.css">
 <style>
   #ab-terminal { height: 70vh; width: 100%; background:#1e1e1e; border-radius:.375rem; padding:8px; }
+  /* Phone: the terminal is the page — no frame of padding around it, and its own inset
+     trimmed, so every column goes to the session. */
+  @media (max-width: 575.98px) {
+    .ab-page { padding: .5rem .25rem !important; }
+    .ab-term-body { padding: 0 !important; }
+    #ab-terminal { padding: 2px; border-radius: 0; height: 75vh; }
+  }
   /* Active instance in the left nav */
   .list-group-item.active .ab-caret { display:inline; }
   .ab-caret { display:none; }
@@ -45,11 +52,12 @@ foreach ($instances as $__i) { if (!empty($__i->isDefault)) { $hasDefault = true
   .ab-oauth-msg { font-size:.82rem; min-height:1.2em; margin-top:.4rem; }
 </style>
 
-<div class="container-fluid py-4">
-  <div class="d-flex flex-wrap align-items-center justify-content-between gap-3 mb-3">
+<div class="container-fluid py-4 ab-page">
+  <div class="d-flex flex-wrap align-items-center justify-content-between gap-3 mb-2 mb-sm-3">
     <div>
       <h1 class="h3 fw-bold mb-0"><i class="bi bi-robot me-2"></i>Terminal</h1>
-      <p class="text-body-secondary mb-0">Build software with AI. Every instance is sandboxed — checkpoint and roll back any change.</p>
+      <?php /* Not on a phone: there the terminal needs the room more than the tagline. */ ?>
+      <p class="text-body-secondary mb-0 d-none d-sm-block">Build software with AI. Every instance is sandboxed — checkpoint and roll back any change.</p>
     </div>
     <?php
     /* Nothing about the PROJECT belongs here. Which one you are in, where it goes live
@@ -128,7 +136,7 @@ foreach ($instances as $__i) { if (!empty($__i->isDefault)) { $hasDefault = true
               <button id="ab-delete" class="btn btn-outline-danger btn-sm" type="button" title="Delete this instance (danger zone)"><i class="bi bi-trash me-sm-1"></i><span class="d-none d-sm-inline">Delete</span><span class="visually-hidden d-sm-none">Delete</span></button>
             </span>
           </div>
-          <div class="card-body p-2 bg-body-tertiary position-relative">
+          <div class="card-body p-2 bg-body-tertiary position-relative ab-term-body">
             <?php if (!empty($ab_keyNote)): ?>
             <!-- Informational only: a key engine runs on the server's key; a member's own key is a model connection. The terminal still opens. -->
             <div class="alert alert-info mb-2 small">
@@ -407,6 +415,8 @@ if (AB.has && !AB.keyNeeded) {
     try { term.loadAddon(new WebLinksAddon.WebLinksAddon((e,uri)=>window.open(uri,'_blank','noopener'))); } catch(e){}
     const el=document.getElementById('ab-terminal');
     term.open(el); fit.fit();
+    // Ready to type the moment it exists — no click into the terminal first.
+    term.focus();
 
     // Copy-on-select: releasing the mouse over a selection copies it to the clipboard.
     el.addEventListener('mouseup', ()=>{
@@ -492,6 +502,9 @@ if (AB.has && !AB.keyNeeded) {
           if(retry) term.write('\r\n\x1b[32m[reconnected]\x1b[0m\r\n');
           retry=0;
           setStatus('terminal connected');
+          // After a (re)connect, take focus back only if nothing else holds it — never pull
+          // the cursor out of a field the member is typing in (the plan panel, the picker).
+          if(!document.activeElement || document.activeElement===document.body) term.focus();
           termWs.send(JSON.stringify({type:'resize',cols:term.cols,rows:term.rows}));
         };
         termWs.onmessage=e=>term.write(typeof e.data==='string'?e.data:new Uint8Array(e.data));
