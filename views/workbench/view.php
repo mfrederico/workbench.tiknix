@@ -990,7 +990,7 @@ $baseDomain = $baseUrl === '' ? '' : preg_replace('#^https?://#', '', rtrim($bas
                         <h6 class="mb-0">Danger Zone</h6>
                     </div>
                     <div class="card-body">
-                        <form method="POST" action="/workbench/delete" onsubmit="return confirm('Delete this task? This cannot be undone.');">
+                        <form method="POST" action="/workbench/delete" data-confirm="Delete this task? This cannot be undone." data-confirm-ok="Delete" data-confirm-danger>
                             <?php foreach ($csrf as $name => $value): ?>
                                 <input type="hidden" name="<?= $name ?>" value="<?= $value ?>">
                             <?php endforeach; ?>
@@ -1022,8 +1022,8 @@ async function taskRetry(id, btn) {
         const r = await fetch('/workbench/taskretry', { method: 'POST', body: fd });
         const j = await r.json();
         if (j.success) { location.reload(); return; }
-        alert(j.message || 'Retry failed');
-    } catch (e) { alert('Retry failed: ' + e); }
+        tkAlert(j.message || 'Retry failed', {type: 'error'});
+    } catch (e) { tkAlert('Retry failed: ' + e, {type: 'error'}); }
     if (btn) { btn.disabled = false; btn.innerHTML = '<i class="bi bi-arrow-clockwise me-1"></i> Fix &amp; retry'; }
 }
 
@@ -1052,14 +1052,14 @@ async function runTask(id, btnEl) {
         if (data.success) {
             location.reload();
         } else {
-            alert('Error: ' + data.message);
+            tkAlert('Error: ' + data.message, {type: 'error'});
             if (btn) {
                 btn.disabled = false;
                 btn.innerHTML = '<i class="bi bi-play-fill"></i> Run with Claude';
             }
         }
     } catch (e) {
-        alert('Error: ' + e.message);
+        tkAlert('Error: ' + e.message, {type: 'error'});
         if (btn) {
             btn.disabled = false;
             btn.innerHTML = '<i class="bi bi-play-fill"></i> Run with Claude';
@@ -1068,9 +1068,9 @@ async function runTask(id, btnEl) {
 }
 
 async function forceResetTask(id) {
-    if (!confirm('Force reset this task? This will kill any running session and reset to pending.')) return;
+    const btn = event.target;   // window.event is gone after the await below
+    if (!await tkConfirm('Force reset this task? This will kill any running session and reset to pending.', {okText: 'Force reset', danger: true})) return;
 
-    const btn = event.target;
     btn.disabled = true;
     btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Resetting...';
 
@@ -1089,20 +1089,20 @@ async function forceResetTask(id) {
         if (data.success) {
             location.reload();
         } else {
-            alert('Error: ' + data.message);
+            tkAlert('Error: ' + data.message, {type: 'error'});
             btn.disabled = false;
             btn.innerHTML = '<i class="bi bi-arrow-counterclockwise"></i> Force Reset';
         }
     } catch (e) {
-        alert('Error: ' + e.message);
+        tkAlert('Error: ' + e.message, {type: 'error'});
         btn.disabled = false;
         btn.innerHTML = '<i class="bi bi-arrow-counterclockwise"></i> Force Reset';
     }
 }
 
 async function resolveConflict(id) {
-    if (!confirm("Update this task's branch from the current base and have the agent resolve any merge conflicts? This keeps the task's work.")) return;
-    const btn = event.target.closest('button');
+    const btn = event.target.closest('button');   // window.event is gone after the await below
+    if (!await tkConfirm("Update this task's branch from the current base and have the agent resolve any merge conflicts? This keeps the task's work.", {okText: 'Resolve'})) return;
     const orig = btn.innerHTML;
     btn.disabled = true;
     btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Resolving...';
@@ -1113,22 +1113,21 @@ async function resolveConflict(id) {
         const response = await fetch('/workbench/resolveconflict', { method: 'POST', body: formData });
         const data = await response.json();
         if (data.success) {
-            alert(data.message || (data.clean ? 'No conflict — ready to Approve & Merge.' : 'Agent is resolving the conflict.'));
             location.reload();
             return;
         }
-        alert('Error: ' + (data.message || data.error || 'Could not resolve'));
+        tkAlert('Error: ' + (data.message || data.error || 'Could not resolve'), {type: 'error'});
     } catch (e) {
-        alert('Error: ' + e.message);
+        tkAlert('Error: ' + e.message, {type: 'error'});
     }
     btn.disabled = false;
     btn.innerHTML = orig;
 }
 
 async function rerunTask(id) {
-    if (!confirm('Re-run this task with Claude?')) return;
+    const btn = event.target;   // window.event is gone after the await below
+    if (!await tkConfirm('Re-run this task with Claude?', {okText: 'Re-run'})) return;
 
-    const btn = event.target;
     btn.disabled = true;
     btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Starting...';
 
@@ -1147,12 +1146,12 @@ async function rerunTask(id) {
         if (data.success) {
             location.reload();
         } else {
-            alert('Error: ' + data.message);
+            tkAlert('Error: ' + data.message, {type: 'error'});
             btn.disabled = false;
             btn.innerHTML = '<i class="bi bi-arrow-repeat"></i> Re-run';
         }
     } catch (e) {
-        alert('Error: ' + e.message);
+        tkAlert('Error: ' + e.message, {type: 'error'});
         btn.disabled = false;
         btn.innerHTML = '<i class="bi bi-arrow-repeat"></i> Re-run';
     }
@@ -1165,7 +1164,7 @@ async function pauseTask(id) {
     const response = await fetch('/workbench/pause', { method: 'POST', body: formData });
     const data = await response.json();
     if (data.success) location.reload();
-    else alert('Error: ' + data.message);
+    else tkAlert('Error: ' + data.message, {type: 'error'});
 }
 
 async function resumeTask(id) {
@@ -1175,18 +1174,18 @@ async function resumeTask(id) {
     const response = await fetch('/workbench/resume', { method: 'POST', body: formData });
     const data = await response.json();
     if (data.success) location.reload();
-    else alert('Error: ' + data.message);
+    else tkAlert('Error: ' + data.message, {type: 'error'});
 }
 
 async function stopTask(id) {
-    if (!confirm('Stop the agent? Progress may be lost.')) return;
+    if (!await tkConfirm('Stop the agent? Progress may be lost.', {okText: 'Stop', danger: true})) return;
     const formData = new FormData();
     formData.append('id', id);
     formData.append('_csrf_token', csrfToken);
     const response = await fetch('/workbench/stop', { method: 'POST', body: formData });
     const data = await response.json();
     if (data.success) location.reload();
-    else alert('Error: ' + data.message);
+    else tkAlert('Error: ' + data.message, {type: 'error'});
 }
 
 // Progress polling
@@ -1330,9 +1329,9 @@ if (taskStatus === 'running' || taskStatus === 'queued' || taskStatus === 'await
 
 // Mark task as complete
 async function markComplete(id) {
-    if (!confirm('Mark this task as complete?')) return;
+    const btn = event.target;   // window.event is gone after the await below
+    if (!await tkConfirm('Mark this task as complete?', {okText: 'Mark complete'})) return;
 
-    const btn = event.target;
     btn.disabled = true;
     btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Completing...';
 
@@ -1351,12 +1350,12 @@ async function markComplete(id) {
         if (data.success) {
             location.reload();
         } else {
-            alert('Error: ' + data.message);
+            tkAlert('Error: ' + data.message, {type: 'error'});
             btn.disabled = false;
             btn.innerHTML = '<i class="bi bi-check-circle"></i> Mark Complete';
         }
     } catch (e) {
-        alert('Error: ' + e.message);
+        tkAlert('Error: ' + e.message, {type: 'error'});
         btn.disabled = false;
         btn.innerHTML = '<i class="bi bi-check-circle"></i> Mark Complete';
     }
@@ -1365,9 +1364,9 @@ async function markComplete(id) {
 // Mark complete AND merge the task branch back into its base (instance/<slug> for
 // instance tasks) — the same gh-free local merge as Approve & Merge.
 async function markCompleteMerge(id) {
-    if (!confirm('Merge this task\'s changes into the instance and mark it complete?')) return;
+    const btn = event.target.closest('button');   // window.event is gone after the await below
+    if (!await tkConfirm('Merge this task\'s changes into the instance and mark it complete?', {okText: 'Merge'})) return;
 
-    const btn = event.target.closest('button');
     const orig = btn.innerHTML;
     btn.disabled = true;
     btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Merging...';
@@ -1383,16 +1382,16 @@ async function markCompleteMerge(id) {
 
         if (data.success) {
             if (data.merged === false && data.merge_reason) {
-                alert('Marked complete, but NOT merged:\n\n' + data.merge_reason);
+                await tkAlert('Marked complete, but NOT merged:\n\n' + data.merge_reason, {type: 'warning', title: 'Not merged'});
             }
             location.reload();
         } else {
-            alert('Error: ' + data.message);
+            tkAlert('Error: ' + data.message, {type: 'error'});
             btn.disabled = false;
             btn.innerHTML = orig;
         }
     } catch (e) {
-        alert('Error: ' + e.message);
+        tkAlert('Error: ' + e.message, {type: 'error'});
         btn.disabled = false;
         btn.innerHTML = orig;
     }
@@ -1427,14 +1426,14 @@ document.getElementById('imageUpload').addEventListener('change', function(e) {
     // Validate file type
     const validTypes = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
     if (!validTypes.includes(file.type)) {
-        alert('Invalid image type. Please use PNG, JPEG, GIF, or WEBP.');
+        tkAlert('Invalid image type. Please use PNG, JPEG, GIF, or WEBP.', {type: 'warning'});
         e.target.value = '';
         return;
     }
 
     // Validate file size (max 10MB)
     if (file.size > 10 * 1024 * 1024) {
-        alert('Image too large. Max size: 10MB');
+        tkAlert('Image too large. Max size: 10MB', {type: 'warning'});
         e.target.value = '';
         return;
     }
@@ -1526,10 +1525,10 @@ document.getElementById('commentForm').addEventListener('submit', async function
             document.getElementById('commentContent').value = '';
             clearImagePreview();
         } else {
-            alert('Error: ' + data.message);
+            tkAlert('Error: ' + data.message, {type: 'error'});
         }
     } catch (e) {
-        alert('Error posting comment');
+        tkAlert('Error posting comment', {type: 'error'});
     }
 });
 
@@ -1590,10 +1589,10 @@ async function sendInlineComment() {
                 setTimeout(() => location.reload(), 1500);
             }
         } else {
-            alert('Error: ' + data.message);
+            tkAlert('Error: ' + data.message, {type: 'error'});
         }
     } catch (e) {
-        alert('Error sending instructions');
+        tkAlert('Error sending instructions', {type: 'error'});
     } finally {
         btn.disabled = false;
         btn.innerHTML = originalHtml;
@@ -1602,7 +1601,7 @@ async function sendInlineComment() {
 
 // Delete comment
 async function deleteComment(commentId) {
-    if (!confirm('Delete this message?')) return;
+    if (!await tkConfirm('Delete this message?', {okText: 'Delete', danger: true})) return;
 
     try {
         const formData = new FormData();
@@ -1623,10 +1622,10 @@ async function deleteComment(commentId) {
                 commentEl.remove();
             }
         } else {
-            alert('Error: ' + data.message);
+            tkAlert('Error: ' + data.message, {type: 'error'});
         }
     } catch (e) {
-        alert('Error deleting comment');
+        tkAlert('Error deleting comment', {type: 'error'});
     }
 }
 
@@ -1651,12 +1650,12 @@ async function startTestServer(id) {
         if (data.success) {
             location.reload();
         } else {
-            alert('Error: ' + data.message);
+            tkAlert('Error: ' + data.message, {type: 'error'});
             btn.disabled = false;
             btn.innerHTML = originalHtml;
         }
     } catch (e) {
-        alert('Error: ' + e.message);
+        tkAlert('Error: ' + e.message, {type: 'error'});
         btn.disabled = false;
         btn.innerHTML = originalHtml;
     }
@@ -1683,12 +1682,12 @@ async function stopTestServer(id) {
         if (data.success) {
             location.reload();
         } else {
-            alert('Error: ' + data.message);
+            tkAlert('Error: ' + data.message, {type: 'error'});
             btn.disabled = false;
             btn.innerHTML = originalHtml;
         }
     } catch (e) {
-        alert('Error: ' + e.message);
+        tkAlert('Error: ' + e.message, {type: 'error'});
         btn.disabled = false;
         btn.innerHTML = originalHtml;
     }
@@ -1731,25 +1730,24 @@ async function approveTask(id) {
         if (data.success) {
             bootstrap.Modal.getInstance(document.getElementById('approveModal')).hide();
 
-            let message = 'Task approved!';
-            if (data.pr_created) message += ' PR created.';
-            if (data.merged) {
-                message += data.pr_merged ? ' PR merged.' : ' Merged.';
-            } else if (data.merge_requested && data.merge_reason) {
-                message += '\n\n⚠ Not merged — ' + data.merge_reason + '\nStatus left as "completed".';
+            // Approving is its own feedback (the page reloads into the new state); only a
+            // merge that did not happen is worth stopping the user for.
+            const problems = [];
+            if (!data.merged && data.merge_requested && data.merge_reason) {
+                problems.push('Not merged — ' + data.merge_reason + '\nStatus left as "completed".');
             }
-            if (data.merge_error) message += ' (PR merge failed: ' + data.merge_error + ')';
-            if (data.workspace_deleted) message += ' Workspace deleted.';
-
-            alert(message);
+            if (data.merge_error) problems.push('PR merge failed: ' + data.merge_error);
+            if (problems.length) {
+                await tkAlert('Task approved, but:\n\n' + problems.join('\n\n'), {type: 'warning', title: 'Approved — not merged'});
+            }
             location.reload();
         } else {
-            alert('Error: ' + data.message);
+            tkAlert('Error: ' + data.message, {type: 'error'});
             btn.disabled = false;
             btn.innerHTML = originalHtml;
         }
     } catch (e) {
-        alert('Error: ' + e.message);
+        tkAlert('Error: ' + e.message, {type: 'error'});
         btn.disabled = false;
         btn.innerHTML = originalHtml;
     }
@@ -1778,15 +1776,14 @@ async function declineTask(id) {
 
         if (data.success) {
             bootstrap.Modal.getInstance(document.getElementById('declineModal')).hide();
-            alert('Task declined and sent back for revision.');
             location.reload();
         } else {
-            alert('Error: ' + data.message);
+            tkAlert('Error: ' + data.message, {type: 'error'});
             btn.disabled = false;
             btn.innerHTML = originalHtml;
         }
     } catch (e) {
-        alert('Error: ' + e.message);
+        tkAlert('Error: ' + e.message, {type: 'error'});
         btn.disabled = false;
         btn.innerHTML = originalHtml;
     }
@@ -1811,7 +1808,7 @@ async function declineTask(id) {
     const canRun = <?= $canRun ? 'true' : 'false' ?>;
     // Same set the button above uses — see the $runnable comment there.
     if (!canRun || !['pending', 'failed', 'conflict'].includes(status)) {
-        alert('Auto-run was requested, but this task is "' + status + '" and cannot be started.');
+        tkAlert('Auto-run was requested, but this task is "' + status + '" and cannot be started.', {type: 'error'});
         return;
     }
     runTask(<?= (int)$task->id ?>, document.querySelector('button[onclick^="runTask("]'));

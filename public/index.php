@@ -19,6 +19,8 @@ $kernel = new app\Sidecar\Kernel(dirname(__DIR__), [
 // Firehose). Those are not routes of this sidecar, so a leading-slash href resolves
 // against this host and 404s — which is exactly how they were broken. Views must build
 // core links from this value.
+// Core's install path, for shared front-end assets views inline (js/dialogs.js).
+Flight::set('sidecar.core_root', $coreRoot);
 Flight::set('sidecar.core_url', rtrim((string) ($cfg['sidecar']['core_url'] ?? ''), '/'));
 
 $kernel->run();

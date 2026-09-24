@@ -301,8 +301,8 @@
                     setTimeout(poll, 3000);
 
                     var stopBtn = document.getElementById('wbDecomposeStop');
-                    if (stopBtn) stopBtn.addEventListener('click', function () {
-                        if (!window.confirm('Stop decomposing? The planner run so far is discarded.')) return;
+                    if (stopBtn) stopBtn.addEventListener('click', async function () {
+                        if (!await tkConfirm('Stop decomposing? The planner run so far is discarded.', {okText: 'Stop', danger: true})) return;
                         stopBtn.disabled = true;
                         stopBtn.textContent = 'Stopping…';
                         fetch('/workbench/decomposestop', {
@@ -613,10 +613,10 @@
                         bindPlanActions();
                     }
                     // POST a plan lifecycle action, then refresh so the new state shows.
-                    function planAction(url, btn, confirmMsg){
+                    async function planAction(url, btn, confirmMsg){
                         var id = btn.getAttribute('data-plan-id');
                         if (!id) return;
-                        if (confirmMsg && !window.confirm(confirmMsg)) return;
+                        if (confirmMsg && !await tkConfirm(confirmMsg, {okText: 'Delete', danger: true})) return;
                         btn.disabled = true;
                         fetch(url, {
                             method: 'POST',
@@ -628,10 +628,10 @@
                             body: 'plan_id=' + encodeURIComponent(id) + '&_csrf_token=' + encodeURIComponent(window.WB_CSRF || '')
                         }).then(function(r){ return r.json(); })
                           .then(function(j){
-                              if (j && j.success === false) { window.alert(j.message || 'Action failed'); btn.disabled = false; return; }
+                              if (j && j.success === false) { tkAlert(j.message || 'Action failed', {type: 'error'}); btn.disabled = false; return; }
                               window.location.reload();
                           })
-                          .catch(function(){ window.alert('Network error'); btn.disabled = false; });
+                          .catch(function(){ tkAlert('Network error', {type: 'error'}); btn.disabled = false; });
                     }
                     // Delegated so the buttons survive DataTables redraws (sort/search/paginate).
                     function bindPlanActions(){
@@ -659,13 +659,13 @@
                        it, because this removes the task's workspace clone (~144MB), its logs and
                        comments, and — for a plan — every subtask under it. Reports refusals
                        individually rather than folding them into a success count. */
-                    function doBulkDelete(){
+                    async function doBulkDelete(){
                         var ids = Array.from(selected);
                         if (!ids.length) return;
-                        if (!window.confirm(
+                        if (!await tkConfirm(
                             'Delete ' + ids.length + ' task(s)?\n\n' +
                             'This also removes their workspaces, logs and comments. A plan takes its ' +
-                            'subtasks with it. This cannot be undone.')) return;
+                            'subtasks with it. This cannot be undone.', {okText: 'Delete', danger: true})) return;
                         var db = document.getElementById('wbDeleteBtn');
                         var html = db.innerHTML;
                         db.disabled = true; db.innerHTML = 'Deleting…';
@@ -682,13 +682,13 @@
                                 'Content-Type': 'application/x-www-form-urlencoded'
                             },
                             body: body.toString()
-                        }).then(function(r){ return r.json(); }).then(function(j){
-                            if (!j.success) { window.alert(j.message || 'Delete failed'); db.disabled = false; db.innerHTML = html; return; }
+                        }).then(function(r){ return r.json(); }).then(async function(j){
+                            if (!j.success) { tkAlert(j.message || 'Delete failed', {type: 'error'}); db.disabled = false; db.innerHTML = html; return; }
                             if (j.data && j.data.refused && j.data.refused.length) {
-                                window.alert('Deleted ' + j.data.deleted.length + '. Refused (no permission or in use): #' + j.data.refused.join(', #'));
+                                await tkAlert('Deleted ' + j.data.deleted.length + '. Refused (no permission or in use): #' + j.data.refused.join(', #'), {type: 'warning', title: 'Some tasks were not deleted'});
                             }
                             window.location.reload();
-                        }).catch(function(){ window.alert('Network error'); db.disabled = false; db.innerHTML = html; });
+                        }).catch(function(){ tkAlert('Network error', {type: 'error'}); db.disabled = false; db.innerHTML = html; });
                     }
 
                     function refresh(){
@@ -730,9 +730,9 @@
                     if (tbl && window.MutationObserver) {
                         new MutationObserver(function(){ applyChecks(); }).observe(tbl, { childList: true, subtree: true });
                     }
-                    function doConsolidate(){
+                    async function doConsolidate(){
                         if (selected.size < 2) return;
-                        if (!window.confirm('Consolidate ' + selected.size + ' tasks into one deduplicated plan? The originals are replaced once the merged plan is ready.')) return;
+                        if (!await tkConfirm('Consolidate ' + selected.size + ' tasks into one deduplicated plan? The originals are replaced once the merged plan is ready.', {okText: 'Consolidate'})) return;
                         btn.disabled = true;
                         btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Consolidating…';
                         fetch('/workbench/consolidate', {
@@ -749,10 +749,10 @@
                                 // tell it which instance it is already on.
                                 window.location = '/workbench?decomposing=1';
                             } else {
-                                window.alert((j && j.message) || 'Consolidation failed');
+                                tkAlert((j && j.message) || 'Consolidation failed', {type: 'error'});
                                 btn.disabled = false; btn.innerHTML = BTN_HTML;
                             }
-                        }).catch(function(){ window.alert('Network error'); btn.disabled = false; btn.innerHTML = BTN_HTML; });
+                        }).catch(function(){ tkAlert('Network error', {type: 'error'}); btn.disabled = false; btn.innerHTML = BTN_HTML; });
                     }
                     document.addEventListener('DOMContentLoaded', function(){
                         bar = document.getElementById('wbConsolBar');

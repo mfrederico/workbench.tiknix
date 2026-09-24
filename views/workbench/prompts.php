@@ -243,7 +243,7 @@ async function wbUnqueue(promptId, btn) {
     } catch (e) {
         btn.disabled = false;
         btn.innerHTML = was;
-        alert(e.message);
+        tkAlert(e.message, {type: 'error'});
     }
 }
 
@@ -276,9 +276,9 @@ async function wbUnqueue(promptId, btn) {
                 }
                 // Refusals here are actionable ("a planner is already running") — show the
                 // server's own words rather than a generic failure.
-                alert(j.message || 'Could not start the decompose.');
+                tkAlert(j.message || 'Could not start the decompose.', {type: 'error'});
             } catch (e) {
-                alert('Could not start the decompose: ' + e);
+                tkAlert('Could not start the decompose: ' + e, {type: 'error'});
             }
             b.disabled = false;
             b.innerHTML = was;

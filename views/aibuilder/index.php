@@ -582,8 +582,8 @@ if (AB.has && !AB.keyNeeded) {
     if(fs) fs.value=''; if(fn) fn.value=''; if(fm) fm.textContent='';
     bootstrap.Modal.getOrCreateInstance(document.getElementById('ab-ckpt-modal')).show();
   }
-  function doRollback(ckpt){
-    if(!confirm('Roll back to '+ckpt+'? This restores code AND data to that checkpoint.')) return;
+  async function doRollback(ckpt){
+    if(!await tkConfirm('Roll back to '+ckpt+'? This restores code AND data to that checkpoint.', {okText: 'Roll back', danger: true})) return;
     post('/aibuilder/rollback/'+encodeURIComponent(ckpt),{}).then(j=>{ loadCheckpoints(); refreshChanges(); });
   }
   document.getElementById('ab-ck-rollback')?.addEventListener('click',function(){
@@ -625,7 +625,7 @@ if (AB.has && !AB.keyNeeded) {
       const sec=(u.secure||[]).map(f=>row(f,'secure')).join(''), pub=(u.public||[]).map(f=>row(f,'public')).join('');
       box.innerHTML=(sec||pub)?((sec?'<div class="text-body-secondary mt-1 mb-1">Secure</div>'+sec:'')+(pub?'<div class="text-body-secondary mt-2 mb-1">Public</div>'+pub:'')):'<div class="text-body-secondary">No uploads yet.</div>';
       box.querySelectorAll('.ab-cp').forEach(b=>b.addEventListener('click',()=>{ if(navigator.clipboard) navigator.clipboard.writeText(b.dataset.ref); b.innerHTML='<i class="bi bi-check2"></i>'; setTimeout(()=>b.innerHTML='<i class="bi bi-clipboard"></i>',1200); }));
-      box.querySelectorAll('.ab-del').forEach(b=>b.addEventListener('click',()=>{ if(!confirm('Delete '+b.dataset.name+'?')) return; post('/aibuilder/deleteupload',{bucket:b.dataset.bucket,name:b.dataset.name}).then(()=>{ loadUploads(); refreshChanges(); }); }));
+      box.querySelectorAll('.ab-del').forEach(b=>b.addEventListener('click',async ()=>{ if(!await tkConfirm('Delete '+b.dataset.name+'?', {okText: 'Delete', danger: true})) return; post('/aibuilder/deleteupload',{bucket:b.dataset.bucket,name:b.dataset.name}).then(()=>{ loadUploads(); refreshChanges(); }); }));
     }).catch(()=>{});
   }
   document.getElementById('ab-upload-form').addEventListener('submit',function(e){
@@ -666,8 +666,8 @@ if (AB.has && !AB.keyNeeded) {
      daemon spawns, so --continue can only take effect on a NEW session; asking for it
      while one is attached would change nothing and look broken. */
   const resumeBtn=document.getElementById('ab-resume');
-  if(resumeBtn) resumeBtn.addEventListener('click',function(){
-    if(!confirm('Reload the agent\'s last conversation?\n\nThis restarts the terminal session. Anything on screen now is already saved to the transcript.')) return;
+  if(resumeBtn) resumeBtn.addEventListener('click',async function(){
+    if(!await tkConfirm('Reload the agent\'s last conversation?\n\nThis restarts the terminal session. Anything on screen now is already saved to the transcript.', {okText: 'Reload'})) return;
     resumeBtn.disabled=true;
     const u=new URL(location.href);
     u.searchParams.set('resume','1');
@@ -677,11 +677,11 @@ if (AB.has && !AB.keyNeeded) {
   });
 
   const restartBtn=document.getElementById('ab-restart');
-  if(restartBtn) restartBtn.addEventListener('click',function(){
-    if(!confirm('Restart this instance’s session? Anything running will stop and a fresh sandbox starts.')) return;
+  if(restartBtn) restartBtn.addEventListener('click',async function(){
+    if(!await tkConfirm('Restart this instance’s session? Anything running will stop and a fresh sandbox starts.', {okText: 'Restart', danger: true})) return;
     this.disabled=true; setStatus('restarting…');
     post('/aibuilder/restart',{}).then(()=>{ setTimeout(()=>location.reload(), 700); })
-      .catch(()=>{ this.disabled=false; setStatus('restart failed'); alert('Restart failed.'); });
+      .catch(()=>{ this.disabled=false; setStatus('restart failed'); tkAlert('Restart failed.', {type: 'error'}); });
   });
 
   // --- Browser-test prompt (agent uses the playwright MCP to verify its layout) ---
