@@ -108,6 +108,18 @@ class Workbench extends BuildControl {
         return 'https://' . self::previewLabel((string) $task->proxyHash, (string) $task->instanceTag) . '.' . $domain;
     }
 
+    /**
+     * The control plane's host (tiknix.com), for a workspace's [app] control_plane_host —
+     * without it the project's code in a task workspace believes it IS the control plane.
+     */
+    private function controlPlaneHost(): string {
+        $host = (string) parse_url((string) Flight::get('sidecar.core_url'), PHP_URL_HOST);
+        if ($host === '') {
+            throw new \RuntimeException('Workspaces cannot be told the control plane: set [sidecar] core_url in conf/config.ini.');
+        }
+        return $host;
+    }
+
     protected function serverBaseurl(): string {
         // NO localhost fallback. It used to end `?: 'https://localhost'`, and that
         // single default is the whole bug: a preview genuinely live at
@@ -1956,7 +1968,7 @@ class Workbench extends BuildControl {
                 }
                 // The PROJECT's vendor for its worktree (its own dependencies); core's otherwise.
                 $wsManager = new WorkspaceManager(null, $instDir);
-                $wsInfo = $wsManager->initialize($workspacePath, $this->testServerUrl($task), false, $liveDbPath);
+                $wsInfo = $wsManager->initialize($workspacePath, $this->testServerUrl($task), $this->controlPlaneHost(), false, $liveDbPath);
                 $this->logTaskEvent($taskId, 'info', 'system', "Initialized workspace: {$wsInfo['baseurl']}"
                     . ($liveDbPath ? ' (seeded from the instance\'s live data)' : ' (fresh database)'));
             } catch (Exception $e) {
@@ -3100,7 +3112,7 @@ class Workbench extends BuildControl {
 
             // The workspace's own baseurl is the address it is served at here.
             $wsManager = new WorkspaceManager(null, $this->instanceDirForTask($task));
-            $wsManager->initialize($task->projectPath, "https://{$host}.com");
+            $wsManager->initialize($task->projectPath, "https://{$host}.com", $this->controlPlaneHost());
             $initMessages[] = "Fresh database created with admin/admin1234";
             $link = '/var/www/html/default/' . $host;
             $target = rtrim($task->projectPath, '/');
