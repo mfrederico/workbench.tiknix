@@ -4168,8 +4168,17 @@ class Workbench extends BuildControl {
                                   . ($files !== '' ? ' — conflicting files: ' . $files : '')];
             }
             $restoreDb();
+            // The merge landed code only; its seeds (permissions, tables) reach the live
+            // instance through the same post-merge step a finished plan runs. Every line
+            // goes on the task log, and a FAILED line goes into the reason the person sees.
+            $seedLog = \app\PlanExecutor::applySeeds($instDir, $instDir . '/.aibuilder/task-' . (int)$task->id . '-seeds.txt');
+            $seedFailed = array_values(array_filter($seedLog, fn($l) => str_contains($l, 'FAILED')));
+            foreach ($seedLog as $line) {
+                $this->logTaskEvent((int)$task->id, str_contains($line, 'FAILED') ? 'error' : 'info', 'system', 'Seeds after merge: ' . $line);
+            }
             return ['merged' => true, 'pushed' => true,
                     'reason' => 'merged into ' . $base . ' on ' . ($task->instanceTag ?: 'the instance')
+                              . ($seedFailed ? ' — BUT seeds failed on the live instance: ' . implode('; ', $seedFailed) : '')
                               . ($absorbed['files']
                                  ? ' (committed ' . count($absorbed['files']) . ' pre-existing local edit(s) first: '
                                    . implode(', ', array_slice($absorbed['files'], 0, 5))
