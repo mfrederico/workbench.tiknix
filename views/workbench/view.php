@@ -1456,12 +1456,23 @@ function clearImagePreview() {
     document.getElementById('imagePreview').src = '';
 }
 
+// Sending delivers the text into the agent's terminal and waits for it to be taken, which
+// can be seconds. The button shows that for the whole round trip, and a second Send
+// (click or Ctrl+Enter) while one is in flight is ignored rather than posted twice.
+let commentSending = false;
 document.getElementById('commentForm').addEventListener('submit', async function(e) {
     e.preventDefault();
+    if (commentSending) return;
     const content = document.getElementById('commentContent').value.trim();
 
     // If no content and no image, do nothing
     if (!content && !selectedImageFile) return;
+
+    const sendBtn = this.querySelector('button[type="submit"]');
+    const sendBtnHtml = sendBtn.innerHTML;
+    commentSending = true;
+    sendBtn.disabled = true;
+    sendBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-1" role="status" aria-hidden="true"></span>Sending…';
 
     const formData = new FormData();
     formData.append('id', taskId);
@@ -1529,6 +1540,10 @@ document.getElementById('commentForm').addEventListener('submit', async function
         }
     } catch (e) {
         tkAlert('Error posting comment', {type: 'error'});
+    } finally {
+        commentSending = false;
+        sendBtn.disabled = false;
+        sendBtn.innerHTML = sendBtnHtml;
     }
 });
 
