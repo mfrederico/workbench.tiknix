@@ -3431,10 +3431,15 @@ class Workbench extends BuildControl {
                     if ($sentToSession) {
                         $this->logTaskEvent($taskId, 'info', 'user', 'Message sent to Claude: ' . substr($content, 0, 100) . (strlen($content) > 100 ? '...' : ''));
 
-                        // If task was awaiting/completed/failed but session is still active, mark as running
-                        if (in_array($task->status, ['awaiting', 'completed', 'failed'])) {
-                            $task->status = 'running';
-                            $task->updatedAt = date('Y-m-d H:i:s');
+                        // The message reached a live session and the agent took it: the task
+                        // is running now, whatever it was — including `queued` (the brief
+                        // never started, then a message got through after a /login: task 173
+                        // on Serenity kept "queued" and the stale "press Run" text while the
+                        // agent worked, 2026-09-26). The stale reason goes with the status.
+                        if (in_array($task->status, ['queued', 'awaiting', 'completed', 'failed'])) {
+                            $task->status          = 'running';
+                            $task->progressMessage = '';
+                            $task->updatedAt       = date('Y-m-d H:i:s');
                             Bean::store($task);
                         }
                     }
