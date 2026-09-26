@@ -2071,13 +2071,20 @@ class Workbench extends BuildControl {
                    Left at `queued`, which is exactly what happened: the session exists, the
                    brief did not reach it. The session stays alive on purpose — you can open
                    the Terminal and see the idle prompt for yourself — and Run tries again. */
-                $this->logger->error('Prompt did not reach the agent; leaving the task queued', ['task_id' => $taskId]);
+                // The terminal usually says why (ClaudeRunner::idleReason): "Login expired"
+                // was the answer behind a bare "queued" on Serenity task 173 (2026-09-26).
+                $why = $runner->idleReason();
+                $this->logger->error('Prompt did not reach the agent; leaving the task queued', ['task_id' => $taskId, 'why' => $why]);
                 $task->status          = 'queued';
-                $task->progressMessage = 'The brief did not reach the agent — its session is open but idle. Press Run to try again.';
+                $task->progressMessage = $why !== ''
+                    ? 'Not started: ' . $why . '. Then press Run.'
+                    : 'The brief did not reach the agent — its session is open but idle. Press Run to try again.';
                 $task->updatedAt       = date('Y-m-d H:i:s');
                 Bean::store($task);
-                $this->logTaskEvent($taskId, 'error', 'system', 'Prompt did not reach the agent; task left queued');
-                Flight::jsonError('The agent session started but the brief did not reach it. Press Run to try again.', 409);
+                $this->logTaskEvent($taskId, 'error', 'system', 'Prompt did not reach the agent; task left queued' . ($why !== '' ? ' — ' . $why : ''));
+                Flight::jsonError($why !== ''
+                    ? 'Not started: ' . $why . '.'
+                    : 'The agent session started but the brief did not reach it. Press Run to try again.', 409);
                 return;
             }
 
