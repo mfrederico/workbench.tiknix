@@ -912,7 +912,7 @@ class Aibuilder extends BuildControl {
         if (!$this->requireLevel($this->minLevel())) return;
         if (!$this->validateCSRF()) return;
         $pi = $this->ownedPlan($this->getParam('plan', 0));
-        if (!$pi) { Flight::jsonError('No such plan', 404); return; }
+        if (!$pi) { $this->noSuchPlan((int) $this->getParam('plan', 0)); return; }
         [$plan] = $pi;
         $plan->planStatus = 'approved';
         $plan->updatedAt  = date('Y-m-d H:i:s');
@@ -928,7 +928,7 @@ class Aibuilder extends BuildControl {
         if (!$this->requireLevel($this->minLevel())) return;
         if (!$this->validateCSRF()) return;
         $pi = $this->ownedPlan($this->getParam('plan', 0));
-        if (!$pi) { Flight::jsonError('No such plan', 404); return; }
+        if (!$pi) { $this->noSuchPlan((int) $this->getParam('plan', 0)); return; }
         [$plan, $inst] = $pi;
 
         if (!in_array($plan->planStatus, ['approved', 'stalled'], true)) {
@@ -968,7 +968,7 @@ class Aibuilder extends BuildControl {
     public function planprogress($params = []): void {
         if (!$this->requireLevel($this->minLevel())) return;
         $pi = $this->ownedPlan($this->getParam('plan', 0));
-        if (!$pi) { Flight::jsonError('No such plan', 404); return; }
+        if (!$pi) { $this->noSuchPlan((int) $this->getParam('plan', 0)); return; }
         [$plan, $inst] = $pi;
         $subs = Bean::find('workbenchtask', 'parent_task_id = ? ORDER BY priority ASC, id ASC', [(int)$plan->id]);
         $tasks = [];

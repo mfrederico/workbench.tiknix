@@ -132,6 +132,18 @@ abstract class BuildControl extends Control {
      * offering a second picker here. Controllers call this before rendering anything
      * that needs an instance.
      */
+    /**
+     * The plan is not on THIS board. Twice in a day (2026-09-27) a plan was approved on the
+     * wrong project: the Builder acts on the project selected in core at launch, and a page
+     * still showing another project's plans answered "No such plan" — true, and useless.
+     */
+    protected function noSuchPlan(int $planId): void {
+        $slug = (string) ($this->selected['slug'] ?? '');
+        \Flight::jsonError($slug === ''
+            ? "No plan #{$planId} here — no project is selected."
+            : "No plan #{$planId} on {$slug}'s board — this Builder session is on {$slug}. Select the plan's project under Projects and open the Builder from there.", 404);
+    }
+
     protected function requireProject(): bool {
         if ($this->selected) return true;
         Flight::redirect(\app\Sidecar\Sso::projectPickerUrl());

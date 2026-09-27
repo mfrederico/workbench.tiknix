@@ -928,7 +928,7 @@ class Workbench extends BuildControl {
     public function planapprove($params = []) {
         if (!$this->planActionGuard()) return;
         $pi = $this->accessiblePlan($this->getParam('plan_id', 0));
-        if (!$pi) { Flight::jsonError('No such plan', 404); return; }
+        if (!$pi) { $this->noSuchPlan((int) $this->getParam('plan_id', 0)); return; }
         [$plan] = $pi;
         if ($plan->planStatus === 'building') { Flight::jsonError('This plan is already building.', 409); return; }
         $plan->planStatus = 'approved';
@@ -941,7 +941,7 @@ class Workbench extends BuildControl {
     public function planbuild($params = []) {
         if (!$this->planActionGuard()) return;
         $pi = $this->accessiblePlan($this->getParam('plan_id', 0));
-        if (!$pi) { Flight::jsonError('No such plan', 404); return; }
+        if (!$pi) { $this->noSuchPlan((int) $this->getParam('plan_id', 0)); return; }
         [$plan, $inst] = $pi;
         if (!$inst) { Flight::jsonError('This plan has no linked instance to build in.', 409); return; }
         if (!in_array($plan->planStatus, ['approved', 'stalled'], true)) {
@@ -1060,7 +1060,7 @@ class Workbench extends BuildControl {
     public function plandelete($params = []) {
         if (!$this->planActionGuard()) return;
         $pi = $this->ownedPlan($this->getParam('plan_id', 0));
-        if (!$pi) { Flight::jsonError('No such plan', 404); return; }
+        if (!$pi) { $this->noSuchPlan((int) $this->getParam('plan_id', 0)); return; }
         [$plan, $inst] = $pi;
         if ($plan->planStatus === 'building'
             || PlanOrchestrator::running((int)$plan->id, (string)($inst->slug ?? ''))) {
@@ -1077,7 +1077,7 @@ class Workbench extends BuildControl {
     public function planprogress($params = []) {
         if (!$this->requireLogin()) return;
         $pi = $this->accessiblePlan($this->getParam('plan_id', 0));
-        if (!$pi) { Flight::jsonError('No such plan', 404); return; }
+        if (!$pi) { $this->noSuchPlan((int) $this->getParam('plan_id', 0)); return; }
         [$plan] = $pi;
         $tasks = [];
         foreach (Bean::find('workbenchtask', 'parent_task_id = ? ORDER BY priority ASC, id ASC', [(int)$plan->id]) as $s) {
