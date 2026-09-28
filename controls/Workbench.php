@@ -4150,10 +4150,12 @@ class Workbench extends BuildControl {
 
         $instDir = $this->instanceDirForTask($task);
         if ($instDir !== null) {
-            // Instance task: merge into the live instance repo's checked-out branch.
+            // Instance task: merge on the project's ORIGIN (lib/InstanceRepo.php, §13 C1),
+            // then bring the live tree level. The live tree is never the merge target.
             // Pre-existing local edits used to stop the merge dead and send someone to a
             // shell. Commit them onto the instance's own branch instead — recoverable,
-            // and it leaves the running site byte-identical. Only a git failure blocks now.
+            // and it leaves the running site byte-identical; the sync pushes them to the
+            // origin. Only a git failure blocks now.
             $absorbed = $this->absorbInstanceEdits($instDir, (int)$task->id);
             if (!$absorbed['ok']) {
                 return ['merged' => false, 'pushed' => false,
@@ -4161,25 +4163,28 @@ class Workbench extends BuildControl {
                                   . implode(', ', array_slice($absorbed['files'], 0, 5)) . ') and they '
                                   . $absorbed['error'] . ' — resolve them in the instance and merge again'];
             }
-            $fetch = $git($instDir, ['fetch', $ws, $br]);
-            if (!$fetch['ok']) {
-                return ['merged' => false, 'pushed' => false, 'reason' => 'could not fetch the task branch into the instance (' . $fetch['out'] . ')'];
+            try {
+                $slug = \app\InstanceRepo::slugFromDir($instDir);
+                $sync = \app\InstanceRepo::syncLive($instDir);
+                if ($sync['status'] === 'failed') {
+                    return ['merged' => false, 'pushed' => false, 'reason' => 'the live tree and its origin are out of step: ' . $sync['out']];
+                }
+                // $ws names the repository holding the branch when the origin does not (a
+                // workspace cut from the live clone before C1); otherwise the origin's own.
+                $merge = \app\InstanceRepo::merge($slug, $br, 'Merge ' . $br . ' (task #' . (int)$task->id . ')', $ws);
+            } catch (\Throwable $e) {
+                return ['merged' => false, 'pushed' => false, 'reason' => $e->getMessage()];
             }
-            // Shield the tracked runtime DB (its uncommitted writes would block the merge);
-            // restore the live DB regardless of outcome.
-            $restoreDb = $this->shieldRuntimeDb($instDir);
-            $merge = $git($instDir, ['merge', '--no-ff', '-m', 'Merge ' . $br . ' (task #' . (int)$task->id . ')', 'FETCH_HEAD']);
-            if (!$merge['ok']) {
-                // Capture the conflicting files BEFORE aborting, so the log says exactly what clashed.
-                $conf = $git($instDir, ['diff', '--name-only', '--diff-filter=U']);
-                $files = $conf['ok'] ? str_replace("\n", ', ', trim($conf['out'])) : '';
-                $git($instDir, ['merge', '--abort']);
-                $restoreDb();
+            if ($merge['status'] !== 'merged') {
                 return ['merged' => false, 'pushed' => false,
-                        'reason' => 'merge conflict on the instance — needs manual resolution'
-                                  . ($files !== '' ? ' — conflicting files: ' . $files : '')];
+                        'reason' => ($merge['status'] === 'conflict' ? 'merge conflict on the origin — needs manual resolution' : 'merge failed on the origin: ' . $merge['out'])
+                                  . ($merge['files'] ? ' — conflicting files: ' . implode(', ', $merge['files']) : '')];
             }
-            $restoreDb();
+            $sync = \app\InstanceRepo::syncLive($instDir);
+            if ($sync['status'] === 'failed') {
+                return ['merged' => false, 'pushed' => false,
+                        'reason' => "merged on the origin ({$merge['sha']}) but the live tree could not take it: {$sync['out']} — fix the live tree and merge again (nothing merges twice)"];
+            }
             // The merge landed code only; its seeds (permissions, tables) reach the live
             // instance through the same post-merge step a finished plan runs. Every line
             // goes on the task log, and a FAILED line goes into the reason the person sees.
