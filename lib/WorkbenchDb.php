@@ -18,7 +18,18 @@ class WorkbenchDb {
      * copy that had to agree forever with nothing to notice if one stopped.
      */
     public static function instanceDir(array $inst): string {
-        return \Model_Instance::dirFrom((string) $inst['slug'], (string) ($inst['app'] ?? ''));
+        // A project carried into its own container keeps its builder records in its workspace
+        // on core (_workspaces/<slug>); the rest live in their host clone. Core's registry
+        // says which — the sidecar's own database has no instance table.
+        $miss = new \stdClass();
+        $dir = \app\CoreDb::with(fn() => \Model_Instance::dirForSlug((string) $inst['slug'], (string) (($inst['app'] ?? '') ?: \Model_Instance::DEFAULT_APP)), $miss);
+        if ($dir === $miss) throw new \RuntimeException("where {$inst['slug']} lives: core's registry could not be read (" . \app\CoreDb::lastError() . ')');
+        return $dir;
+    }
+
+    /** The same, from a slug and app — the one resolver every path in this sidecar goes through. */
+    public static function dirOf(string $slug, string $app = ''): string {
+        return self::instanceDir(['slug' => $slug, 'app' => $app]);
     }
 
     /** The connection key for an instance's workbench.db. One namer, so callers agree. */

@@ -91,7 +91,7 @@ class Aibuilder extends BuildControl {
     }
 
     private function instanceDir(string $sub): string {
-        return '/var/www/html/default/' . $sub . '.' . $this->appNamespace();
+        return \app\WorkbenchDb::dirOf($sub, $this->appNamespace());
     }
 
     /**
@@ -157,7 +157,7 @@ class Aibuilder extends BuildControl {
      * Throws when the member's choice cannot run; callers say so instead of opening claude.
      */
     private function terminalContext(string $sub, int $memberId, string $engineWanted = ''): \app\AgentContext {
-        $dir = '/var/www/html/default/' . $sub . '.' . $this->appNamespace();
+        $dir = \app\WorkbenchDb::dirOf($sub, $this->appNamespace());
         return \app\AgentContext::for($memberId, 'worker', $dir, $this->terminalEngine($sub, $engineWanted));
     }
 

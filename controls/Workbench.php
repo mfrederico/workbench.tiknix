@@ -243,8 +243,7 @@ class Workbench extends BuildControl {
         // provenance root, and what the "Continue to next phase" button re-decomposes.
         $goalDoc = ''; $goalComplete = '';
         if ($this->selected) {
-            $ab = '/var/www/html/default/' . $this->selected['slug'] . '.'
-                . ($this->selected['app'] ?: 'tiknix') . '/.aibuilder';
+            $ab = \app\WorkbenchDb::dirOf((string) $this->selected['slug'], (string) ($this->selected['app'] ?? '')) . '/.aibuilder';
             if (is_file($ab . '/plan-goal.md'))     $goalDoc      = (string) file_get_contents($ab . '/plan-goal.md');
             // The planner writes this when it judges the goal already built (see PlanRunner's
             // brief). Its presence = "no next phase"; cleared on the next decompose.
@@ -366,7 +365,7 @@ class Workbench extends BuildControl {
         $this->viewData['runChoices'] = \app\EngineRegistry::runMenu();
         $projectEngine = \app\EngineRegistry::defaultEngine();
         if ($this->selected) {
-            $dir = \Model_Instance::dirFrom((string) $this->selected['slug'], (string) ($this->selected['app'] ?? ''));
+            $dir = \app\WorkbenchDb::dirOf((string) $this->selected['slug'], (string) ($this->selected['app'] ?? ''));
             $f   = rtrim($dir, '/') . '/.aibuilder/engine';
             if (is_file($f)) {
                 $fromFile = trim((string) @file_get_contents($f));
@@ -393,9 +392,20 @@ class Workbench extends BuildControl {
             'name' => (string) ($this->selected['name'] ?? ''),
         ];
         $this->viewData['projectPickerUrl'] = \app\Sidecar\Sso::projectPickerUrl();
+        // A project in its own container builds on ITS agents (its AI agents page), not on
+        // an engine and the member's credentials: the form offers those instead.
+        $tenant = \app\TenantBuilder::bySlug((string) $this->selected['slug']);
+        if ($tenant) {
+            $this->viewData['tenantAgentsUrl'] = 'https://' . $tenant->ctDomain . '/agents';
+            try { $this->viewData['appAgents'] = \app\TenantBuilder::agents($tenant); }
+            catch (\Throwable $e) {
+                $this->logger->error('Workbench: could not list the app\'s agents', ['instance' => $tenant->slug, 'err' => $e->getMessage()]);
+                $this->viewData['appAgentsError'] = $e->getMessage();
+            }
+        }
         // A project nobody has signed in for cannot build. Say so on the form, where the
         // decision to write a spec is being made, rather than after it is submitted.
-        $projDir = '/var/www/html/default/' . $this->selected['slug'] . '.' . ($this->selected['app'] ?: 'tiknix');
+        $projDir = \app\WorkbenchDb::dirOf((string) $this->selected['slug'], (string) ($this->selected['app'] ?? ''));
         /* PER ENGINE, because the member picks one. Computing a single flag from the
            project's engine told a member signed in to one provider that they were not
            signed in at all, and named the wrong provider while doing it. The picker uses
@@ -612,8 +622,15 @@ class Workbench extends BuildControl {
 
         $slug = (string) $instance->slug;
         $app  = $instance->app ?: 'tiknix';
-        $instanceDir = '/var/www/html/default/' . $slug . '.' . $app;
-        if (!is_file($instanceDir . '/public/index.php')) { $this->flash('error', 'That instance is not available on disk.'); Flight::redirect('/workbench'); return; }
+        $instanceDir = \app\WorkbenchDb::dirOf($slug, $app);
+        $tenant = \app\TenantBuilder::bySlug($slug);
+        // The next phase runs on the agent the last plan ran on; none recorded = the app's default.
+        $agent = '';
+        if ($tenant) {
+            $last = \app\Bean::findOne('workbenchtask', "(parent_task_id IS NULL OR parent_task_id = 0) AND plan_uid IS NOT NULL AND plan_uid != '' ORDER BY id DESC");
+            $agent = (string) ($last->agent ?? '');
+            if ($why = $this->tenantAgentProblem($tenant, $agent)) { $this->flash('error', 'The planner cannot run: ' . $why . '.'); Flight::redirect('/workbench'); return; }
+        } elseif (!is_file($instanceDir . '/public/index.php')) { $this->flash('error', 'That instance is not available on disk.'); Flight::redirect('/workbench'); return; }
 
         // The SAVED goal — the same document the earlier phase(s) came from.
         $goal = trim((string) @file_get_contents($instanceDir . '/.aibuilder/plan-goal.md'));
@@ -624,7 +641,7 @@ class Workbench extends BuildControl {
         }
 
         $runEngine = (string) ($instance->engine ?: \app\EngineRegistry::defaultEngine());
-        if (!$this->agentSignedIn($instanceDir, $runEngine)) {
+        if (!$tenant && !$this->agentSignedIn($instanceDir, $runEngine)) {
             $label = \app\EngineRegistry::label($runEngine);
             $this->flash('error', \app\EngineRegistry::authTokenEnv($runEngine) !== ''
                 ? "You have no API key set for {$label}, so the planner cannot run. Add one in Settings, or pick a different engine."
@@ -648,6 +665,7 @@ class Workbench extends BuildControl {
 
         try {
             $runner = new PlanRunner($slug, $instanceDir, (int) $this->member->id, (int) $this->member->level, $runEngine);
+            if ($tenant) $runner->useAgent($agent);
             $runner->start($goal, [], $autoBuild, $promptId);
         } catch (\Throwable $e) {
             $this->flash('error', 'Could not start the planner: ' . $e->getMessage());
@@ -659,6 +677,34 @@ class Workbench extends BuildControl {
             ? 'Planning the next phase — it will build straight through once ingested.'
             : 'Planning the next phase — it will land as a draft to review.');
         Flight::redirect('/workbench?decomposing=1');
+    }
+
+    /**
+     * Can the app's agent a plan names build there? A project in its own container plans and
+     * builds on its own agents (the picker on the plan form): the named one must exist, be one
+     * that can do builder work, and have what it needs; none named = the app's default agent,
+     * else its Claude account, which must be set up. Asked of the app itself, before a planner
+     * starts. Returns the reason it cannot, or ''.
+     */
+    private function tenantAgentProblem(object $tenant, string $agent): string {
+        try { $d = \app\TenantBuilder::agents($tenant); }
+        catch (\Throwable $e) { return 'the app did not answer about its agents: ' . $e->getMessage(); }
+        $manage = 'https://' . $tenant->ctDomain . '/agents';
+        $pick = null;
+        foreach ($d['agents'] as $a) {
+            if ($agent !== '' ? $a['name'] === $agent : !empty($a['is_default'])) { $pick = $a; break; }
+        }
+        if ($agent !== '' && !$pick) return "the app has no agent named '{$agent}' ({$manage})";
+        if ($pick) {
+            if (empty($pick['builder'])) return "agent '{$pick['name']}' answers text but cannot edit files, so it cannot build — pick a Claude-program agent ({$manage})";
+            if (!empty($pick['problems'])) return "agent '{$pick['name']}': " . implode('; ', $pick['problems']) . " ({$manage})";
+            if (($pick['endpoint'] ?? '') === '' && ($pick['key_status'] ?? '') !== 'set' && (string) ($d['claude']['in_use'] ?? '') === '') {
+                return "agent '{$pick['name']}' runs on the app's Claude account, which is not set up: " . ($d['claude']['problem'] ?? '') . " ({$manage})";
+            }
+            return '';
+        }
+        if ((string) ($d['claude']['in_use'] ?? '') === '') return "the app has no default agent and its Claude account is not set up — sign in on its AI agents page ({$manage})";
+        return '';
     }
 
     /**
@@ -703,8 +749,17 @@ class Workbench extends BuildControl {
 
         $slug = (string)$instance->slug;
         $app  = $instance->app ?: 'tiknix';
-        $instanceDir = '/var/www/html/default/' . $slug . '.' . $app;
-        if (!is_file($instanceDir . '/public/index.php')) {
+        $instanceDir = \app\WorkbenchDb::dirOf($slug, $app);
+        $tenant = \app\TenantBuilder::bySlug($slug);
+        $agent  = trim((string) $this->getParam('agent', ''));
+        if ($tenant) {
+            // In its own container: its agent, checked with the app before anything starts.
+            if ($why = $this->tenantAgentProblem($tenant, $agent)) {
+                $this->flash('error', 'The planner cannot run: ' . $why . '.');
+                Flight::redirect('/workbench/create');
+                return;
+            }
+        } elseif (!is_file($instanceDir . '/public/index.php')) {
             $this->flash('error', 'That instance is not available on disk.');
             Flight::redirect('/workbench/create');
             return;
@@ -722,8 +777,9 @@ class Workbench extends BuildControl {
         $runEngine  = $runPick['engine'] ?? (string) ($instance->engine ?: \app\EngineRegistry::defaultEngine());
         $runModel   = $runPick['model']  ?? '';
 
-        // Say it BEFORE spending five minutes failing at it.
-        if (!$this->agentSignedIn($instanceDir, $runEngine)) {
+        // Say it BEFORE spending five minutes failing at it. (A container project was checked
+        // above, against the app's own agents; the member's engine credentials do not apply.)
+        if (!$tenant && !$this->agentSignedIn($instanceDir, $runEngine)) {
             $label = \app\EngineRegistry::label($runEngine);
             // Name the engine actually checked. "Not signed in to Claude" while testing a
             // different provider sends people to /login for an account that was never the
@@ -764,6 +820,7 @@ class Workbench extends BuildControl {
                 $slug, $instanceDir, (int)$this->member->id,
                 (int)$this->member->level, $runEngine
             );
+            if ($tenant) $runner->useAgent($agent);
             // $promptId travels with it so ingest can link the plan back to this goal.
             $runner->start($goal, [], $autoBuild, $promptId);
         } catch (\Throwable $e) {
@@ -846,7 +903,7 @@ class Workbench extends BuildControl {
             }
         }
 
-        $instanceDir = '/var/www/html/default/' . $slug . '.' . $app;
+        $instanceDir = \app\WorkbenchDb::dirOf($slug, $app);
         if (!is_file($instanceDir . '/public/index.php')) { Flight::jsonError('That instance is not available on disk.', 409); return; }
 
         try {
@@ -958,7 +1015,7 @@ class Workbench extends BuildControl {
         // to the button being broken. Plan 32 on floorplan sat like that: two subtasks
         // were left in `awaiting` (a status the executor never launches and nothing ever
         // moves), so the three that depended on them could never start.
-        $dir   = '/var/www/html/default/' . $inst->slug . '.' . ($inst->app ?: 'tiknix');
+        $dir   = \app\WorkbenchDb::dirOf((string) $inst->slug, (string) ($inst->app ?? ''));
         $check = (new PlanExecutor((int) $plan->id, (string) $inst->slug, $dir, (int) $this->member->level))
                     ->progressCheck();
         if ($check['ready'] === 0 && $check['running'] === 0) {
@@ -990,7 +1047,7 @@ class Workbench extends BuildControl {
      * which member level".
      */
     private function startOrchestrator($plan, $inst): bool {
-        $dir = '/var/www/html/default/' . $inst->slug . '.' . ($inst->app ?: 'tiknix');
+        $dir = \app\WorkbenchDb::dirOf((string) $inst->slug, (string) ($inst->app ?? ''));
         return PlanOrchestrator::launch(
             (int) $plan->id, (string) $inst->slug, $dir, (int) $this->member->level
         );
@@ -1126,7 +1183,7 @@ class Workbench extends BuildControl {
             return;
         }
 
-        $dir = '/var/www/html/default/' . $instance->slug . '.' . ($instance->app ?: 'tiknix');
+        $dir = \app\WorkbenchDb::dirOf((string) $instance->slug, (string) ($instance->app ?? ''));
         $runner = new PlanRunner((string) $instance->slug, $dir, (int) $this->member->id,
                                  // '' not 'claude': an instance row with no engine should fall
                                  // through to the PROJECT's own .aibuilder/engine, which
@@ -1193,7 +1250,7 @@ class Workbench extends BuildControl {
     private function agentLogPath($task): string {
         $inst = $task->instanceId ? $this->access->instanceMeta((int)$task->instanceId) : null;
         if (!$inst || !$inst->id) return '';
-        $dir = '/var/www/html/default/' . $inst->slug . '.' . ($inst->app ?: 'tiknix');
+        $dir = \app\WorkbenchDb::dirOf((string) $inst->slug, (string) ($inst->app ?? ''));
         return $dir . '/.aibuilder/wt/task-' . (int)$task->id . '/.aibuilder/agent.log';
     }
 
@@ -3791,7 +3848,7 @@ class Workbench extends BuildControl {
             Flight::jsonError('That project is no longer available to you (' . $tag . ').', 409); return;
         }
 
-        $dir = '/var/www/html/default/' . $slug . '.' . $app;
+        $dir = \app\WorkbenchDb::dirOf($slug, $app);
         if (!is_file($dir . '/public/index.php')) {
             Flight::jsonError('That project is not on disk any more.', 409); return;
         }
@@ -3901,7 +3958,7 @@ class Workbench extends BuildControl {
         if (empty($task->instanceId)) return null;
         $inst = $this->access->instanceMeta((int)$task->instanceId);
         if (!$inst->id) return null;
-        $dir = '/var/www/html/default/' . $inst->slug . '.' . ($inst->app ?: 'tiknix');
+        $dir = \app\WorkbenchDb::dirOf((string) $inst->slug, (string) ($inst->app ?? ''));
         return is_dir($dir . '/.git') ? $dir : null;
     }
 
@@ -4696,8 +4753,7 @@ class Workbench extends BuildControl {
     /** The selected project's install directory, which owns its connections. */
     private function selectedInstanceDir(): string {
         if (!$this->selected) return '';
-        return '/var/www/html/default/' . $this->selected['slug']
-             . '.' . ($this->selected['app'] ?: 'tiknix');
+        return \app\WorkbenchDb::dirOf((string) $this->selected['slug'], (string) ($this->selected['app'] ?? ''));
     }
 
     private function mondayConnection(): ?\RedBeanPHP\OODBBean {

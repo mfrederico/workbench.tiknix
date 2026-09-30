@@ -143,7 +143,7 @@
                                      SELECTED, not the project's default. It nagged about claude while
                                      z.ai was picked and working. Server-rendered visible only when the
                                      default itself is unusable, so it is right before any JS runs. */ ?>
-                            <?php if (!empty($engineAuth) && in_array(false, $engineAuth, true)): ?>
+                            <?php if (!isset($appAgents) && !isset($appAgentsError) && !empty($engineAuth) && in_array(false, $engineAuth, true)): ?>
                                 <div id="wb-engine-warning"
                                      class="alert alert-warning mt-2 mb-0 py-2 small<?= !empty($agentSignedIn) ? ' d-none' : '' ?>"
                                      data-auth='<?= htmlspecialchars(json_encode($engineAuth), ENT_QUOTES) ?>'
@@ -193,7 +193,43 @@
                                      fails at run time as an unhelpful API error. The pair is the
                                      unit, and EngineRegistry::runMenu() only offers pairs that
                                      exist on an engine that is actually available. */ ?>
-                            <?php if (!empty($runChoices)): ?>
+                            <?php if (isset($appAgents) || isset($appAgentsError)): ?>
+                            <?php /* A project in its own container builds on ITS agents — the ones on
+                                     its AI agents page — not on an engine and your credentials. */ ?>
+                            <div class="col-md-4 mb-3">
+                                <label for="agent" class="form-label">Agent</label>
+                                <?php if (isset($appAgentsError)): ?>
+                                    <div class="alert alert-danger py-2 small mb-0">The app did not answer about its agents: <?= htmlspecialchars($appAgentsError) ?></div>
+                                <?php else:
+                                    $__claude = (string) ($appAgents['claude']['in_use'] ?? '');
+                                    $__def = null;
+                                    foreach ($appAgents['agents'] as $__a) if (!empty($__a['is_default'])) $__def = $__a;
+                                    $__why = function (array $a) use ($__claude): string {
+                                        if (empty($a['builder'])) return 'text only — cannot build';
+                                        if (!empty($a['problems'])) return implode('; ', $a['problems']);
+                                        if (($a['endpoint'] ?? '') === '' && ($a['key_status'] ?? '') !== 'set' && $__claude === '') return 'Claude account not set up';
+                                        return '';
+                                    };
+                                    $__where = fn(array $a) => ($a['endpoint'] ?? '') !== '' ? (parse_url($a['endpoint'], PHP_URL_HOST) ?: $a['endpoint']) : 'Claude account';
+                                ?>
+                                <select class="form-select" id="agent" name="agent">
+                                    <?php $__dw = $__def ? $__why($__def) : ($__claude === '' ? 'Claude account not set up' : ''); ?>
+                                    <option value="" <?= $__dw !== '' ? 'disabled' : 'selected' ?>>
+                                        App default — <?= htmlspecialchars($__def ? $__def['name'] . ' (' . $__where($__def) . ')' : 'Claude account' . ($__claude !== '' ? ' (' . $__claude . ')' : '')) ?><?= $__dw !== '' ? ' — ' . htmlspecialchars($__dw) : '' ?>
+                                    </option>
+                                    <?php foreach ($appAgents['agents'] as $__a): $__w = $__why($__a); ?>
+                                        <option value="<?= htmlspecialchars($__a['name']) ?>" <?= $__w !== '' ? 'disabled' : '' ?>>
+                                            <?= htmlspecialchars($__a['name'] . ' — ' . $__where($__a) . (($__a['model'] ?? '') !== '' ? ' / ' . $__a['model'] : '')) ?><?= $__w !== '' ? ' — ' . htmlspecialchars($__w) : '' ?>
+                                        </option>
+                                    <?php endforeach; ?>
+                                </select>
+                                <?php endif; ?>
+                                <div class="form-text small">
+                                    The planner and every task run on this agent, with the app's own keys.
+                                    <a href="<?= htmlspecialchars($tenantAgentsUrl) ?>" target="_blank" rel="noopener">Manage agents</a>
+                                </div>
+                            </div>
+                            <?php elseif (!empty($runChoices)): ?>
                             <div class="col-md-4 mb-3">
                                 <label for="run_with" class="form-label">Run with</label>
                                 <select class="form-select" id="run_with" name="run_with">

@@ -89,7 +89,11 @@ if ($__mid > 0 && class_exists('\app\AgentLimit')) {
 <?= $ws_body ?? '' ?>
 <script src="https://cdn.jsdelivr.net/npm/jquery@3.7.1/dist/jquery.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
-<script><?php /* modal alert/confirm/prompt: core owns it; this host cannot serve core's /js */ readfile(Flight::get('sidecar.core_root') . '/public/js/dialogs.js'); ?></script>
+<script><?php /* modal alert/confirm/prompt: core owns it; this host cannot serve core's /js. A core on the
+         tiknix runtime package keeps it in the package's public/. */
+    $__core = (string) Flight::get('sidecar.core_root');
+    $__dialogs = is_file($__core . '/public/js/dialogs.js') ? $__core . '/public/js/dialogs.js' : $__core . '/vendor/tiknix/runtime/public/js/dialogs.js';
+    readfile($__dialogs); ?></script>
 <script>
 // The task board is a FULL-HEIGHT app: the shell already sizes the frame to
 // calc(100vh - topbar) and the board scrolls inside it. Reporting a content height on
