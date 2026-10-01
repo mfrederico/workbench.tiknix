@@ -463,6 +463,14 @@ class Aibuilder extends BuildControl {
             '--format=%(refname:short)|%(creatordate:short)|%(objectname:short)|%(contents:subject)',
             'refs/tags/checkpoint-*']);
         if (!$out['ok']) { Flight::jsonError("could not list checkpoints for {$inst->slug}: " . mb_substr($out['out'], 0, 300), 502); return; }
+        // Which checkpoints carry a copy of the data (TenantHost::checkpoint) — a rollback to one
+        // that does not restores the code only, and the page says so before it is done.
+        $withData = [];
+        if ($this->inContainer($inst)) {
+            [$bc, $bo] = \app\TenantHost::ssh($inst, 'app', 'ls -1 /srv/app/.aibuilder/backups 2>/dev/null; true', null, 20);
+            if ($bc !== 0) { Flight::jsonError("could not read {$inst->slug}'s checkpoint data copies: " . mb_substr((string) $bo, 0, 300), 502); return; }
+            $withData = array_flip(array_filter(array_map('trim', explode("\n", (string) $bo))));
+        }
         $items = [];
         foreach (explode("\n", $out['out']) as $line) {
             if ($line === '') continue;
@@ -472,15 +480,38 @@ class Aibuilder extends BuildControl {
                 'date'        => $p[1] ?? '',
                 'commit'      => $p[2] ?? '',
                 'description' => $p[3] ?? '',  // empty for lightweight (undescribed) tags
+                'data'        => isset($withData[$p[0] ?? '']),
             ];
         }
         Flight::jsonSuccess(['checkpoints' => $items]);
     }
 
-    /** POST /aibuilder/rollback/<checkpoint>?id= — restore a checkpoint. JSON. */
+    /**
+     * POST /aibuilder/rollback/<checkpoint>?id= — roll the app back to a checkpoint
+     * (TenantHost::rollback: its state now is checkpointed first, the code restored and committed
+     * forward, the data restored when the checkpoint has a copy) — by the member doing it. JSON.
+     */
     public function rollback($params = []): void {
         if (!$this->requireLevel($this->minLevel())) return;
-        Flight::jsonError('Rolling back from this page is not available for a project in its own container yet.', 409);
+        if (!$this->validateCSRF()) return;
+        $inst = $this->accessibleInstance($this->getParam('id', 0));
+        if (!$inst) { Flight::jsonError('No such instance', 404); return; }
+        if (!$this->inContainer($inst)) { Flight::jsonError("{$inst->slug} is not running in its own container, so it cannot be rolled back here.", 409); return; }
+        $tag = (string) ($params['operation']->name ?? $this->getParam('checkpoint', ''));
+        try {
+            $r = \app\TenantHost::rollback($inst, $tag, \app\TenantHost::author((int) $this->member->id));
+        } catch (\RuntimeException $e) {
+            $r = ['ok' => false, 'error' => $e->getMessage()];
+        }
+        if (!$r['ok']) {
+            $this->logger->error('aibuilder rollback failed', ['instance' => $inst->slug, 'checkpoint' => $tag, 'error' => $r['error']]);
+            Flight::jsonError('Rollback failed: ' . $r['error'], 502);
+            return;
+        }
+        $this->logger->info('aibuilder rollback', ['instance' => $inst->slug, 'checkpoint' => $tag, 'before' => $r['before'], 'member' => (int) $this->member->id]);
+        $short = fn(string $t) => preg_replace('/^checkpoint-/', '', $t);
+        Flight::jsonSuccess($r, 'Rolled back to ' . $short($tag) . ($r['data'] ? ' — code and data (' . $r['databases'] . ')' : ' — code only: this checkpoint has no copy of the data, which was left as it is')
+            . '. The state before is saved as ' . $short($r['before']) . '.');
     }
 
     /**

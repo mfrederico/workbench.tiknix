@@ -220,13 +220,11 @@ foreach ($instances as $__i) { if (!empty($__i->isDefault)) { $hasDefault = true
             <!-- 3) Checkpoint (commits everything above; local only — publishing is the Publisher's) -->
             <hr class="my-2">
             <div class="text-uppercase text-body-secondary fw-semibold mb-1" style="font-size:.68rem;letter-spacing:.04em"><i class="bi bi-bookmark-plus me-1"></i>Checkpoint</div>
-            <?php /* Saving and rolling back checkpoints is not built for a project in its own container yet;
-                     its checkpoints (the builder's, before each plan) are listed below. */ ?>
-            <form id="ab-ckpt-form" class="d-flex gap-2 mb-1<?= !empty($ab_inCt) ? ' d-none' : '' ?>">
+            <form id="ab-ckpt-form" class="d-flex gap-2 mb-1">
               <input id="ab-ckpt-desc" class="form-control form-control-sm" placeholder="Describe this checkpoint…" maxlength="200">
               <button class="btn btn-success btn-sm text-nowrap" type="submit" title="Save checkpoint"><i class="bi bi-save me-1"></i>Save</button>
             </form>
-            <div class="text-body-secondary mb-2<?= !empty($ab_inCt) ? ' d-none' : '' ?>" style="font-size:.72rem">Commits all changes &amp; uploads above as a restore point. Going live is separate — use <strong>Publish</strong> in the top bar.</div>
+            <div class="text-body-secondary mb-2" style="font-size:.72rem">Commits all changes above and copies the data as a restore point, by you. Going live is separate — use <strong>Publish</strong> in the top bar.</div>
             <div id="ab-ckpt-list" class="small"></div>
           </div>
         </div>
@@ -291,8 +289,8 @@ foreach ($instances as $__i) { if (!empty($__i->isDefault)) { $hasDefault = true
         <?php if ($ab_isOwner): ?>
         <div class="border rounded p-3 mb-3">
           <div class="fw-semibold mb-1"><i class="bi bi-arrow-counterclockwise me-1"></i>Roll back this instance</div>
-          <p class="small text-body-secondary mb-2">Restores <strong>code and data</strong> of this instance to this checkpoint. Anything since is lost.</p>
-          <button id="ab-ck-rollback" class="btn btn-outline-danger btn-sm<?= !empty($ab_inCt) ? ' d-none' : '' ?>" type="button"><i class="bi bi-arrow-counterclockwise me-1"></i>Roll back to here</button>
+          <p id="ab-ck-rb-text" class="small text-body-secondary mb-2"></p>
+          <button id="ab-ck-rollback" class="btn btn-outline-danger btn-sm" type="button"><i class="bi bi-arrow-counterclockwise me-1"></i>Roll back to here</button>
         </div>
         <?php endif; ?>
         <!-- Fork (admin only) -->
@@ -546,10 +544,10 @@ if (AB.has && !AB.keyNeeded) {
         const box=document.getElementById('ab-ckpt-list'); const cps=(j.data&&j.data.checkpoints)||[];
         if(!cps.length){ box.innerHTML='<div class="text-body-secondary">No checkpoints yet.</div>'; return; }
         box.innerHTML=cps.map(c=>'<div class="ab-ckpt"><div class="d-flex justify-content-between"><span class="fw-semibold">'+esc(c.name.replace(/^checkpoint-/,''))+'</span>'
-          +'<button class="btn btn-link btn-sm p-0 ab-rb" data-ckpt="'+esc(c.name)+'" title="Roll back or fork from here"><i class="bi bi-three-dots"></i></button></div>'
+          +'<button class="btn btn-link btn-sm p-0 ab-rb" data-ckpt="'+esc(c.name)+'" data-data="'+(c.data?'1':'0')+'" title="Roll back or fork from here"><i class="bi bi-three-dots"></i></button></div>'
           +(c.description?'<div class="desc">'+esc(c.description)+'</div>':'')
           +'<div class="text-body-secondary" style="font-size:.72rem">'+esc(c.date)+' · '+esc(c.commit)+'</div></div>').join('');
-        box.querySelectorAll('.ab-rb').forEach(b=>b.addEventListener('click',()=>openCkptModal(b.dataset.ckpt)));
+        box.querySelectorAll('.ab-rb').forEach(b=>b.addEventListener('click',()=>openCkptModal(b.dataset.ckpt,b.dataset.data==='1')));
       }).catch(()=>{});
   }
   const post=(url,extra)=>fetch(url,{method:'POST',
@@ -563,22 +561,28 @@ if (AB.has && !AB.keyNeeded) {
       inp.value=''; loadCheckpoints(); refreshChanges();
     }).catch(()=>tkAlert('The checkpoint was not saved — the request failed.')).finally(()=>btn.disabled=false);
   });
-  let _ckpt=null;
-  function openCkptModal(ckpt){
-    _ckpt=ckpt;
+  let _ckpt=null, _ckptData=false;
+  // A checkpoint with a copy of the data restores code AND data; one without (a runtime update's) restores the code only.
+  const rbText=d=>d?'Restores the code and the data of this app to this checkpoint. Its state now is saved as a checkpoint first, so the rollback can itself be rolled back.'
+                   :'Restores the code of this app to this checkpoint. This checkpoint has no copy of the data, so the data stays as it is now. Its state now is saved as a checkpoint first, so the rollback can itself be rolled back.';
+  function openCkptModal(ckpt,data){
+    _ckpt=ckpt; _ckptData=!!data;
+    const rt=document.getElementById('ab-ck-rb-text'); if(rt) rt.textContent=rbText(_ckptData);
     const nm=document.getElementById('ab-ck-name'); if(nm) nm.textContent=ckpt.replace(/^checkpoint-/,'');
     const fs=document.getElementById('ab-fork-slug'), fn=document.getElementById('ab-fork-name'), fm=document.getElementById('ab-fork-msg');
     if(fs) fs.value=''; if(fn) fn.value=''; if(fm) fm.textContent='';
     bootstrap.Modal.getOrCreateInstance(document.getElementById('ab-ckpt-modal')).show();
   }
-  async function doRollback(ckpt){
-    if(!await tkConfirm('Roll back to '+ckpt+'? This restores code AND data to that checkpoint.', {okText: 'Roll back', danger: true})) return;
-    post('/aibuilder/rollback/'+encodeURIComponent(ckpt),{}).then(j=>{ loadCheckpoints(); refreshChanges(); });
+  async function doRollback(ckpt,data){
+    if(!await tkConfirm('Roll back to '+ckpt.replace(/^checkpoint-/,'')+'? '+(data?'This restores the code AND the data.':'This restores the code only — this checkpoint has no copy of the data.')+' The state now is saved as a checkpoint first.', {okText: 'Roll back', danger: true})) return;
+    post('/aibuilder/rollback/'+encodeURIComponent(ckpt),{}).then(j=>{
+      tkAlert((j&&j.message)||'The rollback did not answer.'); loadCheckpoints(); refreshChanges();
+    }).catch(()=>tkAlert('The rollback request failed — check the checkpoint list before trying again.'));
   }
   document.getElementById('ab-ck-rollback')?.addEventListener('click',function(){
     if(!_ckpt) return;
     bootstrap.Modal.getOrCreateInstance(document.getElementById('ab-ckpt-modal')).hide();
-    doRollback(_ckpt);
+    doRollback(_ckpt,_ckptData);
   });
   document.getElementById('ab-ck-fork')?.addEventListener('click',function(){
     if(!_ckpt) return;
