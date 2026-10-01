@@ -432,7 +432,7 @@ class Workbench extends BuildControl {
 
         // Get team ID (null = personal task)
         $teamId = $this->getParam('team_id');
-        if ($teamId === '' || $teamId === 'personal') {
+        if ($teamId === null || $teamId === '' || $teamId === 'personal') {   // absent = personal, not team 0
             $teamId = null;
         } else {
             $teamId = (int)$teamId;
