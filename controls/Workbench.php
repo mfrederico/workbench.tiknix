@@ -1232,7 +1232,7 @@ class Workbench extends BuildControl {
            its size and age are the progress signal. Null means "cannot tell", which the UI
            must not render as either working or stuck. */
         $running  = TmuxManager::exists($session);
-        $dir      = \Model_Instance::dirFrom((string) $inst->slug, (string) ($inst->app ?? ''));
+        $dir      = \app\WorkbenchDb::dirOf((string) $inst->slug, (string) ($inst->app ?? ''));   // the workspace (planner.log)
         $activity = null;
         if ($running) {
             $runner   = new PlanRunner((string) $inst->slug, $dir, (int) $this->member->id,
