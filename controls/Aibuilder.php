@@ -161,6 +161,38 @@ class Aibuilder extends BuildControl {
         return \app\AgentContext::for($memberId, 'worker', $dir, $this->terminalEngine($sub, $engineWanted));
     }
 
+    /**
+     * A project in its own container: its terminal is the APP's (runtime bin/terminal-bridge.php on
+     * <ct_ip>:3990, reached at wss://<its domain>/aibuilder/ws through the front proxy), and runs the
+     * app's own agent with the app's own credential — not core's bridge, jail or engines.
+     */
+    private function inContainer(object $inst): bool {
+        return trim((string) ($inst->ctIp ?? '')) !== '';
+    }
+
+    /** The token for the app's bridge, signed with THAT app's key (instance.terminal_key). */
+    private function mintAppToken(object $inst, int $memberId, bool $resume): string {
+        $key = (string) ($inst->terminalKey ?? '');
+        if (strlen($key) < 64) {
+            throw new \RuntimeException("{$inst->slug} has no builder terminal yet — on core: php scripts/tenant.php --terminal={$inst->slug}");
+        }
+        $ttl = (int) ($this->cfg()['token']['ttl'] ?? 120);
+        $payload = json_encode([
+            'sub' => (string) $inst->slug, 'member_id' => $memberId,
+            'agent' => '',                            // the app's default agent (its AI agents page)
+            'resume' => $resume,
+            'nonce' => bin2hex(random_bytes(8)), 'exp' => time() + $ttl,
+        ]);
+        $b64 = rtrim(strtr(base64_encode($payload), '+/', '-_'), '=');
+        return $b64 . '.' . hash_hmac('sha256', $b64, $key);
+    }
+
+    private function appWsBase(object $inst): string {
+        $d = strtolower(trim((string) ($inst->ctDomain ?? '')));
+        if ($d === '') throw new \RuntimeException("{$inst->slug} is in a container but has no domain (instance.ct_domain)");
+        return 'wss://' . $d;
+    }
+
     private function mintToken(string $sub, int $memberId, string $engineWanted = '', bool $resume = false): string {
         $cfg    = $this->cfg();
         $secret = (string)($cfg['token']['secret'] ?? '');
@@ -385,7 +417,17 @@ class Aibuilder extends BuildControl {
         // Neutralize Claude's in-jail browser-open before the terminal opens, so a
         // first-run `claude` sign-in surfaces in the gate instead of a dead browser.
         $termEngine = ''; $termError = '';
-        if ($selected) {
+        $inCt = $selected && $this->inContainer($selected);
+        $ctToken = ''; $ctWs = '';
+        if ($inCt) {
+            try {
+                $ctToken = $this->mintAppToken($selected, $mid, $this->getParam('resume', '') === '1');
+                $ctWs = $this->appWsBase($selected);
+            } catch (\RuntimeException $e) {
+                $termError = $e->getMessage();
+                $this->logger->error('Terminal: container project not ready', ['instance' => $selected->slug, 'err' => $termError]);
+            }
+        } elseif ($selected) {
             try {
                 $termEngine = $this->terminalContext($selected->slug, $mid, (string) $this->getParam('engine', ''))->engine;
                 $this->ensureOAuthCapture($selected->slug, $termEngine);
@@ -420,9 +462,9 @@ class Aibuilder extends BuildControl {
             'ab_needsInstall' => $needsInstall,
             'ab_sub'         => $selected ? $selected->slug : '',
             'ab_termError'   => $termError,
-            'ab_token'       => ($selected && $termError === '') ? $this->mintToken($selected->slug, (int)$this->member->id,
+            'ab_token'       => $inCt ? $ctToken : (($selected && $termError === '') ? $this->mintToken($selected->slug, (int)$this->member->id,
                                                              (string) $this->getParam('engine', ''),
-                                                             $this->getParam('resume', '') === '1') : '',
+                                                             $this->getParam('resume', '') === '1') : ''),
             /* The engines this terminal can be opened on, and which one it is on now.
                menu() already filters to AVAILABLE engines, so z.ai appears here the moment
                [engine.zai] available flips — no code change, which is the point of the
@@ -434,7 +476,8 @@ class Aibuilder extends BuildControl {
             // Connections → Models) — "GLM (z.ai) — your key" runs on the member's managed
             // key; the platform "zai" runs on the server's. AgentContext refuses anyone
             // else's connection, so listing only your own is presentation, not the gate.
-            'ab_engines'     => EngineRegistry::menu() + $this->ownConnectionEngines($mid),
+            // A container project runs the APP's agent: core's engine list does not apply there.
+            'ab_engines'     => $inCt ? [] : EngineRegistry::menu() + $this->ownConnectionEngines($mid),
             'ab_engine'      => $termEngine,
             /* Key-authenticated engine with no key for THIS member: the terminal would open,
                the jail would refuse by name, and the session would die before the prompt.
@@ -451,7 +494,7 @@ class Aibuilder extends BuildControl {
             'ab_wspath'      => (string)($cfg['bridge']['ws_path'] ?? '/aibuilder/ws'),
             // The terminal PTY bridge (node runner) lives on CORE, so the xterm must
             // connect to core's host, not this sidecar's. wss://<core-host>. See coreWsBase().
-            'ab_ws_base'     => $this->coreWsBase(),
+            'ab_ws_base'     => $inCt ? $ctWs : $this->coreWsBase(),
             'ab_hasInstance' => (bool)$selected,
             'ab_isDefault'   => $selected ? (bool)$selected->isDefault : false,
             'ab_isRoot'      => $this->hasLevel(LEVELS['ROOT']),
@@ -526,7 +569,9 @@ class Aibuilder extends BuildControl {
         // Carries the engine too: a reconnect that silently dropped back to the project's
         // provider would move you off z.ai mid-session without saying so.
         try {
-            $tok = $this->mintToken($inst->slug, (int)$this->member->id, (string) $this->getParam('engine', ''), $this->getParam('resume', '') === '1');
+            $tok = $this->inContainer($inst)
+                ? $this->mintAppToken($inst, (int) $this->member->id, $this->getParam('resume', '') === '1')
+                : $this->mintToken($inst->slug, (int)$this->member->id, (string) $this->getParam('engine', ''), $this->getParam('resume', '') === '1');
         } catch (\RuntimeException $e) {
             Flight::jsonError($e->getMessage(), 409);
             return;
@@ -996,6 +1041,14 @@ class Aibuilder extends BuildControl {
         if (!$this->validateCSRF()) return;
         $inst = $this->accessibleInstance($this->getParam('id', 0));
         if (!$inst) { Flight::jsonError('No such instance', 404); return; }
+        if ($this->inContainer($inst)) {
+            // The agent's tmux session lives in the app's container; ending it lets the next
+            // connect start a fresh one. Attached tabs see the session end and reconnect.
+            [$c, $o] = \app\TenantHost::ssh($inst, 'app', 'tmux kill-session -t aib-default 2>&1 || true', null, 20);
+            if ($c !== 0) { Flight::jsonError("could not reach {$inst->slug}'s container: " . trim((string) $o), 502); return; }
+            Flight::jsonSuccess([], 'Session restarted — reconnecting');
+            return;
+        }
         $sock = $this->instanceDir($inst->slug) . '/.aibuilder/tmux.sock';
         if (@file_exists($sock)) {
             @exec('tmux -S ' . escapeshellarg($sock) . ' kill-server 2>&1');
