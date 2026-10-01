@@ -1371,6 +1371,7 @@ class Workbench extends BuildControl {
 
            isPlan() is the authoritative test and exists so the board, the reaper and the
            task view cannot answer this differently. The reaper simply never asked it. */
+        if ($ct = $this->tenantInst()) $this->syncContainerTask($task, $ct);   // a finished container run's result
         $isPlanManaged = $task->isPlan()
             || !empty($task->planRef)
             || !empty($task->worktreeBranch)
@@ -1757,6 +1758,81 @@ class Workbench extends BuildControl {
      *
      * @return int subtasks removed alongside it
      */
+    /** A board task's run in the container: its id (AgentTask) and its tmux session there. */
+    private function boardRunId($task): string { return 'board-' . (int) $task->id; }
+    private function boardSession(object $ct, $task): string { return 'tiknix-' . $ct->slug . '-board' . (int) $task->id; }
+
+    /**
+     * Run a board task IN THE PROJECT'S CONTAINER — the same path as a plan's subtasks: the app's
+     * own agent and credential, a worktree on task/board-<id> there (clitool --agent-task, in a
+     * TenantRun session). Nothing merges until it is approved.
+     */
+    private function runInContainer($task, object $ct): void {
+        $id = $this->boardRunId($task);
+        $brief = "# Task #{$task->id}: " . trim((string) $task->title) . "\n\n" . trim((string) $task->description) . "\n";
+        foreach (Bean::find('taskcomment', 'task_id = ? ORDER BY created_at ASC', [(int) $task->id]) as $c) {
+            $brief .= "\n## Comment\n" . trim((string) $c->content) . "\n";
+        }
+        $brief .= "\nMake the change in this app, with its conventions (CLAUDE.md). Commit nothing yourself — your edits are committed on the task branch for review.\n";
+        try {
+            // A previous attempt's branch goes first: a rerun starts from the app as it is now.
+            \app\TenantHost::discardTask($ct, $id);
+            \app\TenantRun::start($ct, $this->boardSession($ct, $task), $id, '--agent-task=' . escapeshellarg($id) . ' --timeout=1800', $brief);
+        } catch (\Throwable $e) {
+            Flight::jsonError("Could not start the task in {$ct->slug}'s container: " . $e->getMessage(), 502);
+            return;
+        }
+        $task->status = 'running';
+        $task->agentSession = $this->boardSession($ct, $task);
+        $task->tmuxSession = null;
+        $task->worktreeBranch = 'task/' . $id;
+        $task->branchName = 'task/' . $id;
+        $task->runCount = (int) $task->runCount + 1;
+        $task->startedAt = date('Y-m-d H:i:s');
+        $task->errorMessage = null;
+        $task->progressMessage = "Running in {$ct->slug}'s container";
+        $task->updatedAt = date('Y-m-d H:i:s');
+        Bean::store($task);
+        $this->logTaskEvent((int) $task->id, 'info', 'system', "Started in {$ct->slug}'s container on task/{$id} (the app's own agent)");
+        Flight::json(['success' => true, 'message' => "Started in {$ct->slug}'s container", 'status' => 'running']);
+    }
+
+    /**
+     * A running container board task whose session has ended: read its result. Changes wait for
+     * approval (awaiting, with the diffstat); no changes resolve it; anything else fails it.
+     */
+    private function syncContainerTask($task, object $ct): void {
+        if ($task->status !== 'running' || (string) $task->agentSession === '' || !empty($task->parentTaskId)) return;
+        try {
+            if (\app\TenantRun::alive($ct, (string) $task->agentSession)) return;
+            $run = \app\TenantRun::result($ct, $this->boardRunId($task));
+        } catch (\RuntimeException $e) { return; }   // unreachable: ask again on the next poll
+        $r = $run['result'] ?? null;
+        $task->agentSession = null;
+        $task->completedAt = date('Y-m-d H:i:s');
+        $task->updatedAt = date('Y-m-d H:i:s');
+        if ($r !== null && !empty($r['output'])) $this->logTaskEvent((int) $task->id, 'info', 'agent', 'Agent output (tail): ' . mb_substr((string) $r['output'], -1500));
+        $status = (string) ($r['status'] ?? '');
+        if ($status === 'changed') {
+            $task->status = 'awaiting';
+            $task->progressMessage = 'Changed on task/' . $this->boardRunId($task) . ' in the container — approve to merge.';
+            $this->logTaskEvent((int) $task->id, 'success', 'system', "Changed ({$r['commit']}):\n" . ($r['diffstat'] ?? ''));
+        } elseif ($status === 'no-change') {
+            $task->status = 'resolved';
+            $task->progressMessage = 'Nothing to change — the agent made no edits.';
+            \app\TenantHost::discardTask($ct, $this->boardRunId($task));
+        } else {
+            $task->status = 'failed';
+            $why = $r === null ? ($run === null ? 'its session ended before it finished' : "it exited {$run['exit']} without an answer: " . mb_substr((string) $run['log'], -500))
+                               : (string) ($r['error'] ?? "ended '{$status}'");
+            $task->errorMessage = $why;
+            $task->progressMessage = 'Failed: ' . $why;
+            \app\TenantHost::discardTask($ct, $this->boardRunId($task));
+            $this->logTaskEvent((int) $task->id, 'error', 'system', 'Container task failed: ' . $why);
+        }
+        Bean::store($task);
+    }
+
     /** The selected project when it runs in its own container (its tasks run there — TenantRun), else null. */
     private function tenantInst(): ?object {
         $id = (int) ($this->selected['id'] ?? 0);
@@ -1936,6 +2012,9 @@ class Workbench extends BuildControl {
                 . 'Its subtasks do the work; the parent has none to run.', 409);
             return;
         }
+
+        // A project in its own container builds there (runInContainer), never on core.
+        if ($ct = $this->tenantInst()) { $this->runInContainer($task, $ct); return; }
 
         // Check if already running
         if ($task->status === 'running') {
@@ -2373,6 +2452,7 @@ class Workbench extends BuildControl {
      */
     public function resolveconflict($params = []) {
         if (!$this->requireLogin()) return;
+        if ($ct = $this->tenantInst()) { Flight::jsonError('Resolving a conflict here is not available for a project in its own container — run, review (Diff) and approve the task instead.', 409); return; }
 
         $request = Flight::request();
         if ($request->method !== 'POST') { Flight::redirect('/workbench'); return; }
@@ -2506,6 +2586,7 @@ class Workbench extends BuildControl {
      */
     public function forcereset($params = []) {
         if (!$this->requireLogin()) return;
+        if ($ct = $this->tenantInst()) { Flight::jsonError('Force reset is not available for a project in its own container — run, review (Diff) and approve the task instead.', 409); return; }
 
         $request = Flight::request();
         if ($request->method !== 'POST') {
@@ -2583,6 +2664,7 @@ class Workbench extends BuildControl {
      */
     public function complete($params = []) {
         if (!$this->requireLogin()) return;
+        if ($ct = $this->tenantInst()) { Flight::jsonError('Marking it complete by hand is not available for a project in its own container — run, review (Diff) and approve the task instead.', 409); return; }
 
         $request = Flight::request();
         if ($request->method !== 'POST') {
@@ -2748,6 +2830,27 @@ class Workbench extends BuildControl {
         // Task must be in awaiting or completed status
         if (!in_array($task->status, ['awaiting', 'completed'])) {
             Flight::jsonError('Task is not ready for approval', 400);
+            return;
+        }
+
+        if ($ct = $this->tenantInst()) {
+            // Merging IS publishing: the task branch into the app in its container (seeds run).
+            $branch = (string) $task->worktreeBranch;
+            if (!str_starts_with($branch, 'task/')) { Flight::jsonError('This task has no branch in the container to merge.', 409); return; }
+            $m = \app\TenantHost::mergeTask($ct, substr($branch, 5));
+            if (empty($m['ok'])) {
+                $err = (string) ($m['error'] ?? 'the merge failed');
+                $this->logTaskEvent((int) $task->id, 'error', 'system', 'Merge failed: ' . $err);
+                Flight::jsonError('Merge failed: ' . $err, 409);
+                return;
+            }
+            $task->status = 'merged';
+            $task->completedAt = date('Y-m-d H:i:s');
+            $task->updatedAt = date('Y-m-d H:i:s');
+            $task->progressMessage = 'Merged into the app as ' . ($m['merged'] ?? '?');
+            Bean::store($task);
+            $this->logTaskEvent((int) $task->id, 'success', 'system', 'Merged into the app in its container as ' . ($m['merged'] ?? '?'));
+            Flight::json(['success' => true, 'message' => 'Merged into the app']);
             return;
         }
 
@@ -3137,6 +3240,23 @@ class Workbench extends BuildControl {
             return;
         }
 
+        if ($ct = $this->tenantInst()) {
+            try {
+                if ((string) $task->agentSession !== '') \app\TenantRun::kill($ct, (string) $task->agentSession);
+                \app\TenantHost::discardTask($ct, $this->boardRunId($task));
+            } catch (\RuntimeException $e) {
+                Flight::jsonError("Could not stop the task in {$ct->slug}'s container: " . $e->getMessage(), 502);
+                return;
+            }
+            $task->status = 'pending';
+            $task->agentSession = null;
+            $task->updatedAt = date('Y-m-d H:i:s');
+            Bean::store($task);
+            $this->logTaskEvent($taskId, 'warning', 'system', "Task stopped by user (ended in {$ct->slug}'s container, its branch discarded)");
+            Flight::json(['success' => true, 'message' => 'Task stopped']);
+            return;
+        }
+
         try {
             // Kill tmux session if exists
             if ($task->tmuxSession) {
@@ -3166,6 +3286,7 @@ class Workbench extends BuildControl {
      */
     public function startserver($params = []) {
         if (!$this->requireLogin()) return;
+        if ($ct = $this->tenantInst()) { Flight::jsonError('The local preview server is not available for a project in its own container — run, review (Diff) and approve the task instead.', 409); return; }
 
         if (!SimpleCsrf::validate()) {
             Flight::jsonError('CSRF validation failed', 403);
@@ -3252,6 +3373,7 @@ class Workbench extends BuildControl {
      */
     public function stopserver($params = []) {
         if (!$this->requireLogin()) return;
+        if ($ct = $this->tenantInst()) { Flight::jsonError('The local preview server is not available for a project in its own container — run, review (Diff) and approve the task instead.', 409); return; }
 
         if (!SimpleCsrf::validate()) {
             Flight::jsonError('CSRF validation failed', 403);
@@ -3350,6 +3472,8 @@ class Workbench extends BuildControl {
             Flight::jsonError('Access denied', 403);
             return;
         }
+
+        if ($ct = $this->tenantInst()) $this->syncContainerTask($task, $ct);
 
         $progress = [
             'status' => $task->status,
@@ -3566,6 +3690,7 @@ class Workbench extends BuildControl {
      */
     public function uploadimage($params = []) {
         if (!$this->requireLogin()) return;
+        if ($ct = $this->tenantInst()) { Flight::jsonError('Attaching an image to the agent is not available for a project in its own container — run, review (Diff) and approve the task instead.', 409); return; }
 
         $request = Flight::request();
         if ($request->method !== 'POST') {
@@ -4357,6 +4482,30 @@ class Workbench extends BuildControl {
         if (!$task->id || !$this->access->canView($this->member->id, $task)) {
             $this->flash('error', 'Access denied');
             Flight::redirect('/workbench');
+            return;
+        }
+        if ($ct = $this->tenantInst()) {
+            // The task's branch is in the app's container: diff it there (main...task/<id>).
+            $br = (string) $task->worktreeBranch;
+            $patch = ''; $note = ''; $stat = '';
+            if (!str_starts_with($br, 'task/')) {
+                $note = 'This task has no branch in the container (not run yet, or merged / discarded).';
+            } else {
+                [$c, $o] = \app\TenantHost::ssh($ct, 'app', 'cd /srv/app && git rev-parse --verify -q ' . escapeshellarg($br) . ' >/dev/null && { git diff --stat main...' . escapeshellarg($br) . '; echo ---PATCH---; git diff main...' . escapeshellarg($br) . ' | head -c 500001; } || echo NOBRANCH', null, 60);
+                if ($c !== 0) $note = "Could not read the diff from {$ct->slug}'s container: " . trim((string) $o);
+                elseif (trim((string) $o) === 'NOBRANCH') $note = "No branch {$br} in the container — it may have been merged or discarded.";
+                else {
+                    [$stat, $patch] = array_pad(explode("---PATCH---\n", (string) $o, 2), 2, '');
+                    if (strlen($patch) > 500000) { $patch = substr($patch, 0, 500000); $note = 'Diff truncated (very large).'; }
+                    elseif (trim($patch) === '') $note = 'No changes on this branch.';
+                }
+            }
+            $this->viewData['title'] = 'Diff — ' . $task->title;
+            $this->viewData['task']  = $task;
+            $this->viewData['patch'] = $patch;
+            $this->viewData['note']  = $note;
+            $this->viewData['stat']  = trim($stat);
+            $this->render('workbench/diff', $this->viewData);
             return;
         }
         $ws   = (string)($task->projectPath ?? '');
