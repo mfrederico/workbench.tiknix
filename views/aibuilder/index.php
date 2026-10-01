@@ -40,16 +40,6 @@ foreach ($instances as $__i) { if (!empty($__i->isDefault)) { $hasDefault = true
   .ab-file.fresh { background:rgba(13,202,240,.10); border-radius:.25rem; }
   .ab-ckpt { font-size:.8rem; padding:.4rem 0; border-bottom:1px solid var(--bs-border-color); }
   .ab-ckpt .desc { color:var(--bs-secondary-color); }
-  /* Sign-in gate: locks the terminal until this instance is connected to Claude */
-  .ab-oauth-gate { position:absolute; inset:0; z-index:20; display:flex; align-items:center; justify-content:center;
-    background:rgba(15,17,20,.93); backdrop-filter:blur(3px); border-radius:.375rem; padding:1rem; }
-  .ab-oauth-card { max-width:540px; width:100%; background:var(--bs-body-bg); border:1px solid var(--bs-border-color);
-    border-radius:.5rem; padding:1.25rem 1.4rem; box-shadow:0 12px 44px rgba(0,0,0,.45); }
-  .ab-oauth-head { font-size:1.05rem; font-weight:700; color:var(--bs-primary); margin-bottom:.35rem; }
-  .ab-oauth-sub { font-size:.85rem; color:var(--bs-secondary-color); margin-bottom:.9rem; }
-  .ab-oauth-steps { padding-left:1.15rem; margin:0; font-size:.86rem; }
-  .ab-oauth-steps li { margin-bottom:.9rem; }
-  .ab-oauth-msg { font-size:.82rem; min-height:1.2em; margin-top:.4rem; }
 </style>
 
 <div class="container-fluid py-4 ab-page">
@@ -180,30 +170,9 @@ foreach ($instances as $__i) { if (!empty($__i->isDefault)) { $hasDefault = true
             <?php endif; ?>
             <div id="ab-terminal"></div>
 
-            <!-- Sign-in gate — the fake browser ($BROWSER in the jail) captured an OAuth
-                 URL; lock the terminal until this instance is connected to Claude. -->
-            <div id="ab-oauth-gate" class="ab-oauth-gate d-none">
-              <div class="ab-oauth-card">
-                <div class="ab-oauth-head"><i class="bi bi-box-arrow-in-right me-1"></i>Connect this instance to Claude</div>
-                <p class="ab-oauth-sub">Claude needs to sign in before it can work here. One-time — it stays signed in after.</p>
-                <ol class="ab-oauth-steps">
-                  <li>Open the sign-in page and approve access:
-                    <div class="mt-2"><a id="ab-oauth-open" class="btn btn-primary btn-sm" href="#" target="_blank" rel="noopener"><i class="bi bi-box-arrow-up-right me-1"></i>Open Claude sign-in</a></div>
-                  </li>
-                  <li>Approve — Anthropic then shows you a code. <strong>Copy it</strong> and paste it here:
-                    <div class="input-group input-group-sm mt-2">
-                      <input id="ab-oauth-code" class="form-control" placeholder="Paste the code Anthropic gave you…" autocomplete="off" spellcheck="false">
-                      <button id="ab-oauth-submit" class="btn btn-success" type="button" disabled><i class="bi bi-plug me-1"></i>Connect</button>
-                    </div>
-                  </li>
-                </ol>
-                <div id="ab-oauth-msg" class="ab-oauth-msg"></div>
-              </div>
-            </div>
-
             <?php if (!$ab_isDefault): ?>
             <p class="text-body-secondary small mt-2 mb-1">
-              Type <code>claude</code> to start the agent. If it needs to sign in, this panel locks until you connect it.
+              The agent starts on its own, in this project's container, signed in as the project's own Claude account.
               Hold <kbd>Shift</kbd> and drag to select/copy; right-click to paste.
             </p>
             <button id="ab-test" class="btn btn-outline-secondary btn-sm" type="button" title="Copy a browser-test prompt for the agent (uses the playwright MCP)"><i class="bi bi-bug me-1"></i>Copy browser-test prompt</button>
@@ -741,58 +710,6 @@ if (AB.has && !AB.keyNeeded) {
         else { msg.textContent = j.message || 'Delete failed.'; confirmBtn.disabled = false; }
       }).catch(()=>{ msg.textContent = 'Network error.'; confirmBtn.disabled = false; });
     });
-  })();
-
-  // --- Claude sign-in gate: lock the terminal until this instance is connected -----
-  // In the jail, `claude` prints its hosted sign-in URL + a "Paste code here" prompt
-  // right in the terminal. We poll oauthstatus (which reads that URL off the agent's
-  // screen), lock the terminal behind a gate, and when the operator approves + brings
-  // back the code Anthropic shows them, we type it straight into that prompt over the
-  // PTY websocket. No localhost, no server forward — Claude completes it itself.
-  (function(){
-    const gate=document.getElementById('ab-oauth-gate'); if(!gate) return;
-    const openA=document.getElementById('ab-oauth-open');
-    const codeI=document.getElementById('ab-oauth-code');
-    const subBtn=document.getElementById('ab-oauth-submit');
-    const msg=document.getElementById('ab-oauth-msg');
-    let curUrl='', busy=false;
-    const show=()=>gate.classList.remove('d-none');
-    const hide=()=>gate.classList.add('d-none');
-    const setMsg=(cls,txt)=>{ msg.className='ab-oauth-msg '+cls; msg.textContent=txt; };
-    codeI.addEventListener('input',()=>{ subBtn.disabled = codeI.value.trim()===''; });
-    codeI.addEventListener('keydown',e=>{ if(e.key==='Enter' && codeI.value.trim()) connect(); });
-
-    function present(url){
-      if(url!==curUrl){ curUrl=url; openA.href=url; codeI.value=''; subBtn.disabled=true; setMsg('',''); }
-      show();
-    }
-    function connect(){
-      const code=codeI.value.trim(); if(!code || busy) return;
-      if(!(termWs && termWs.readyState===WebSocket.OPEN)){ setMsg('text-danger','Terminal not connected — reload the page and try again.'); return; }
-      busy=true; subBtn.disabled=true; setMsg('text-body-secondary','Submitting to Claude…');
-      // Claude sits at its "Paste code here" prompt. Send the code, THEN a separate Enter a
-      // beat later — a trailing \r in the SAME message gets swallowed as bracketed-paste text,
-      // so it never submits (that's why you had to press Enter yourself).
-      termWs.send(JSON.stringify({type:'input',data:code}));
-      setTimeout(()=>{ if(termWs && termWs.readyState===WebSocket.OPEN) termWs.send(JSON.stringify({type:'input',data:'\r'})); }, 150);
-      // Let Claude exchange it; the poll drops the gate once the sign-in screen is gone.
-      setTimeout(()=>{
-        busy=false;
-        if(!gate.classList.contains('d-none'))
-          setMsg('text-body-secondary','Waiting for Claude to finish… if it didn’t take, re-copy the code and Connect again.');
-      }, 3000);
-    }
-    subBtn.addEventListener('click',connect);
-
-    if(!AB.inCt) setInterval(()=>{
-      if(busy) return;
-      fetch('/aibuilder/oauthstatus?id='+AB.id,{headers:{'X-Requested-With':'XMLHttpRequest'}})
-        .then(r=>r.json()).then(j=>{
-          const d=(j&&j.data)||{};
-          if(d.pending && d.url) present(d.url);
-          else { curUrl=''; if(!gate.classList.contains('d-none')) hide(); }
-        }).catch(()=>{});
-    }, 2500);
   })();
 
   // --- Reuse digest preview (what the planner is grounded on) ---

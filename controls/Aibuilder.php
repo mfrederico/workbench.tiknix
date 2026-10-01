@@ -53,12 +53,6 @@ class Aibuilder extends BuildControl {
         return @parse_ini_file($coreRoot . '/conf/aibuilder.ini', true) ?: [];
     }
 
-    /** wss/ws base for CORE's host (where the PTY node bridge runs), from [sidecar] core_url. */
-    private function coreWsBase(): string {
-        $u = rtrim((string) (\Flight::get('sidecar.core_url') ?: 'https://tiknix.com'), '/');
-        return (strpos($u, 'https://') === 0) ? 'wss://' . substr($u, 8) : 'ws://' . preg_replace('#^ws?://|^http://#', '', $u);
-    }
-
     private function minLevel(): int {
         // Floor to REACH AI Builder. Members (100) may use instances shared with
         // their team; per-instance authorization is enforced by accessibleInstance()
@@ -118,49 +112,6 @@ class Aibuilder extends BuildControl {
         } catch (\Throwable $e) { return true; }
     }
 
-    /** base64url(payload) + "." + hex(HMAC-SHA256(payload, secret)) — mirrors the bridges. */
-    /**
-     * @param string $engineWanted  Open the terminal on a SPECIFIC provider, e.g. 'zai'.
-     *                              Empty = the project's own engine, which is what every
-     *                              caller did before this existed.
-     *
-     * The engine has to be decided here rather than left to the jail, and it decides two
-     * things at once that must agree: which endpoint the CLI talks to (carried to the
-     * bridge as a token claim, which it turns into $ENGINE) and which credential store gets
-     * bound (AgentState::resolve, keyed per engine). Setting one without the other is the
-     * failure worth naming — credentials written to state/zai while the CLI still talks to
-     * Anthropic looks like a successful login that never takes effect.
-     */
-    /**
-     * Which engine a terminal for $sub runs on: the requested one, else the project's.
-     *
-     * ONE resolution point, used by both the token and the label beside it. Two copies of
-     * this rule would eventually disagree, and the way it would show up is the worst
-     * possible: a dropdown reading "GLM (z.ai)" over a session talking to Anthropic, so a
-     * /login there would look like it signed you in to z.ai and would not have.
-     *
-     * A requested engine has to be one the registry knows — this becomes $ENGINE for a
-     * spawned process, and the bridge allowlists it again independently.
-     */
-    private function terminalEngine(string $sub, string $wanted = ''): string {
-        $wanted = trim($wanted);
-        if ($wanted !== '' && EngineRegistry::isValid($wanted)) return $wanted;
-        $f = $this->instanceDir($sub) . '/.aibuilder/engine';
-        $fromFile = is_file($f) ? trim((string) @file_get_contents($f)) : '';
-        return ($fromFile !== '' && EngineRegistry::isValid($fromFile)) ? $fromFile : 'claude';
-    }
-
-    /**
-     * The terminal's engine, model and credential store — through the SAME resolver every
-     * runner uses (app\AgentContext), so a member building on their own model connection
-     * (core Connections → Models) gets it here too, materialized into their state dir.
-     * Throws when the member's choice cannot run; callers say so instead of opening claude.
-     */
-    private function terminalContext(string $sub, int $memberId, string $engineWanted = ''): \app\AgentContext {
-        $dir = \app\WorkbenchDb::dirOf($sub, $this->appNamespace());
-        return \app\AgentContext::for($memberId, 'worker', $dir, $this->terminalEngine($sub, $engineWanted));
-    }
-
     /**
      * A project in its own container: its terminal is the APP's (runtime bin/terminal-bridge.php on
      * <ct_ip>:3990, reached at wss://<its domain>/aibuilder/ws through the front proxy), and runs the
@@ -190,37 +141,6 @@ class Aibuilder extends BuildControl {
         $d = strtolower(trim((string) ($inst->ctDomain ?? '')));
         if ($d === '') throw new \RuntimeException("{$inst->slug} is in a container but has no domain (instance.ct_domain)");
         return 'wss://' . $d;
-    }
-
-    private function mintToken(string $sub, int $memberId, string $engineWanted = '', bool $resume = false): string {
-        $cfg    = $this->cfg();
-        $secret = (string)($cfg['token']['secret'] ?? '');
-        $ttl    = (int)($cfg['token']['ttl'] ?? 120);
-        // Where THIS member's agent credentials live. Decided here, in one place
-        // (app\AgentState), and carried in the signed payload so the terminal bridge
-        // binds the same store the planner and the build agents use. Without it the
-        // terminal fell back to the per-project dir and asked you to log in again for a
-        // project you had already signed in for elsewhere.
-        $ctx     = $this->terminalContext($sub, $memberId, $engineWanted);
-        $engine  = $ctx->engine;
-        $payload = json_encode([
-            'app' => $this->appNamespace(), 'sub' => $sub, 'member_id' => $memberId,
-            // The bridge reads this and sets ENGINE before spawning the jail. Without it the
-            // terminal always came up on the project's engine, so there was no way to sign
-            // in to a second provider from the browser at all.
-            'engine' => $engine,
-            'agent_state' => $ctx->stateDir,
-            /* Resume the agent's previous conversation instead of starting cold. The
-               transcript is already on disk in the state dir above — this only asks the
-               bridge to pass --continue when it spawns, so a terminal that dropped can be
-               picked up where it left off. Travels in the SIGNED payload, so a browser
-               cannot request it for a session that is not its own. */
-            'resume' => $resume,
-            'nonce' => bin2hex(random_bytes(8)),   // single-use: the bridge burns this on connect
-            'exp' => time() + $ttl,
-        ]);
-        $b64 = rtrim(strtr(base64_encode($payload), '+/', '-_'), '=');
-        return $b64 . '.' . hash_hmac('sha256', $b64, $secret);
     }
 
     // ---- instance access: converged onto WorkbenchAccess (owner/team scoping from CORE,
@@ -291,112 +211,6 @@ class Aibuilder extends BuildControl {
         return ['ok' => $code === 0, 'out' => implode("\n", $lines), 'code' => $code];
     }
 
-    /**
-     * Neutralize Claude's browser-open inside the jail. There's no GUI browser in the
-     * sandbox, so we point $BROWSER at a tiny no-op script; Claude then falls back to
-     * printing its hosted sign-in URL + a "Paste code here" prompt in the terminal,
-     * which the sign-in gate reads (see oauthstatus) and drives. The script also
-     * records the URL to .aibuilder/oauth-request.json as a debug artifact.
-     * Idempotent; safe to call on every open.
-     *
-     * Two files, both under the bind-mounted instance dir so they resolve at the
-     * SAME path inside the jail:
-     *   1. .aibuilder/oauth-browser.sh           — the fake browser (from scripts/)
-     *   2. .aibuilder/state/claude/settings.json  — env.BROWSER -> that script.
-     * Claude applies settings env via Object.assign(process.env, settings.env) at
-     * startup, and CLAUDE_CONFIG_DIR (set by jail-run.sh) points at that state dir,
-     * so this covers BOTH the interactive terminal and task automation with no jail
-     * or bridge changes. Merge-preserving: the operator's creds live in this dir too.
-     */
-    /**
-     * null when this engine can start, or the details of the key it is missing.
-     *
-     * Engines that sign in by OAuth (Anthropic's) always return null — they have no key to
-     * miss. For key engines this reports only on the MEMBER's key, deliberately: the
-     * operator's environment fallback is invisible to PHP, so a "no key" verdict here means
-     * "you have not set yours", which is the thing the member can act on.
-     */
-    /** [mc-<id> => "<name> — your key"] for the member's own Anthropic-protocol connections that can run. */
-    private function ownConnectionEngines(int $memberId): array {
-        $out = [];
-        try {
-            foreach (\Model_Modelconnection::forMember($memberId) as $c) {
-                if ($c->box()->runProblems() !== []) continue;   // chat-only or keyless: it cannot open a terminal
-                $out[$c->box()->engineName()] = (string) $c->name . ' — your key';
-            }
-        } catch (\RuntimeException $e) {
-            $this->logger->error('Terminal: could not list the member\'s model connections', ['member_id' => $memberId, 'err' => $e->getMessage()]);
-        }
-        return $out;
-    }
-
-    private function engineKeyPrompt(string $engine): ?array {
-        // A platform engine that authenticates by key (z.ai) runs on the SERVER's key; a
-        // member's own key for it is a model connection now (core Connections → Models,
-        // z.ai preset), chosen under "Build with". Say that, once, on key engines.
-        if (\app\EngineRegistry::authTokenEnv($engine) === '') return null;
-        return [
-            'engine'   => $engine,
-            'label'    => \app\EngineRegistry::label($engine),
-            'keyUrl'   => \app\EngineRegistry::keyUrl($engine),
-            // Core's page, not this sidecar's: a relative link would 404 here.
-            'settings' => rtrim((string) (\Flight::get('sidecar.core_url') ?? ''), '/') . '/connections#models',
-        ];
-    }
-
-    private function ensureOAuthCapture(string $slug, string $engine = 'claude'): void {
-        if (!preg_match(self::SLUG_RE, $slug)) return;
-        $dir = $this->instanceDir($slug);
-        if (!is_dir($dir)) return;
-
-        $aib     = $dir . '/.aibuilder';
-        $browser = $aib . '/oauth-browser.sh';
-        $src     = dirname(__DIR__) . '/scripts/aibuilder-oauth-browser.sh';
-
-        // (1) Install / refresh the fake browser (copy when missing or changed).
-        $want = is_file($src) ? @file_get_contents($src) : false;
-        if ($want !== false) {
-            if (!is_dir($aib)) @mkdir($aib, 0775, true);
-            if (@file_get_contents($browser) !== $want) @file_put_contents($browser, $want);
-            @chmod($browser, 0755);
-        }
-
-        // (2) Point Claude at it via the persisted per-instance settings.json.
-        /* The state dir for the ENGINE being opened, not always claude.
-           This was hardcoded to state/claude, so the fake $BROWSER that captures the OAuth
-           URL was only ever installed for one provider. Opening the terminal on another
-           engine pointed CLAUDE_CONFIG_DIR at a store with no settings.json, so the login
-           had nothing to capture it — and the sign-in gate never appeared.
-           Resolved through AgentState so it is the SAME directory jail-run.sh binds: the
-           member's store when there is one, the project's otherwise. Writing to a path the
-           jail does not mount is indistinguishable from not writing it at all. */
-        $stateDir = \app\AgentState::resolve((int) $this->member->id, $engine, $dir);
-        if (!is_dir($stateDir)) @mkdir($stateDir, 0775, true);
-
-        /* (2a) — writing the member's per-engine key into the state dir — was removed
-           2026-09-23. A member's own key is a model connection now; AgentContext::for writes
-           its endpoint.env + auth-token here when the member builds on it. */
-
-        $file = $stateDir . '/settings.json';
-        $settings = [];
-        if (is_file($file)) {
-            $decoded = json_decode(((string)@file_get_contents($file)) ?? '', true);
-            if (is_array($decoded)) $settings = $decoded;
-        }
-        // NOTE: deliberately NOT pinning forceLoginMethod. The default interactive flow
-        // already uses the Claude.ai (subscription) path via a localhost callback, which
-        // we've verified works end-to-end. Forcing "claudeai" can switch it onto the
-        // HOSTED callback (platform.claude.com/oauth/code/callback), which has an open
-        // "Redirect URI is not supported by client" bug (anthropics/claude-code#36215).
-        // Don't destabilise a working flow — leave the login method to Claude's default.
-        if (!isset($settings['env']) || !is_array($settings['env'])) $settings['env'] = [];
-        if (($settings['env']['BROWSER'] ?? null) !== $browser) {
-            $settings['env']['BROWSER'] = $browser;
-            @file_put_contents($file,
-                json_encode($settings, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES) . "\n");
-        }
-    }
-
     // --- routes ---------------------------------------------------------------
 
     /** GET /aibuilder — list instances (optionally ?id= to open one inline). */
@@ -429,9 +243,8 @@ class Aibuilder extends BuildControl {
             $this->access->accessibleInstances())));
         $selected  = $selId ? $this->accessibleInstance($selId) : null;
 
-        // Neutralize Claude's in-jail browser-open before the terminal opens, so a
-        // first-run `claude` sign-in surfaces in the gate instead of a dead browser.
-        $termEngine = ''; $termError = '';
+        // The terminal is the APP's own (runtime bin/terminal-bridge.php, in its container).
+        $termError = '';
         $inCt = $selected && $this->inContainer($selected);
         $ctToken = ''; $ctWs = ''; $ctAgentNote = null;
         if ($inCt) {
@@ -455,13 +268,8 @@ class Aibuilder extends BuildControl {
                 $this->logger->error('Terminal: container project not ready', ['instance' => $selected->slug, 'err' => $termError]);
             }
         } elseif ($selected) {
-            try {
-                $termEngine = $this->terminalContext($selected->slug, $mid, (string) $this->getParam('engine', ''))->engine;
-                $this->ensureOAuthCapture($selected->slug, $termEngine);
-            } catch (\RuntimeException $e) {
-                $termError = $e->getMessage();   // e.g. the model connection chosen for builds is gone
-                $this->logger->error('Terminal: engine could not be resolved', ['instance' => $selected->slug, 'member_id' => $mid, 'err' => $termError]);
-            }
+            // The host's node bridge and jail are retired (2026-10-01): a terminal is an app's own.
+            $termError = ($selected->displayName ?: $selected->slug) . " isn't running in its own container, so it has no builder terminal.";
         }
 
         // Share-management UI (owner-only team sharing) is part of the registry write-seam;
@@ -489,39 +297,14 @@ class Aibuilder extends BuildControl {
             'ab_needsInstall' => $needsInstall,
             'ab_sub'         => $selected ? $selected->slug : '',
             'ab_termError'   => $termError,
-            'ab_token'       => $inCt ? $ctToken : (($selected && $termError === '') ? $this->mintToken($selected->slug, (int)$this->member->id,
-                                                             (string) $this->getParam('engine', ''),
-                                                             $this->getParam('resume', '') === '1') : ''),
-            /* The engines this terminal can be opened on, and which one it is on now.
-               menu() already filters to AVAILABLE engines, so z.ai appears here the moment
-               [engine.zai] available flips — no code change, which is the point of the
-               registry reading from ini.
-               The active one is resolved the same way mintToken() resolves it, because a
-               label that disagreed with the session would be worse than no label: you would
-               believe you were signed in to a provider you were not. */
-            // The platform's engines, then THIS member's own model connections (core
-            // Connections → Models) — "GLM (z.ai) — your key" runs on the member's managed
-            // key; the platform "zai" runs on the server's. AgentContext refuses anyone
-            // else's connection, so listing only your own is presentation, not the gate.
-            // A container project runs the APP's agent: core's engine list does not apply there.
-            'ab_engines'     => $inCt ? [] : EngineRegistry::menu() + $this->ownConnectionEngines($mid),
-            'ab_engine'      => $termEngine,
-            /* Key-authenticated engine with no key for THIS member: the terminal would open,
-               the jail would refuse by name, and the session would die before the prompt.
-               Surface it as a link to the provider's key page instead of a dead terminal.
-               Only the member's own key is checked. The operator's fallback lives in the
-               bridge's environment, which PHP cannot see — so this asks the question it can
-               actually answer, and the jail still refuses loudly if neither exists. */
-            // A NOTE, never a gate: the server's key lives in the bridge's environment, which
-            // PHP cannot see, so nothing here can know the terminal would fail. The jail
-            // refuses by name when there is no key. (ab_keyNeeded gated the terminal on the
-            // member's own key, which no longer exists.)
+            'ab_token'       => $ctToken,
+            // The app's agent runs there: no platform engine picker, no host key notes.
+            'ab_engines'     => [],
+            'ab_engine'      => '',
             'ab_keyNeeded'   => null,
-            'ab_keyNote'     => ($selected && $termEngine !== '') ? $this->engineKeyPrompt($termEngine) : null,
+            'ab_keyNote'     => null,
             'ab_wspath'      => (string)($cfg['bridge']['ws_path'] ?? '/aibuilder/ws'),
-            // The terminal PTY bridge (node runner) lives on CORE, so the xterm must
-            // connect to core's host, not this sidecar's. wss://<core-host>. See coreWsBase().
-            'ab_ws_base'     => $inCt ? $ctWs : $this->coreWsBase(),
+            'ab_ws_base'     => $ctWs,
             'ab_hasInstance' => (bool)$selected,
             'ab_inCt'        => $inCt,
             'ab_agentNote'   => $ctAgentNote,
@@ -595,81 +378,14 @@ class Aibuilder extends BuildControl {
         if (!$this->requireLevel($this->minLevel())) return;
         $inst = $this->accessibleInstance($this->getParam('id', 0));
         if (!$inst) { Flight::jsonError('No such instance', 404); return; }
-        // Carries the engine too: a reconnect that silently dropped back to the project's
-        // provider would move you off z.ai mid-session without saying so.
+        if (!$this->inContainer($inst)) { Flight::jsonError("{$inst->slug} isn't running in its own container, so it has no builder terminal.", 409); return; }
         try {
-            $tok = $this->inContainer($inst)
-                ? $this->mintAppToken($inst, (int) $this->member->id, $this->getParam('resume', '') === '1')
-                : $this->mintToken($inst->slug, (int)$this->member->id, (string) $this->getParam('engine', ''), $this->getParam('resume', '') === '1');
+            $tok = $this->mintAppToken($inst, (int) $this->member->id, $this->getParam('resume', '') === '1');
         } catch (\RuntimeException $e) {
             Flight::jsonError($e->getMessage(), 409);
             return;
         }
         Flight::jsonSuccess(['token' => $tok]);
-    }
-
-    /** Path to the instance's jailed tmux control socket. */
-    private function tmuxSock(string $slug): string {
-        return $this->instanceDir($slug) . '/.aibuilder/tmux.sock';
-    }
-
-    /** Best-effort snapshot of the jailed agent's current screen ('' if no session). */
-    private function paneText(string $slug): string {
-        if (!preg_match(self::SLUG_RE, $slug)) return '';
-        $sock = $this->tmuxSock($slug);
-        if (!file_exists($sock)) return '';
-        $out = []; $code = 0;
-        exec('tmux -S ' . escapeshellarg($sock) . ' capture-pane -p -t aib 2>/dev/null', $out, $code);
-        return $code === 0 ? implode("\n", $out) : '';
-    }
-
-    /**
-     * Reassemble a Claude sign-in URL from the agent's screen. Claude hard-wraps the
-     * URL across several terminal lines (that's why it offers its own "c to copy");
-     * URLs contain no spaces, so once we hit the "…/oauth/authorize?" line we glue the
-     * contiguous no-space fragments that follow, stopping at the first line with a
-     * space (the next prompt, e.g. "Paste code here >").
-     */
-    private function signinUrlFromPane(string $pane): string {
-        if ($pane === '') return '';
-        $url = ''; $collecting = false;
-        foreach (explode("\n", $pane) as $line) {
-            $t = trim($line);
-            if (!$collecting) {
-                $pos = stripos($t, 'https://');
-                if ($pos !== false
-                    && preg_match('#^https://[a-z0-9.-]*claude\.(?:com|ai)/[^\s]*oauth/authorize\?#i', substr($t, $pos))) {
-                    $url = substr($t, $pos);
-                    $collecting = true;
-                }
-                continue;
-            }
-            if ($t === '' || preg_match('/\s/', $t)) break;   // continuation ended
-            $url .= $t;
-        }
-        return $url;
-    }
-
-    /**
-     * GET /aibuilder/oauthstatus?id= — is the jailed Claude sitting at its sign-in
-     * screen? Claude prints a hosted sign-in URL (redirect_uri=platform.claude.com/
-     * oauth/code/callback) plus a "Paste code here" prompt right in the terminal, so we
-     * read the agent's screen and hand that URL to the gate. The operator approves in
-     * their own browser, copies the code Anthropic shows, and the gate types it back
-     * into that prompt over the PTY websocket (client-side). JSON: {pending:bool, url?}.
-     */
-    public function oauthstatus($params = []): void {
-        if (!$this->requireLevel($this->minLevel())) return;
-        $inst = $this->accessibleInstance($this->getParam('id', 0));
-        if (!$inst) { Flight::jsonError('No such instance', 404); return; }
-        if ($this->refuseInContainer($inst, 'The terminal sign-in capture')) return;
-
-        $url = $this->signinUrlFromPane($this->paneText($inst->slug));
-        if ($url !== '' && preg_match('#^https://[a-z0-9.-]*claude\.(?:com|ai)/[^\s]*oauth/authorize\?#i', $url)) {
-            Flight::jsonSuccess(['pending' => true, 'url' => $url]);
-            return;
-        }
-        Flight::jsonSuccess(['pending' => false]);
     }
 
     /** GET /aibuilder/changes?id= — files changed since the last checkpoint. JSON. */
@@ -1073,27 +789,19 @@ class Aibuilder extends BuildControl {
     }
 
     /**
-     * POST /aibuilder/restart — kill the instance's jailed tmux session so a fresh
-     * jail (with the current binds/settings) launches when the terminal reconnects.
-     * The fpm user owns the socket, so no elevation is needed. JSON.
+     * POST /aibuilder/restart — end the agent's tmux session in the app's container, so the
+     * next connect starts a fresh one. JSON.
      */
     public function restart($params = []): void {
         if (!$this->requireLevel($this->minLevel())) return;
         if (!$this->validateCSRF()) return;
         $inst = $this->accessibleInstance($this->getParam('id', 0));
         if (!$inst) { Flight::jsonError('No such instance', 404); return; }
-        if ($this->inContainer($inst)) {
-            // The agent's tmux session lives in the app's container; ending it lets the next
-            // connect start a fresh one. Attached tabs see the session end and reconnect.
-            [$c, $o] = \app\TenantHost::ssh($inst, 'app', 'tmux kill-session -t aib-default 2>&1 || true', null, 20);
-            if ($c !== 0) { Flight::jsonError("could not reach {$inst->slug}'s container: " . trim((string) $o), 502); return; }
-            Flight::jsonSuccess([], 'Session restarted — reconnecting');
-            return;
-        }
-        $sock = $this->instanceDir($inst->slug) . '/.aibuilder/tmux.sock';
-        if (@file_exists($sock)) {
-            @exec('tmux -S ' . escapeshellarg($sock) . ' kill-server 2>&1');
-        }
+        if (!$this->inContainer($inst)) { Flight::jsonError("{$inst->slug} isn't running in its own container, so it has no builder terminal.", 409); return; }
+        // The agent's tmux session lives in the app's container; ending it lets the next connect
+        // start a fresh one. Attached tabs see the session end and reconnect.
+        [$c, $o] = \app\TenantHost::ssh($inst, 'app', 'tmux kill-session -t aib-default 2>&1 || true', null, 20);
+        if ($c !== 0) { Flight::jsonError("could not reach {$inst->slug}'s container: " . trim((string) $o), 502); return; }
         Flight::jsonSuccess([], 'Session restarted — reconnecting');
     }
 
