@@ -182,19 +182,8 @@ class Aibuilder extends BuildControl {
     }
 
     private function mintAppToken(object $inst, int $memberId, bool $resume): string {
-        $key = (string) ($inst->terminalKey ?? '');
-        if (strlen($key) < 64) {
-            throw new \RuntimeException("{$inst->slug} has no builder terminal yet — on core: php scripts/tenant.php --terminal={$inst->slug}");
-        }
-        $ttl = (int) ($this->cfg()['token']['ttl'] ?? 120);
-        $payload = json_encode([
-            'sub' => (string) $inst->slug, 'member_id' => $memberId,
-            'agent' => '',                            // the app's default agent (its AI agents page)
-            'resume' => $resume,
-            'nonce' => bin2hex(random_bytes(8)), 'exp' => time() + $ttl,
-        ]);
-        $b64 = rtrim(strtr(base64_encode($payload), '+/', '-_'), '=');
-        return $b64 . '.' . hash_hmac('sha256', $b64, $key);
+        // Signed by core's one signer for apps (lib/AppToken.php), with the app's own key.
+        return \app\AppToken::terminal($inst, $memberId, $resume, (int) ($this->cfg()['token']['ttl'] ?? 120));
     }
 
     private function appWsBase(object $inst): string {
