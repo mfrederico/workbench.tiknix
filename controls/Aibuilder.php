@@ -121,17 +121,6 @@ class Aibuilder extends BuildControl {
         return trim((string) ($inst->ctIp ?? '')) !== '';
     }
 
-    /** The token for the app's bridge, signed with THAT app's key (instance.terminal_key). */
-    /**
-     * Refuse, by name, an action this page still performs on THIS host's copy of a project, for a
-     * project that lives in its own container (there is no copy here — only its board).
-     */
-    private function refuseInContainer(object $inst, string $what): bool {
-        if (!$this->inContainer($inst)) return false;
-        Flight::jsonError("{$what}: not available from this page yet for {$inst->slug}, which runs in its own container.", 409);
-        return true;
-    }
-
     private function mintAppToken(object $inst, int $memberId, bool $resume): string {
         // Signed by core's one signer for apps (lib/AppToken.php), with the app's own key.
         return \app\AppToken::terminal($inst, $memberId, $resume, (int) ($this->cfg()['token']['ttl'] ?? 120));
@@ -441,33 +430,7 @@ class Aibuilder extends BuildControl {
     /** POST /aibuilder/checkpoint?id= — checkpoint with an optional description. JSON. */
     public function checkpoint($params = []): void {
         if (!$this->requireLevel($this->minLevel())) return;
-        if (!$this->validateCSRF()) return;
-        $inst = $this->accessibleInstance($this->getParam('id', 0));
-        if (!$inst) { Flight::jsonError('No such instance', 404); return; }
-        if ($this->refuseInContainer($inst, 'Checkpoints')) return;
-
-        $desc = mb_substr(trim(preg_replace('/[\r\n]+/', ' ', (string)$this->getParam('label', ''))), 0, 200);
-
-        // snapshot-instance.sh commits + creates an auto-unique lightweight tag, echoing it.
-        $out = $this->runScript('snapshot-instance.sh', [$this->appNamespace(), $inst->slug]);
-        if (!$out['ok']) { Flight::jsonError('Checkpoint failed: ' . substr(trim($out['out']), -300), 500); return; }
-
-        $tag = '';
-        foreach (array_reverse(array_filter(array_map('trim', explode("\n", $out['out'])))) as $l) {
-            if (preg_match('/^checkpoint-[A-Za-z0-9._-]+$/', $l)) { $tag = $l; break; }
-        }
-        // Re-tag as an ANNOTATED tag carrying the description (git-native; HEAD is the snapshot commit).
-        if ($tag !== '' && $desc !== '') {
-            $this->gitInstance($inst, ['tag', '-f', '-a', $tag, '-m', $desc]);
-        }
-
-        // A checkpoint is a local git tag and nothing more. Auto-publish used to ride
-        // here, reading a `connections` bean and calling GitHubPublisher — both of which
-        // resolve against THIS SIDECAR's database and class path, not core's, so it had
-        // been dead since the extraction. Publishing on a schedule is now a cron on the
-        // project's publish pipeline, which is visible, debuggable and owned by the
-        // project rather than hidden inside a save.
-        Flight::jsonSuccess(['checkpoint' => $tag, 'description' => $desc], 'Checkpoint saved');
+        Flight::jsonError('Taking a checkpoint from this page is not available for a project in its own container yet.', 409);
     }
 
     /** GET /aibuilder/checkpoints?id= — list checkpoints with descriptions. JSON. */
@@ -497,19 +460,7 @@ class Aibuilder extends BuildControl {
     /** POST /aibuilder/rollback/<checkpoint>?id= — restore a checkpoint. JSON. */
     public function rollback($params = []): void {
         if (!$this->requireLevel($this->minLevel())) return;
-        if (!$this->validateCSRF()) return;
-        // Owner-only: rollback resets the whole (possibly team-shared) instance.
-        $inst = $this->ownedInstance($this->getParam('id', 0));
-        if (!$inst) { Flight::jsonError('No such instance (owner only)', 404); return; }
-        if ($this->refuseInContainer($inst, 'Rollback')) return;
-
-        $ckpt = (string)($params['operation']->name ?? $this->getParam('checkpoint', 'checkpoint-baseline'));
-        if (!preg_match('/^[a-z0-9-]{3,60}$/i', $ckpt)) {
-            Flight::jsonError('Invalid checkpoint', 400); return;
-        }
-        $out = $this->runScript('rollback-instance.sh', [$this->appNamespace(), $inst->slug, $ckpt]);
-        if ($out['ok']) Flight::jsonSuccess(['log' => $out['out']], 'Rolled back to ' . $ckpt);
-        else            Flight::jsonError('Rollback failed: ' . substr(trim($out['out']), -300), 500);
+        Flight::jsonError('Rolling back from this page is not available for a project in its own container yet.', 409);
     }
 
     /**
@@ -834,136 +785,21 @@ class Aibuilder extends BuildControl {
 
     private const UPLOAD_MAX = 52428800; // 50 MB per file
 
-    /** Relative dir for an upload bucket. public/uploads is under the docroot (web-served);
-     *  secure/uploads is outside it (not web-accessible). BOTH are tracked and published. */
-    private function uploadBucketRel(string $bucket): string {
-        return ($bucket === 'public' ? 'public' : 'secure') . '/uploads';
-    }
-
-    /** Ensure both upload buckets exist. public/uploads is web-served (under the docroot);
-     *  secure/uploads sits outside the docroot so it is NOT web-accessible — a place for a
-     *  DB or system files. Both are committed + published; the only difference is reachability. */
-    private function ensureUploadDirs(string $slug): void {
-        $root = $this->instanceDir($slug);
-        foreach (['public/uploads', 'secure/uploads'] as $rel) {
-            @mkdir($root . '/' . $rel, 0775, true);
-            $keep = $root . '/' . $rel . '/.gitkeep';
-            if (!is_file($keep)) @file_put_contents($keep, '');
-        }
-        // public/uploads is web-served: serve assets, but never EXECUTE uploaded code.
-        $puh = $root . '/public/uploads/.htaccess';
-        if (!is_file($puh)) {
-            @file_put_contents($puh,
-                "# Uploaded assets are served but never executed.\n"
-                . "<FilesMatch \"\\.(php|phtml|phar|php[0-9]|pht)$\">\n    Require all denied\n</FilesMatch>\n");
-        }
-        // Defense-in-depth: if a web server is ever mis-pointed at the instance root
-        // (docroot must be public/), deny web access to secure/ entirely.
-        $sh = $root . '/secure/.htaccess';
-        if (!is_file($sh)) @file_put_contents($sh, "Require all denied\n");
-    }
-
-    /** Reduce an uploaded name to a safe basename (no traversal, no hidden files). */
-    private function safeName(string $name): string {
-        $name = preg_replace('/[^A-Za-z0-9._-]+/', '_', basename($name));
-        $name = ltrim($name, '.');
-        return substr($name === '' ? 'file' : $name, 0, 120);
-    }
-
     /** POST /aibuilder/upload — store file(s) into the secure|public bucket. JSON. */
     public function upload($params = []): void {
         if (!$this->requireLevel($this->minLevel())) return;
-        if (!$this->validateCSRF()) return;
-        $inst = $this->accessibleInstance($this->getParam('id', 0));
-        if (!$inst) { Flight::jsonError('No such instance', 404); return; }
-        if ($this->refuseInContainer($inst, 'Uploads')) return;
-
-        $bucket    = $this->getParam('bucket', 'secure') === 'public' ? 'public' : 'secure';
-        $overwrite = filter_var($this->getParam('overwrite', false), FILTER_VALIDATE_BOOLEAN);
-        $this->ensureUploadDirs($inst->slug);
-        $destDir = $this->instanceDir($inst->slug) . '/' . $this->uploadBucketRel($bucket);
-
-        if (empty($_FILES['files']['name'])) { Flight::jsonError('No files uploaded', 400); return; }
-        $names = (array)$_FILES['files']['name'];
-        $tmps  = (array)$_FILES['files']['tmp_name'];
-        $errs  = (array)$_FILES['files']['error'];
-        $sizes = (array)$_FILES['files']['size'];
-
-        $stored = []; $errors = [];
-        foreach ($names as $i => $origName) {
-            if (($errs[$i] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) { $errors[] = $origName . ': upload error'; continue; }
-            if (($sizes[$i] ?? 0) > self::UPLOAD_MAX)               { $errors[] = $origName . ': too large (max 50MB)'; continue; }
-            if (!is_uploaded_file($tmps[$i]))                        { $errors[] = $origName . ': invalid'; continue; }
-
-            $name = $this->safeName((string)$origName);
-            $dest = $destDir . '/' . $name;
-            if ($overwrite) {
-                // index.php is protected — never overwrite the front controller.
-                if (strtolower($name) === 'index.php' && is_file($dest)) {
-                    $errors[] = $origName . ': index.php is protected (not overwritten)'; continue;
-                }
-                // otherwise keep $dest as-is; move_uploaded_file replaces it.
-            } else {
-                $n = 1;
-                while (is_file($dest)) {
-                    $ext  = pathinfo($name, PATHINFO_EXTENSION);
-                    $dest = $destDir . '/' . pathinfo($name, PATHINFO_FILENAME) . '-' . $n . ($ext ? '.' . $ext : '');
-                    $n++;
-                }
-            }
-            if (move_uploaded_file($tmps[$i], $dest)) {
-                @chmod($dest, 0664);
-                $rel = $this->uploadBucketRel($bucket) . '/' . basename($dest);
-                // Track the file so it publishes with the next checkpoint (both buckets publish).
-                $this->gitInstance($inst, ['add', $rel]);
-                $stored[] = ['name' => basename($dest), 'path' => $rel, 'ref' => '@' . $rel, 'bucket' => $bucket];
-            } else {
-                $errors[] = $origName . ': write failed';
-            }
-        }
-        Flight::jsonSuccess(['stored' => $stored, 'errors' => $errors], count($stored) . ' file(s) uploaded');
+        Flight::jsonError('Uploading files for the agent is not available for a project in its own container yet.', 409);
     }
 
     /** GET /aibuilder/uploads?id= — list uploaded files by bucket. JSON. */
     public function uploads($params = []): void {
         if (!$this->requireLevel($this->minLevel())) return;
-        $inst = $this->accessibleInstance($this->getParam('id', 0));
-        if (!$inst) { Flight::jsonError('No such instance', 404); return; }
-        if ($this->refuseInContainer($inst, 'Uploads')) return;
-        $out = ['secure' => [], 'public' => []];
-        foreach (['secure', 'public'] as $b) {
-            $dir = $this->instanceDir($inst->slug) . '/' . $this->uploadBucketRel($b);
-            if (!is_dir($dir)) continue;
-            foreach (scandir($dir) as $f) {
-                if ($f === '.' || $f === '..' || $f === '.gitkeep' || $f === '.htaccess') continue;
-                $full = $dir . '/' . $f;
-                if (!is_file($full)) continue;
-                $rel = $this->uploadBucketRel($b) . '/' . $f;
-                $out[$b][] = ['name' => $f, 'path' => $rel, 'ref' => '@' . $rel, 'size' => filesize($full)];
-            }
-        }
-        Flight::jsonSuccess(['uploads' => $out]);
+        Flight::jsonError('Uploading files for the agent is not available for a project in its own container yet.', 409);
     }
 
     /** POST /aibuilder/deleteupload — remove an uploaded file. JSON. */
     public function deleteupload($params = []): void {
         if (!$this->requireLevel($this->minLevel())) return;
-        if (!$this->validateCSRF()) return;
-        $inst = $this->accessibleInstance($this->getParam('id', 0));
-        if (!$inst) { Flight::jsonError('No such instance', 404); return; }
-        if ($this->refuseInContainer($inst, 'Uploads')) return;
-        $bucket = $this->getParam('bucket', 'secure') === 'public' ? 'public' : 'secure';
-        $name   = basename((string)$this->getParam('name', ''));
-        if ($name === '' || $name === '.gitkeep') { Flight::jsonError('Invalid file', 400); return; }
-
-        $relDir    = $this->uploadBucketRel($bucket);
-        $bucketDir = realpath($this->instanceDir($inst->slug) . '/' . $relDir);
-        $real      = realpath($this->instanceDir($inst->slug) . '/' . $relDir . '/' . $name);
-        if (!$real || !$bucketDir || strpos($real, $bucketDir) !== 0 || !is_file($real)) {
-            Flight::jsonError('Not found', 404); return;
-        }
-        $this->gitInstance($inst, ['rm', '-f', '--cached', $relDir . '/' . $name]);
-        @unlink($real);
-        Flight::jsonSuccess([], 'Deleted');
+        Flight::jsonError('Uploading files for the agent is not available for a project in its own container yet.', 409);
     }
 }

@@ -220,11 +220,13 @@ foreach ($instances as $__i) { if (!empty($__i->isDefault)) { $hasDefault = true
             <!-- 3) Checkpoint (commits everything above; local only — publishing is the Publisher's) -->
             <hr class="my-2">
             <div class="text-uppercase text-body-secondary fw-semibold mb-1" style="font-size:.68rem;letter-spacing:.04em"><i class="bi bi-bookmark-plus me-1"></i>Checkpoint</div>
-            <form id="ab-ckpt-form" class="d-flex gap-2 mb-1">
+            <?php /* Saving and rolling back checkpoints is not built for a project in its own container yet;
+                     its checkpoints (the builder's, before each plan) are listed below. */ ?>
+            <form id="ab-ckpt-form" class="d-flex gap-2 mb-1<?= !empty($ab_inCt) ? ' d-none' : '' ?>">
               <input id="ab-ckpt-desc" class="form-control form-control-sm" placeholder="Describe this checkpoint…" maxlength="200">
               <button class="btn btn-success btn-sm text-nowrap" type="submit" title="Save checkpoint"><i class="bi bi-save me-1"></i>Save</button>
             </form>
-            <div class="text-body-secondary mb-2" style="font-size:.72rem">Commits all changes &amp; uploads above as a restore point. Going live is separate — use <strong>Publish</strong> in the top bar.</div>
+            <div class="text-body-secondary mb-2<?= !empty($ab_inCt) ? ' d-none' : '' ?>" style="font-size:.72rem">Commits all changes &amp; uploads above as a restore point. Going live is separate — use <strong>Publish</strong> in the top bar.</div>
             <div id="ab-ckpt-list" class="small"></div>
           </div>
         </div>
@@ -290,7 +292,7 @@ foreach ($instances as $__i) { if (!empty($__i->isDefault)) { $hasDefault = true
         <div class="border rounded p-3 mb-3">
           <div class="fw-semibold mb-1"><i class="bi bi-arrow-counterclockwise me-1"></i>Roll back this instance</div>
           <p class="small text-body-secondary mb-2">Restores <strong>code and data</strong> of this instance to this checkpoint. Anything since is lost.</p>
-          <button id="ab-ck-rollback" class="btn btn-outline-danger btn-sm" type="button"><i class="bi bi-arrow-counterclockwise me-1"></i>Roll back to here</button>
+          <button id="ab-ck-rollback" class="btn btn-outline-danger btn-sm<?= !empty($ab_inCt) ? ' d-none' : '' ?>" type="button"><i class="bi bi-arrow-counterclockwise me-1"></i>Roll back to here</button>
         </div>
         <?php endif; ?>
         <!-- Fork (admin only) -->
