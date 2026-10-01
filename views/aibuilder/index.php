@@ -99,19 +99,16 @@ foreach ($instances as $__i) { if (!empty($__i->isDefault)) { $hasDefault = true
               <span id="ab-status" class="fw-normal text-body-secondary small">· connecting…</span>
             </span>
             <span class="d-flex flex-wrap align-items-center gap-2">
-              <?php /* Which provider this terminal talks to, and how to change it.
-                       RELOADS rather than switching live: a session is bound to its engine
-                       when the daemon spawns, so a dropdown that appeared to switch an open
-                       session would be lying about where the next keystroke goes.
-                       This is also the only way to sign in to a SECOND provider. /login
-                       writes to the credential store of whichever engine the terminal was
-                       opened with, so opening on Claude and logging in can only ever
-                       produce another Anthropic login, however many times you try. */ ?>
-              <?php if (!empty($ab_engines) && count($ab_engines) > 1): ?>
-                <select id="ab-engine" class="form-select form-select-sm w-auto"
-                        title="Which coding agent this terminal runs — changing it reopens the session">
-                  <?php foreach ($ab_engines as $eng => $lbl): ?>
-                    <option value="<?= htmlspecialchars($eng) ?>"<?= $eng === ($ab_engine ?? '') ? ' selected' : '' ?>>
+              <?php /* Which of the app's agents this terminal runs (its AI agents page). Each is YOUR
+                       own session on that agent (aib-<agent>-m<you>): a coworker on the same project
+                       has theirs, so you can be on z.ai while they are on Claude, or both on Claude,
+                       without typing into one shared screen. Switching opens (or reattaches) your
+                       session on the other agent; the one you leave keeps running. */ ?>
+              <?php if (!empty($ab_agents) && count($ab_agents) > 1): ?>
+                <select id="ab-agent" class="form-select form-select-sm w-auto"
+                        title="Which of this app's agents your terminal runs — each is your own session">
+                  <?php foreach ($ab_agents as $val => $lbl): ?>
+                    <option value="<?= htmlspecialchars((string) $val) ?>"<?= (string) $val === (string) ($ab_agent ?? '') ? ' selected' : '' ?>>
                       <?= htmlspecialchars($lbl) ?>
                     </option>
                   <?php endforeach; ?>
@@ -360,10 +357,9 @@ const AB = {
   inCt: <?= !empty($ab_inCt) ? 'true' : 'false' ?>,
   url: <?= json_encode($ab_url ?? '') ?>,
   wsBase: <?= json_encode($ab_ws_base ?? '') ?>,
-  // The engine this page resolved to. Must ride along on every token refresh: the token
-  // carries the engine claim, and a refresh without it re-resolves to the default, which
-  // is how picking z.ai kept landing you in the claude session.
-  engine: <?= json_encode($ab_engine ?? '') ?>,
+  // The agent this page's terminal runs ('' = the app's default). Rides along on every token
+  // refresh, Resume and Restart: without it a reconnect would land in your default-agent session.
+  agent: <?= json_encode((string) ($ab_agent ?? '')) ?>,
 };
 const esc = s => (s||'').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
 
@@ -388,7 +384,7 @@ if (createForm) createForm.addEventListener('submit', function (e) {
 if (AB.has && !AB.keyNeeded) {
   const statusEl = document.getElementById('ab-status');
   const setStatus = t => { statusEl.textContent = '· ' + t; };
-  const freshToken = () => fetch('/aibuilder/refresh?id='+AB.id+(AB.engine?'&engine='+encodeURIComponent(AB.engine):'')+(AB.resume?'&resume=1':''), {headers:{'X-Requested-With':'XMLHttpRequest'}})
+  const freshToken = () => fetch('/aibuilder/refresh?id='+AB.id+(AB.agent?'&agent='+encodeURIComponent(AB.agent):'')+(AB.resume?'&resume=1':''), {headers:{'X-Requested-With':'XMLHttpRequest'}})
     .then(r=>r.json()).then(j=>(j.success&&j.data&&j.data.token)?j.data.token:AB.token).catch(()=>AB.token);
   // The PTY bridge runs on CORE; connect there (ab_ws_base) when set (sidecar), else same-host (core's own /aibuilder).
   const wsBase = AB.wsBase || ((location.protocol==='https:'?'wss':'ws') + '://' + location.host);
@@ -638,19 +634,15 @@ if (AB.has && !AB.keyNeeded) {
     }).catch(()=>{ msg.className='form-text text-danger'; msg.textContent='Network error.'; }).finally(()=>btn.disabled=false);
   });
 
-  // --- Engine picker: reopen the terminal on a different provider ---------------
-  // A reload, not a live switch. The jail's ENGINE is fixed when the daemon spawns, so
-  // the only honest way to change provider is to come back with a new token — and the
-  // running session has to be stopped first, or the old daemon keeps serving the socket
-  // and the page reconnects to the engine you just moved away from.
-  const engineSel=document.getElementById('ab-engine');
-  if(engineSel) engineSel.addEventListener('change',function(){
-    const eng=this.value;
-    this.disabled=true; setStatus('switching to '+eng+'…');
-    const go=()=>{ const u=new URL(location.href); u.searchParams.set('engine',eng); location.href=u.toString(); };
-    // Best effort: if the restart call fails the reload still happens, because arriving on
-    // the right engine with a stale session is recoverable and being stuck here is not.
-    post('/aibuilder/restart',{}).then(()=>setTimeout(go,700)).catch(go);
+  // --- Agent picker: your own session on another of the app's agents ----------------
+  // A reload with ?agent=: a different agent is a different session (yours), so nothing needs
+  // stopping — the session you leave keeps running and is there when you come back to it.
+  const agentSel=document.getElementById('ab-agent');
+  if(agentSel) agentSel.addEventListener('change',function(){
+    this.disabled=true; setStatus('opening your session on '+(this.options[this.selectedIndex].text)+'…');
+    const u=new URL(location.href); u.searchParams.delete('resume');
+    if(this.value) u.searchParams.set('agent',this.value); else u.searchParams.delete('agent');
+    location.href=u.toString();
   });
 
   // --- Restart session (kills the jailed tmux server, then reloads for a fresh jail) ---
@@ -664,8 +656,8 @@ if (AB.has && !AB.keyNeeded) {
     resumeBtn.disabled=true;
     const u=new URL(location.href);
     u.searchParams.set('resume','1');
-    if(AB.engine) u.searchParams.set('engine',AB.engine);   // stay on the same provider
-    post('/aibuilder/restart',{}).then(()=>{ setTimeout(()=>{ location.href=u.toString(); }, 700); })
+    if(AB.agent) u.searchParams.set('agent',AB.agent);   // stay on the same agent
+    post('/aibuilder/restart',{agent:AB.agent}).then(()=>{ setTimeout(()=>{ location.href=u.toString(); }, 700); })
       .catch(()=>{ resumeBtn.disabled=false; });
   });
 
@@ -673,7 +665,7 @@ if (AB.has && !AB.keyNeeded) {
   if(restartBtn) restartBtn.addEventListener('click',async function(){
     if(!await tkConfirm('Restart this instance’s session? Anything running will stop and a fresh sandbox starts.', {okText: 'Restart', danger: true})) return;
     this.disabled=true; setStatus('restarting…');
-    post('/aibuilder/restart',{}).then(()=>{ setTimeout(()=>location.reload(), 700); })
+    post('/aibuilder/restart',{agent:AB.agent}).then(()=>{ setTimeout(()=>location.reload(), 700); })
       .catch(()=>{ this.disabled=false; setStatus('restart failed'); tkAlert('Restart failed.', {type: 'error'}); });
   });
 

@@ -121,9 +121,14 @@ class Aibuilder extends BuildControl {
         return trim((string) ($inst->ctIp ?? '')) !== '';
     }
 
-    private function mintAppToken(object $inst, int $memberId, bool $resume): string {
-        // Signed by core's one signer for apps (lib/AppToken.php), with the app's own key.
-        return \app\AppToken::terminal($inst, $memberId, $resume, (int) ($this->cfg()['token']['ttl'] ?? 120));
+    private function mintAppToken(object $inst, int $memberId, bool $resume, string $agent): string {
+        // Signed by core's one signer for apps (lib/AppToken.php), with the app's own key. The
+        // session is this member's own on $agent ('' = the app's default agent).
+        try {
+            return \app\AppToken::terminal($inst, $memberId, $resume, $agent, (int) ($this->cfg()['token']['ttl'] ?? 120));
+        } catch (\InvalidArgumentException $e) {
+            throw new \RuntimeException($e->getMessage(), 0, $e);
+        }
     }
 
     private function appWsBase(object $inst): string {
@@ -236,12 +241,12 @@ class Aibuilder extends BuildControl {
         $termError = '';
         $inCt = $selected && $this->inContainer($selected);
         $ctToken = ''; $ctWs = ''; $ctAgentNote = null;
+        $ctAgents = []; $ctAgent = (string) $this->getParam('agent', '');
         if ($inCt) {
             try {
-                $ctToken = $this->mintAppToken($selected, $mid, $this->getParam('resume', '') === '1');
-                $ctWs = $this->appWsBase($selected);
-                // The terminal runs the APP's agent with the APP's credential, set on the app's own
+                // The terminal runs one of the APP's agents with its credential, set on the app's own
                 // AI agents page — say so up front, with the link, instead of only inside the terminal.
+                // The picker lists them; each is the member's own session (aib-<agent>-m<member>).
                 try {
                     $ag = \app\TenantBuilder::agents($selected);
                     $problem = (string) ($ag['claude']['problem'] ?? '');
@@ -249,9 +254,21 @@ class Aibuilder extends BuildControl {
                     // app's /agents lands on the app's own login page).
                     $core = rtrim((string) \Flight::get('sidecar.core_url'), '/');
                     if (empty($ag['agents']) && $problem !== '') $ctAgentNote = ['problem' => $problem, 'url' => $core . '/projects/open?to=' . rawurlencode('/agents')];
+                    foreach ((array) ($ag['agents'] ?? []) as $a) {
+                        $n = (string) ($a['name'] ?? '');
+                        if ($n === '') continue;
+                        $label = $n . (!empty($a['preset']) ? ' · ' . $a['preset'] : '') . (!empty($a['is_default']) ? ' (default)' : '');
+                        $ctAgents[!empty($a['is_default']) ? '' : $n] = $label;   // '' = the default agent
+                    }
+                    if ($ctAgent !== '' && !array_key_exists($ctAgent, $ctAgents)) {
+                        throw new \RuntimeException("{$selected->slug} has no agent '{$ctAgent}' — pick one of its agents, or add it on the app's AI agents page.");
+                    }
                 } catch (\RuntimeException $e) {
+                    if ($ctAgent !== '') throw $e;
                     $ctAgentNote = ['problem' => $e->getMessage(), 'url' => ''];
                 }
+                $ctToken = $this->mintAppToken($selected, $mid, $this->getParam('resume', '') === '1', $ctAgent);
+                $ctWs = $this->appWsBase($selected);
             } catch (\RuntimeException $e) {
                 $termError = $e->getMessage();
                 $this->logger->error('Terminal: container project not ready', ['instance' => $selected->slug, 'err' => $termError]);
@@ -288,8 +305,8 @@ class Aibuilder extends BuildControl {
             'ab_termError'   => $termError,
             'ab_token'       => $ctToken,
             // The app's agent runs there: no platform engine picker, no host key notes.
-            'ab_engines'     => [],
-            'ab_engine'      => '',
+            'ab_agents'      => $ctAgents,
+            'ab_agent'       => $ctAgent,
             'ab_keyNeeded'   => null,
             'ab_keyNote'     => null,
             'ab_wspath'      => (string)($cfg['bridge']['ws_path'] ?? '/aibuilder/ws'),
@@ -369,7 +386,7 @@ class Aibuilder extends BuildControl {
         if (!$inst) { Flight::jsonError('No such instance', 404); return; }
         if (!$this->inContainer($inst)) { Flight::jsonError("{$inst->slug} isn't running in its own container, so it has no builder terminal.", 409); return; }
         try {
-            $tok = $this->mintAppToken($inst, (int) $this->member->id, $this->getParam('resume', '') === '1');
+            $tok = $this->mintAppToken($inst, (int) $this->member->id, $this->getParam('resume', '') === '1', (string) $this->getParam('agent', ''));
         } catch (\RuntimeException $e) {
             Flight::jsonError($e->getMessage(), 409);
             return;
@@ -803,9 +820,12 @@ class Aibuilder extends BuildControl {
         $inst = $this->accessibleInstance($this->getParam('id', 0));
         if (!$inst) { Flight::jsonError('No such instance', 404); return; }
         if (!$this->inContainer($inst)) { Flight::jsonError("{$inst->slug} isn't running in its own container, so it has no builder terminal.", 409); return; }
-        // The agent's tmux session lives in the app's container; ending it lets the next connect
-        // start a fresh one. Attached tabs see the session end and reconnect.
-        [$c, $o] = \app\TenantHost::ssh($inst, 'app', 'tmux kill-session -t aib-default 2>&1 || true', null, 20);
+        // The member's own session on that agent lives in the app's container; ending it lets the
+        // next connect start a fresh one. Nobody else's session is touched.
+        $agent = (string) $this->getParam('agent', '');
+        if ($agent !== '' && !preg_match('/^[A-Za-z0-9][A-Za-z0-9_-]{0,40}$/', $agent)) { Flight::jsonError("'{$agent}' is not an agent name", 400); return; }
+        $session = \app\AppToken::terminalSession((int) $this->member->id, $agent);
+        [$c, $o] = \app\TenantHost::ssh($inst, 'app', 'tmux kill-session -t ' . escapeshellarg('=' . $session) . ' 2>&1 || true', null, 20);
         if ($c !== 0) { Flight::jsonError("could not reach {$inst->slug}'s container: " . trim((string) $o), 502); return; }
         Flight::jsonSuccess([], 'Session restarted — reconnecting');
     }
