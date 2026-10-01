@@ -12,7 +12,6 @@ use \Flight as Flight;
 use \app\Bean;
 use \app\TaskAccessControl;
 use \app\SimpleCsrf;
-use \app\ClaudeRunner;
 use \app\PromptBuilder;
 use \app\GitService;
 use \app\PortManager;
@@ -20,7 +19,6 @@ use \app\TmuxManager;
 use \app\PlanRunner;
 use \app\PlanExecutor;
 use \app\PlanOrchestrator;
-use \app\WorkspaceManager;
 use \app\EngineRegistry;
 use \app\MemberEnginePrefs;
 use \Exception as Exception;
@@ -86,26 +84,6 @@ class Workbench extends BuildControl {
             $label = $slug === '' ? 'preview-' . $proxyHash : 'preview-' . $slug . '-' . $proxyHash;
         }
         return $label;
-    }
-
-    /**
-     * The address a task's test server is reachable at: https://preview-<slug>-<hash>.<domain>.
-     * openresty forwards it to the task's port through the .proxy file autoStartTestServer
-     * writes (/etc/nginx/xpi/determine_proxy.lua). ONE builder, used for that proxy file's
-     * host and for the workspace's own [app] baseurl — they used to be built separately, and
-     * the workspace side fell back to <hash>.localhost.
-     *
-     * @throws \RuntimeException when this install has not been told its public domain
-     */
-    private function testServerUrl($task): string {
-        $domain = preg_replace('#^https?://#', '', $this->serverBaseurl());
-        if ($domain === '') {
-            throw new \RuntimeException('The test server has no public address: set [sidecar] core_url in conf/config.ini.');
-        }
-        if (empty($task->proxyHash)) {
-            throw new \RuntimeException("Task #{$task->id} has no proxy hash, so its test server has no address yet.");
-        }
-        return 'https://' . self::previewLabel((string) $task->proxyHash, (string) $task->instanceTag) . '.' . $domain;
     }
 
     /**
@@ -1246,54 +1224,19 @@ class Workbench extends BuildControl {
         ]);
     }
 
-    /** Absolute path to a plan subtask's executor agent log (stream-json), or '' if unknown. */
-    private function agentLogPath($task): string {
-        $inst = $task->instanceId ? $this->access->instanceMeta((int)$task->instanceId) : null;
-        if (!$inst || !$inst->id) return '';
-        $dir = \app\WorkbenchDb::dirOf((string) $inst->slug, (string) ($inst->app ?? ''));
-        return $dir . '/.aibuilder/wt/task-' . (int)$task->id . '/.aibuilder/agent.log';
-    }
-
     /**
      * Parse the executor agent's stream-json log into "what is it doing now".
      * Returns {current: {verb,target}|null, recent: [...], files: [...],
      * running: bool, finished: bool}. Pure read — never mutates anything.
      */
     private function planAgentActivity($task): array {
-        $out = ['current' => null, 'recent' => [], 'files' => [], 'finished' => false,
-                'running' => ($task->agentSession && TmuxManager::exists((string)$task->agentSession))];
-        $log = $this->agentLogPath($task);
-        if ($log === '' || !is_file($log)) return $out;
-        // Bound the read: only the tail matters, and logs can get large.
-        $lines = @file($log, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES) ?: [];
-        if (count($lines) > 400) $lines = array_slice($lines, -400);
-        $acts = $files = [];
-        foreach ($lines as $ln) {
-            $ln = ltrim($ln);
-            if ($ln === '' || $ln[0] !== '{') continue;   // skip the [agent] header lines
-            $ev = json_decode(($ln) ?? '', true);
-            if (!is_array($ev)) continue;
-            $type = $ev['type'] ?? '';
-            if ($type === 'result') { $out['finished'] = true; continue; }
-            if ($type !== 'assistant') continue;
-            foreach (($ev['message']['content'] ?? []) as $c) {
-                $ct = $c['type'] ?? '';
-                if ($ct === 'tool_use') {
-                    $d = $this->describeToolUse((string)($c['name'] ?? ''), (array)($c['input'] ?? []));
-                    $acts[] = $d;
-                    if (in_array($d['verb'], ['Editing', 'Writing'], true) && $d['target'] !== '') {
-                        $files[$d['target']] = true;
-                    }
-                } elseif ($ct === 'text' && trim((string)($c['text'] ?? '')) !== '') {
-                    $acts[] = ['verb' => 'Thinking', 'target' => $this->firstLine((string)$c['text'])];
-                }
-            }
+        // A subtask runs headless in the project's container (TenantRun): whether it is still
+        // running is known there; its output is recorded on the task when it finishes.
+        $out = ['current' => null, 'recent' => [], 'files' => [], 'finished' => false, 'running' => false];
+        $ct = $this->tenantInst();
+        if ($ct && (string) $task->agentSession !== '') {
+            try { $out['running'] = \app\TenantRun::alive($ct, (string) $task->agentSession); } catch (\RuntimeException $e) { $out['running'] = true; }
         }
-        if ($acts) {
-            $out['current'] = end($acts);
-            $out['recent']  = array_slice($acts, -8);
-        }
-        $out['files'] = array_slice(array_keys($files), -8);
         return $out;
     }
 
@@ -1357,8 +1300,8 @@ class Workbench extends BuildControl {
 
         // Sync tmux status to database for running tasks.
         // Plan-decompose subtasks are owned by PlanExecutor (separate worktree +
-        // a tiknix-<slug>-plan<N>-task<M> session), NOT by ClaudeRunner. Never let this
-        // view's poller touch them — its ClaudeRunner session name won't match, so
+        // a tiknix-<slug>-plan<N>-task<M> session in its container). Never let this
+        // view's poller touch them, so
         // exists() returns false and it would race the executor by force-failing a
         // live subtask.
         /* A plan PARENT is plan-managed too, and every marker below belongs to a SUBTASK:
@@ -1376,57 +1319,6 @@ class Workbench extends BuildControl {
             || !empty($task->planRef)
             || !empty($task->worktreeBranch)
             || TmuxManager::isPlanSession((string)$task->agentSession);
-        if (!$isPlanManaged && $task->status === 'running') {
-            $workspacePath = $task->projectPath ?: Flight::get('project_root');
-            $runner = new ClaudeRunner($taskId, $task->memberId, $task->teamId, $workspacePath);
-
-            if ($runner->exists()) {
-                $tmuxStatus = $runner->detectStatus();
-
-                // Map detected status to display message
-                $statusMessages = [
-                    'determining' => 'Determining next action...',
-                    'thinking' => 'Thinking...',
-                    'processing' => 'Processing...',
-                    'analyzing' => 'Analyzing code...',
-                    'exploring' => 'Exploring codebase...',
-                    'searching' => 'Searching...',
-                    'reading' => 'Reading files...',
-                    'writing' => 'Writing code...',
-                    'executing' => 'Executing tools...',
-                    'working' => 'Working...',
-                    'waiting' => 'Waiting for user input',
-                ];
-
-                if ($tmuxStatus === 'waiting') {
-                    // User's turn
-                    $task->status = 'awaiting';
-                    $task->progressMessage = 'Waiting for user input';
-                    $task->updatedAt = date('Y-m-d H:i:s');
-                    Bean::store($task);
-                } elseif (isset($statusMessages[$tmuxStatus])) {
-                    // Update progress message but keep status as running
-                    $task->progressMessage = $statusMessages[$tmuxStatus];
-                    $task->updatedAt = date('Y-m-d H:i:s');
-                    Bean::store($task);
-                }
-            } else {
-                /* The agent's tmux session is gone while the task still read `running`.
-                   Recorded in errorMessage as well as progressMessage: the task view renders
-                   the error, so writing only a progress line left a task marked failed with
-                   nothing on screen saying why — indistinguishable from a task that failed
-                   inside the agent. Says what to do about it, because this one is almost
-                   always recoverable: nothing was lost but the session. */
-                $task->status = 'failed';
-                $task->progressMessage = 'Session ended unexpectedly';
-                $task->errorMessage = 'The agent session ended before this task reported a result — '
-                    . 'usually the terminal bridge restarting, the jail being killed, or the session '
-                    . 'being reaped. Any work the agent committed is still in its branch. Press Run to '
-                    . 'start it again.';
-                $task->updatedAt = date('Y-m-d H:i:s');
-                Bean::store($task);
-            }
-        }
 
         // Get task logs
         $logs = Bean::find('tasklog', 'task_id = ? ORDER BY created_at DESC LIMIT 50', [$taskId]);
@@ -1842,14 +1734,6 @@ class Workbench extends BuildControl {
 
     private function purgeTask($task): int {
         $taskId = (int) $task->id;
-            // Kill any running sessions
-            if ($task->tmuxSession) {
-                $workspacePath = !empty($task->projectPath) ? $task->projectPath : null;
-                $runner = new ClaudeRunner($taskId, $task->memberId, $task->teamId, $workspacePath);
-                if ($runner->exists()) {
-                    $runner->kill();
-                }
-            }
             if ($task->testServerSession) {
                 TmuxManager::kill($task->testServerSession);
             }
@@ -1859,16 +1743,6 @@ class Workbench extends BuildControl {
                 unlink($task->proxyFile);
             }
 
-            // Clean up workspace directory
-            if (!empty($task->projectPath) && is_dir($task->projectPath)) {
-                try {
-                    // A worktree through git; a legacy clone only inside core's projects/.
-                    GitService::removeTaskWorkspace($task->projectPath);
-                    $this->logger->info('Workspace deleted', ['path' => $task->projectPath]);
-                } catch (Exception $e) {
-                    $this->logger->warning('Failed to delete workspace', ['error' => $e->getMessage()]);
-                }
-            }
 
             // Delete related records with cascade
             $logs = $task->xownTasklogList;
@@ -2015,279 +1889,7 @@ class Workbench extends BuildControl {
 
         // A project in its own container builds there (runInContainer), never on core.
         if ($ct = $this->tenantInst()) { $this->runInContainer($task, $ct); return; }
-
-        // Check if already running
-        if ($task->status === 'running') {
-            Flight::jsonError('Task is already running', 400);
-            return;
-        }
-
-        // Assign port for this member
-        // Per TASK, not per member: one number for every task meant two concurrent
-        // runs were both told 8002 and the second server could not bind.
-        $portInfo = PortManager::getTaskPortInfo(
-            $this->member->id, (string) $task->instanceTag, (int) $task->id);
-        $assignedPort = $portInfo['port'];
-        if (!$portInfo['available'] && $portInfo['fallback']) {
-            $assignedPort = $portInfo['fallback'];
-        }
-        $task->assignedPort = $assignedPort;
-
-        // Always create isolated workspace for tasks (safer for testing)
-        $workspacePath = null;
-
-        // Self-heal: if the task has a branch but its workspace was deleted (e.g. cleaned
-        // up on a prior approve), the stored branch is stale and there is nothing to run
-        // against — a null path would fall through to the main app and be rejected. Drop
-        // the stale branch so a fresh workspace + branch get rebuilt from the instance.
-        if (!empty($task->branchName) && !GitService::isWorkspace($task->projectPath)) {
-            $this->logTaskEvent($taskId, 'info', 'system', 'Workspace was gone — rebuilding a fresh one from the instance.');
-            $task->branchName = null;
-        }
-
-        if (empty($task->branchName)) {
-            try {
-                // Determine clone source + base branch. An instance-tagged task
-                // builds against ITS instance repo (local), on the instance's own
-                // branch, so changes land on that instance — not the main tiknix
-                // repo. Non-instance tasks clone from main (GitHub) as before.
-                $cloneUrl = null;   // null => main repo origin
-                $baseBranch = $task->baseBranch ?: 'main';
-                if (empty($task->baseBranch) && $task->teamId) {
-                    $team = Bean::load('team', $task->teamId);
-                    if ($team->defaultBranch) {
-                        $baseBranch = $team->defaultBranch;
-                    }
-                }
-                $instDir = $this->instanceDirForTask($task);
-                if ($instDir !== null) {
-                    // Instance task: build on TOP of the instance's live app, which lives
-                    // on the instance repo's checked-out branch (e.g. instance/<slug>).
-                    // That repo's 'main' is only the empty starter skeleton, and any
-                    // base_branch picked on the create form came from the CONTROL-PLANE
-                    // repo — meaningless here. So always base off the instance repo's
-                    // current HEAD unless an explicit non-'main' branch that actually
-                    // exists in the instance repo was chosen.
-                    $cloneUrl = $instDir;
-                    $head = trim((string)@shell_exec('git -C ' . escapeshellarg($instDir) . ' rev-parse --abbrev-ref HEAD 2>/dev/null'));
-                    $useHead = $head !== '' && $head !== 'HEAD';
-                    $stored = trim((string)$task->baseBranch);
-                    if ($stored !== '' && strtolower($stored) !== 'main') {
-                        $exists = trim((string)@shell_exec('git -C ' . escapeshellarg($instDir)
-                            . ' rev-parse --verify --quiet ' . escapeshellarg($stored) . ' 2>/dev/null'));
-                        if ($exists !== '') $useHead = false;   // honor a real, deliberate choice
-                    }
-                    if ($useHead) $baseBranch = $head;
-                }
-
-                $branchName = GitService::generateBranchName(
-                    $this->member->username ?? $this->member->email,
-                    $task->id,
-                    $task->title
-                );
-
-                if ($instDir !== null) {
-                    // A WORKTREE inside the project (.aibuilder/wt/solo-<id>) on the task's
-                    // own branch — the same mechanism plan tasks use. It used to be a clone
-                    // in core's projects/ tree, which the project's MCP server and preview
-                    // (walled to the project) could not read. See GitService::addTaskWorktree.
-                    $workspacePath = GitService::addTaskWorktree($instDir, (int) $task->id, $branchName, $baseBranch);
-                    $this->logTaskEvent($taskId, 'info', 'system', "Created workspace: {$workspacePath} (worktree of {$task->instanceTag} on {$branchName}, from {$baseBranch})");
-                } else {
-                    // Not an instance task: a clone of the main repo, as before.
-                    $mainGit = new GitService();
-                    $workspacePath = $mainGit->cloneToWorkspace(
-                        $this->member->id, $task->id, $cloneUrl, $baseBranch, (string) $task->instanceTag);
-                    (new GitService($workspacePath))->createBranch($branchName, $baseBranch);
-                    $this->logTaskEvent($taskId, 'info', 'system', "Created workspace: {$workspacePath} (from main:{$baseBranch}), branch {$branchName}");
-                }
-                $task->projectPath = $workspacePath;
-                $task->branchName = $branchName;
-                $task->baseBranch = $baseBranch; // Store the actual base branch used
-
-            } catch (Exception $e) {
-                $this->logger->error('Failed to create workspace/branch', ['error' => $e->getMessage()]);
-                Flight::jsonError('Failed to create workspace: ' . $e->getMessage(), 500);
-                return;
-            }
-        } else if (!empty($task->projectPath)) {
-            // Re-running a task - use existing workspace
-            $workspacePath = $task->projectPath;
-        }
-
-        // Generate proxy hash if not exists (for subdomain routing)
-        if (empty($task->proxyHash)) {
-            $task->proxyHash = bin2hex(random_bytes(6)); // 12-char hex
-            Bean::store($task);
-            $this->logTaskEvent($taskId, 'info', 'system', "Generated proxy hash: {$task->proxyHash}");
-        }
-
-        // Initialize workspace with isolated database, config, and vendor
-        if ($workspacePath && is_dir($workspacePath)) {
-            try {
-                // For an instance task set to use real data, seed the workspace DB from the
-                // INSTANCE's OWN live DB (<instanceDir>/database/<slug>.db) — NOT the
-                // control-plane tiknix.com DB — for higher-fidelity testing. The workspace
-                // DB is gitignored, so this copy never merges back.
-                $liveDbPath = null;
-                $instDir = $this->instanceDirForTask($task);
-                if ($instDir !== null && (string)($task->dbSource ?? 'live') !== 'fresh') {
-                    $inst = $this->access->instanceMeta((int)$task->instanceId);
-                    $cand = $instDir . '/database/' . $inst->slug . '.db';
-                    if (is_file($cand)) $liveDbPath = $cand;
-                }
-                // The PROJECT's vendor for its worktree (its own dependencies); core's otherwise.
-                $wsManager = new WorkspaceManager(null, $instDir);
-                $wsInfo = $wsManager->initialize($workspacePath, $this->testServerUrl($task), $this->controlPlaneHost(), false, $liveDbPath);
-                $this->logTaskEvent($taskId, 'info', 'system', "Initialized workspace: {$wsInfo['baseurl']}"
-                    . ($liveDbPath ? ' (seeded from the instance\'s live data)' : ' (fresh database)'));
-            } catch (Exception $e) {
-                $this->logger->warning('Workspace initialization warning', ['error' => $e->getMessage()]);
-                // Continue - workspace may still work without full initialization
-            }
-
-        }
-
-        // Always regenerate .mcp.json at run time with current config
-        // This ensures correct baseurl from config.ini and fresh API key
-        if ($workspacePath && is_dir($workspacePath)) {
-            /* Engine config, every run — same reason the MCP config is rewritten here rather
-               than at clone time. The clone happens once, on a task's FIRST run; after that
-               the task has a branch and every retry reuses the workspace. conf/*.ini is
-               gitignored, so a clone never carries it and jail-run finds no [engine.<name>]:
-               task #110 failed five times on 'no anthropic_base_url in [engine.zai]'. Doing
-               it at clone time alone fixed new tasks and left 47 of 48 existing workspaces
-               broken. */
-            \app\GitService::ensureEngineConfig($workspacePath, (string) $task->instanceTag);
-
-            // REFUSE, do not degrade. A worktree without its project's own MCP target is
-            // the exact condition this change exists to prevent, so it stops the run.
-            try {
-                $this->writeProjectMcpConfig($workspacePath, $task, $taskId, 'Generated');
-            } catch (\Throwable $e) {
-                Flight::jsonError($e->getMessage(), 409);
-                return;
-            }
-        }
-
-        try {
-            // Create Claude runner with workspace path (null = use main project)
-            // Pass member level for security sandbox hook
-            $runner = new ClaudeRunner($taskId, $this->member->id, $task->teamId, $workspacePath, $this->member->level);
-
-            // Check if session already exists
-            if ($runner->exists()) {
-                Flight::jsonError('A session for this task is already active', 400);
-                return;
-            }
-
-            // Spawn Claude interactively in tmux
-            $success = $runner->spawn();
-
-            if (!$success) {
-                Flight::jsonError('Failed to start Claude session', 500);
-                return;
-            }
-
-            // Update task status to queued
-            $task->status = 'queued';
-            $task->tmuxSession = $runner->getSessionName();
-            $task->currentRunId = bin2hex(random_bytes(16));
-            $task->runCount = ($task->runCount ?? 0) + 1;
-            $task->lastRunnerMemberId = $this->member->id;
-            $task->startedAt = date('Y-m-d H:i:s');
-            $task->updatedAt = date('Y-m-d H:i:s');
-            Bean::store($task);
-
-            // Wait for Claude to initialize (give it time to start up)
-            usleep(2000000); // 2 seconds
-
-            // Build the prompt using PromptBuilder
-            $prompt = PromptBuilder::build([
-                'id' => $task->id,
-                'title' => $task->title,
-                'description' => $task->description,
-                'task_type' => $task->taskType,
-                'acceptance_criteria' => $task->acceptanceCriteria,
-                'related_files' => json_decode(((string)$task->relatedFiles) ?? '', true) ?: [],
-                'tags' => json_decode(((string)$task->tags) ?? '', true) ?: [],
-                'authcontrol_level' => $task->authcontrolLevel,
-                'branch_name' => $task->branchName,
-                'assigned_port' => $task->assignedPort,
-                'project_path' => $task->projectPath,
-                'proxy_hash' => $task->proxyHash,
-            ]);
-
-            // Send the prompt to Claude
-            $promptSent = $runner->sendPrompt($prompt);
-
-            if (!$promptSent) {
-                /* STOP. sendPrompt() already checked the two things that matter — the text
-                   landed, and the agent then started — and answered no. Logging a warning
-                   and marking the task `running` anyway is how a session sat at an empty
-                   prompt while the board said it was working: the runner was right and the
-                   caller overruled it.
-
-                   Left at `queued`, which is exactly what happened: the session exists, the
-                   brief did not reach it. The session stays alive on purpose — you can open
-                   the Terminal and see the idle prompt for yourself — and Run tries again. */
-                // The terminal usually says why (ClaudeRunner::idleReason): "Login expired"
-                // was the answer behind a bare "queued" on Serenity task 173 (2026-09-26).
-                $why = $runner->idleReason();
-                $this->logger->error('Prompt did not reach the agent; leaving the task queued', ['task_id' => $taskId, 'why' => $why]);
-                $task->status          = 'queued';
-                $task->progressMessage = $why !== ''
-                    ? 'Not started: ' . $why . '. Then press Run.'
-                    : 'The brief did not reach the agent — its session is open but idle. Press Run to try again.';
-                $task->updatedAt       = date('Y-m-d H:i:s');
-                Bean::store($task);
-                $this->logTaskEvent($taskId, 'error', 'system', 'Prompt did not reach the agent; task left queued' . ($why !== '' ? ' — ' . $why : ''));
-                Flight::jsonError($why !== ''
-                    ? 'Not started: ' . $why . '.'
-                    : 'The agent session started but the brief did not reach it. Press Run to try again.', 409);
-                return;
-            }
-
-            // Update status to running
-            $task->status = 'running';
-            $task->updatedAt = date('Y-m-d H:i:s');
-            Bean::store($task);
-
-            /* ASK THE RUNNER what it dispatched on. Reading $task->engine and substituting
-               'Agent' when empty was a fallback dressed as a label: an empty row does not
-               mean unknown — the task still runs, on the project's engine — so the generic
-               word hid which provider actually did the work, in the first line anyone reads
-               when working that out. resolvedEngine() is the same answer the launcher used. */
-            $startedOn = \app\EngineRegistry::label($runner->resolvedEngine());
-            $this->logTaskEvent($taskId, 'info', 'system', $startedOn . ' session started by ' . ($this->member->displayName ?? $this->member->email));
-
-            $this->logger->info('Claude session started', [
-                'task_id' => $taskId,
-                'session' => $runner->getSessionName(),
-                'member_id' => $this->member->id,
-                'prompt_sent' => $promptSent
-            ]);
-
-            // Auto-start test server if task has branch and port
-            $serverInfo = $this->autoStartTestServer($task, $this->member->id);
-
-            $response = [
-                'success' => true,
-                'message' => 'Claude session started',
-                'session' => $runner->getSessionName()
-            ];
-
-            if ($serverInfo) {
-                $response['test_server'] = $serverInfo;
-                $response['message'] .= " (test server on port {$serverInfo['port']})";
-            }
-
-            Flight::json($response);
-
-        } catch (Exception $e) {
-            $this->logger->error('Failed to start Claude session', ['error' => $e->getMessage()]);
-            Flight::jsonError('Failed to start session: ' . $e->getMessage(), 500);
-        }
+        Flight::jsonError('This project is not running in its own container — tasks build only in a project\'s container.', 409);
     }
 
     /**
@@ -2295,153 +1897,15 @@ class Workbench extends BuildControl {
      */
     public function rerun($params = []) {
         if (!$this->requireLogin()) return;
-
-        $request = Flight::request();
-        if ($request->method !== 'POST') {
-            Flight::redirect('/workbench');
-            return;
-        }
-
-        // Validate CSRF for AJAX requests
-        if (!SimpleCsrf::validate()) {
-            Flight::jsonError('CSRF validation failed', 403);
-            return;
-        }
-
-        $taskId = (int)$this->getParam('id');
-        if (!$taskId) {
-            Flight::jsonError('Task ID required', 400);
-            return;
-        }
-
-        $task = Bean::load('workbenchtask', $taskId);
-        if (!$task->id) {
-            Flight::jsonError('Task not found', 404);
-            return;
-        }
-
-        if (!$this->access->canRun($this->member->id, $task)) {
-            Flight::jsonError('Access denied', 403);
-            return;
-        }
-
-        // Only allow re-run on completed or failed tasks
-        if (!in_array($task->status, ['completed', 'failed'])) {
-            Flight::jsonError('Can only re-run completed or failed tasks', 400);
-            return;
-        }
-
-        // Use existing workspace path if available
-        $workspacePath = !empty($task->projectPath) ? $task->projectPath : null;
-
-        // If the workspace is gone (deleted on a prior approve/cleanup), we can't re-run
-        // against it — that path falls through to the main app and the agent guard rejects
-        // it. Rebuild a fresh instance workspace via run(), which self-heals the stale
-        // branch, re-clones from the instance, and spawns. Keeps the same task + history.
-        if (!GitService::isWorkspace($workspacePath)) {
-            $task->status = 'pending';
-            $task->errorMessage = null;
-            $task->updatedAt = date('Y-m-d H:i:s');
-            Bean::store($task);
-            $this->logTaskEvent($taskId, 'info', 'system', 'Workspace was gone — re-running via a rebuilt instance workspace.');
-            return $this->run($params);
-        }
-
-        // Kill any existing session for this task
-        // Pass member level for security sandbox hook
-        $runner = new ClaudeRunner($taskId, $this->member->id, $task->teamId, $workspacePath, $this->member->level);
-        if ($runner->exists()) {
-            $runner->kill();
-            usleep(500000); // Wait 500ms
-        }
-
-        // Reset task to pending
-        $task->status = 'pending';
-        $task->errorMessage = null;
-        $task->updatedAt = date('Y-m-d H:i:s');
-        Bean::store($task);
-
-        $this->logTaskEvent($taskId, 'info', 'system', 'Task reset for re-run by ' . ($this->member->displayName ?? $this->member->email));
-
-        // Regenerate .mcp.json with current config before running
-        if ($workspacePath && is_dir($workspacePath)) {
-            try {
-                $this->writeProjectMcpConfig($workspacePath, $task, $taskId, 'Regenerated');
-            } catch (\Throwable $e) {
-                Flight::jsonError($e->getMessage(), 409);
-                return;
-            }
-        }
-
-        // Now run the task (reuse run logic)
-        try {
-            // Spawn Claude interactively in tmux (runner already has workspace path)
-            $success = $runner->spawn();
-
-            if (!$success) {
-                Flight::jsonError('Failed to start Claude session', 500);
-                return;
-            }
-
-            // Update task status to queued
-            $task->status = 'queued';
-            $task->tmuxSession = $runner->getSessionName();
-            $task->currentRunId = bin2hex(random_bytes(16));
-            $task->runCount = ($task->runCount ?? 0) + 1;
-            $task->lastRunnerMemberId = $this->member->id;
-            $task->startedAt = date('Y-m-d H:i:s');
-            $task->updatedAt = date('Y-m-d H:i:s');
-            Bean::store($task);
-
-            // Wait for Claude to initialize
-            usleep(2000000); // 2 seconds
-
-            // Build the prompt
-            $prompt = PromptBuilder::build([
-                'id' => $task->id,
-                'title' => $task->title,
-                'description' => $task->description,
-                'task_type' => $task->taskType,
-                'acceptance_criteria' => $task->acceptanceCriteria,
-                'related_files' => json_decode(((string)$task->relatedFiles) ?? '', true) ?: [],
-                'tags' => json_decode(((string)$task->tags) ?? '', true) ?: [],
-                'authcontrol_level' => $task->authcontrolLevel,
-                'branch_name' => $task->branchName,
-                'assigned_port' => $task->assignedPort,
-                'project_path' => $task->projectPath,
-                'proxy_hash' => $task->proxyHash,
-            ]);
-
-            // Send the prompt
-            $runner->sendPrompt($prompt);
-
-            // Update status to running
-            $task->status = 'running';
-            $task->updatedAt = date('Y-m-d H:i:s');
-            Bean::store($task);
-
-            $this->logTaskEvent($taskId, 'info', 'system', 'Task re-run started');
-
-            // Auto-start test server if task has branch and port
-            $serverInfo = $this->autoStartTestServer($task, $this->member->id);
-
-            $response = [
-                'success' => true,
-                'message' => 'Task re-run started',
-                'session' => $runner->getSessionName()
-            ];
-
-            if ($serverInfo) {
-                $response['test_server'] = $serverInfo;
-                $response['message'] .= " (test server on port {$serverInfo['port']})";
-            }
-
-            Flight::json($response);
-
-        } catch (Exception $e) {
-            $this->logger->error('Failed to re-run task', ['error' => $e->getMessage()]);
-            Flight::jsonError('Failed to re-run: ' . $e->getMessage(), 500);
-        }
+        if (Flight::request()->method !== 'POST' || !SimpleCsrf::validate()) { Flight::jsonError('CSRF validation failed', 403); return; }
+        $task = Bean::load('workbenchtask', (int) $this->getParam('id'));
+        if (!$task->id) { Flight::jsonError('Task not found', 404); return; }
+        if (!$this->access->canRun($this->member->id, $task)) { Flight::jsonError('Access denied', 403); return; }
+        if (empty($task->parentTaskId) && !empty($task->planStatus)) { Flight::jsonError('This is a plan, not a task — build it from the plan view.', 409); return; }
+        if (in_array($task->status, ['running', 'queued'], true)) { Flight::jsonError('The task is already running.', 409); return; }
+        if (!($ct = $this->tenantInst())) { Flight::jsonError('This project is not running in its own container — tasks build only in a project\'s container.', 409); return; }
+        // Again, from the app as it is now: runInContainer discards the previous attempt's branch.
+        $this->runInContainer($task, $ct);
     }
 
     /**
@@ -2452,133 +1916,7 @@ class Workbench extends BuildControl {
      */
     public function resolveconflict($params = []) {
         if (!$this->requireLogin()) return;
-        if ($ct = $this->tenantInst()) { Flight::jsonError('Resolving a conflict here is not available for a project in its own container — run, review (Diff) and approve the task instead.', 409); return; }
-
-        $request = Flight::request();
-        if ($request->method !== 'POST') { Flight::redirect('/workbench'); return; }
-        if (!SimpleCsrf::validate()) { Flight::jsonError('CSRF validation failed', 403); return; }
-
-        $taskId = (int)$this->getParam('id');
-        $task = Bean::load('workbenchtask', $taskId);
-        if (!$task->id) { Flight::jsonError('Task not found', 404); return; }
-        if (!$this->access->canRun($this->member->id, $task)) { Flight::jsonError('Access denied', 403); return; }
-
-        $ws = (string)($task->projectPath ?? '');
-        $br = (string)($task->branchName ?? '');
-        if ($ws === '' || !GitService::isWorkspace($ws) || $br === '') {
-            Flight::jsonError('This task has no workspace/branch to resolve — use Re-run to rebuild it.', 409);
-            return;
-        }
-        $instDir = $this->instanceDirForTask($task);
-        if ($instDir === null) {
-            Flight::jsonError('Conflict resolution is only available for instance tasks.', 409);
-            return;
-        }
-
-        $git = function (string $dir, array $args): array {
-            $cmd = 'git -C ' . escapeshellarg($dir);
-            foreach ($args as $a) $cmd .= ' ' . escapeshellarg($a);
-            $out = []; $code = 0; exec($cmd . ' 2>&1', $out, $code);
-            return ['ok' => $code === 0, 'out' => trim(implode("\n", $out))];
-        };
-
-        // Bring the instance's CURRENT base onto the task branch, inside the workspace.
-        $instBase = trim((string)@shell_exec('git -C ' . escapeshellarg($instDir) . ' rev-parse --abbrev-ref HEAD 2>/dev/null'))
-                    ?: ($task->baseBranch ?: 'main');
-        $git($ws, ['checkout', $br]);          // ensure the task branch is checked out
-        $git($ws, ['merge', '--abort']);       // clear any half-finished prior merge (no-op if none)
-        $fetch = $git($ws, ['fetch', $instDir, $instBase]);
-        if (!$fetch['ok']) {
-            Flight::jsonError('Could not fetch the instance base into the workspace: ' . $fetch['out'], 500);
-            return;
-        }
-        $restoreWsDb = $this->shieldRuntimeDb($ws);   // don't let a tracked runtime db block the merge
-        $merge = $git($ws, ['merge', '--no-ff', '-m', 'Merge ' . $instBase . ' into ' . $br . ' (resolve for task #' . $taskId . ')', 'FETCH_HEAD']);
-        if ($merge['ok']) {
-            $restoreWsDb();
-            // No real conflict — the branch is up to date with the base. LAND it now so the
-            // change actually deploys (this is what "resolve" should visibly do), rather
-            // than leaving a separate Approve & Merge step the user might not realise is needed.
-            $lm = $this->localMergeBack($task);
-            $landed = $lm['merged'] && $lm['pushed'];
-            if ($landed) {
-                $task->status    = 'merged';
-                $task->mergedAt  = date('Y-m-d H:i:s');
-                $task->updatedAt = date('Y-m-d H:i:s');
-                Bean::store($task);
-                $this->resolveDetectedError($task);
-            }
-            $this->logTaskEvent($taskId, $landed ? 'info' : 'warning', 'system',
-                'Updated branch from base with no conflict — ' . $lm['reason']);
-            Flight::json(['success' => true, 'clean' => true, 'merged' => $landed,
-                'message' => $landed
-                    ? ('Resolved and merged — ' . $lm['reason'] . '. The change is live.')
-                    : ('Branch updated from base, but the merge did not land: ' . $lm['reason'])]);
-            return;
-        }
-        $restoreWsDb();
-
-        // Real conflict: leave the markers in place, collect the file list, hand to the agent.
-        $conf  = $git($ws, ['diff', '--name-only', '--diff-filter=U']);
-        $files = $conf['ok'] ? array_values(array_filter(explode("\n", trim($conf['out'])))) : [];
-        $this->logTaskEvent($taskId, 'warning', 'system',
-            'Merge conflict — handing ' . count($files) . ' file(s) to the agent: ' . implode(', ', $files));
-
-        // §5 decorrelation: the resolver must differ from the agent that authored the
-        // branch. A conflict is merge-reasoning that benefits from a higher tier anyway,
-        // so run the resolver on the author engine's RESOLVER tier (defaults to the
-        // frontier/planner model) — a genuinely different model from the worker that
-        // built the branch. (A different engine awaits non-claude interactive dispatch;
-        // until then the model tier is the honest decorrelation lever.)
-        $authorEngine  = EngineRegistry::isValid((string)$task->engine) ? (string)$task->engine : EngineRegistry::defaultEngine();
-        $workerModel   = EngineRegistry::model($authorEngine, 'worker');
-        // The member resolving the conflict may override the resolver model in settings;
-        // absent that, the engine's resolver tier (defaults to its frontier/planner model).
-        $resolverModel = MemberEnginePrefs::model((int)$this->member->id, $authorEngine, 'resolver');
-
-        try {
-            $runner = new ClaudeRunner($taskId, $this->member->id, $task->teamId, $ws, $this->member->level);
-            if ($resolverModel !== '' && $resolverModel !== $workerModel) {
-                $runner->setModelOverride($resolverModel);
-            }
-            if ($runner->exists()) { $runner->kill(); usleep(400000); }
-            try {
-                $this->writeProjectMcpConfig($ws, $task, $taskId, 'Regenerated');
-            } catch (\Throwable $e) {
-                Flight::jsonError($e->getMessage(), 409);
-                return;
-            }
-
-            if (!$runner->spawn()) { Flight::jsonError('Failed to start the agent session', 500); return; }
-            $task->status = 'running';
-            $task->tmuxSession = $runner->getSessionName();
-            $task->currentRunId = bin2hex(random_bytes(16));
-            $task->lastRunnerMemberId = $this->member->id;
-            $task->startedAt = date('Y-m-d H:i:s');
-            $task->updatedAt = date('Y-m-d H:i:s');
-            Bean::store($task);
-
-            usleep(2000000);   // let the agent initialise
-            $fileList = $files ? ('- ' . implode("\n- ", $files)) : '(run `git status` to see them)';
-            $prompt = "A git merge is IN PROGRESS on branch `{$br}` and has CONFLICTS. The instance's base branch "
-                . "(`{$instBase}`) was merged in and clashed with this task's changes.\n\n"
-                . "Resolve the conflict markers (<<<<<<< / ======= / >>>>>>>) in these files, keeping BOTH this task's "
-                . "intent AND the base's changes wherever both belong:\n{$fileList}\n\n"
-                . "Then stage everything and commit to complete the merge: `git add -A && git commit --no-edit`. "
-                . "Do NOT change unrelated code and do NOT push. When finished, say the conflict is resolved so it can be approved & merged.";
-            $runner->sendPrompt($prompt);
-
-            $resolverNote = ($resolverModel !== '' && $resolverModel !== $workerModel)
-                ? (' — resolver on ' . $resolverModel . ' (decorrelated from worker ' . $workerModel . ')')
-                : '';
-            $this->logTaskEvent($taskId, 'info', 'review',
-                'Conflict resolution started by ' . ($this->member->displayName ?? $this->member->email) . $resolverNote);
-            Flight::json(['success' => true, 'clean' => false, 'files' => $files, 'session' => $runner->getSessionName(),
-                'message' => 'Agent is resolving ' . count($files) . ' conflicting file(s). Watch the conversation, then Approve & Merge.']);
-        } catch (Exception $e) {
-            $this->logger->error('Failed to start conflict resolution', ['error' => $e->getMessage()]);
-            Flight::jsonError('Failed to start conflict resolution: ' . $e->getMessage(), 500);
-        }
+        Flight::jsonError('Resolving a conflict by hand is not available — projects build in their own containers: run, review (Diff) and approve the task instead.', 409);
     }
 
     /**
@@ -2586,77 +1924,7 @@ class Workbench extends BuildControl {
      */
     public function forcereset($params = []) {
         if (!$this->requireLogin()) return;
-        if ($ct = $this->tenantInst()) { Flight::jsonError('Force reset is not available for a project in its own container — run, review (Diff) and approve the task instead.', 409); return; }
-
-        $request = Flight::request();
-        if ($request->method !== 'POST') {
-            Flight::redirect('/workbench');
-            return;
-        }
-
-        // Validate CSRF for AJAX requests
-        if (!SimpleCsrf::validate()) {
-            Flight::jsonError('CSRF validation failed', 403);
-            return;
-        }
-
-        $taskId = (int)$this->getParam('id');
-        if (!$taskId) {
-            Flight::jsonError('Task ID required', 400);
-            return;
-        }
-
-        $task = Bean::load('workbenchtask', $taskId);
-        if (!$task->id) {
-            Flight::jsonError('Task not found', 404);
-            return;
-        }
-
-        if (!$this->access->canRun($this->member->id, $task)) {
-            Flight::jsonError('Access denied', 403);
-            return;
-        }
-
-        // Only allow force reset on queued/running tasks
-        if (!in_array($task->status, ['queued', 'running'])) {
-            Flight::jsonError('Can only force reset queued or running tasks', 400);
-            return;
-        }
-
-        try {
-            // Kill any existing tmux session
-            if ($task->tmuxSession) {
-                $workspacePath = !empty($task->projectPath) ? $task->projectPath : null;
-                $runner = new ClaudeRunner($taskId, $task->memberId, $task->teamId, $workspacePath);
-                if ($runner->exists()) {
-                    $runner->kill();
-                    usleep(500000); // Wait 500ms for cleanup
-                }
-            }
-
-            // Reset task to pending
-            $task->status = 'pending';
-            $task->tmuxSession = null;
-            $task->errorMessage = null;
-            $task->updatedAt = date('Y-m-d H:i:s');
-            Bean::store($task);
-
-            $this->logTaskEvent($taskId, 'warning', 'system', 'Task force reset by ' . ($this->member->displayName ?? $this->member->email));
-
-            $this->logger->info('Task force reset', [
-                'task_id' => $taskId,
-                'member_id' => $this->member->id
-            ]);
-
-            Flight::json([
-                'success' => true,
-                'message' => 'Task has been reset to pending'
-            ]);
-
-        } catch (Exception $e) {
-            $this->logger->error('Failed to force reset task', ['error' => $e->getMessage()]);
-            Flight::jsonError('Failed to reset: ' . $e->getMessage(), 500);
-        }
+        Flight::jsonError('Force reset is not available — projects build in their own containers: run, review (Diff) and approve the task instead.', 409);
     }
 
     /**
@@ -2664,126 +1932,7 @@ class Workbench extends BuildControl {
      */
     public function complete($params = []) {
         if (!$this->requireLogin()) return;
-        if ($ct = $this->tenantInst()) { Flight::jsonError('Marking it complete by hand is not available for a project in its own container — run, review (Diff) and approve the task instead.', 409); return; }
-
-        $request = Flight::request();
-        if ($request->method !== 'POST') {
-            Flight::redirect('/workbench');
-            return;
-        }
-
-        // Validate CSRF for AJAX requests
-        if (!SimpleCsrf::validate()) {
-            Flight::jsonError('CSRF validation failed', 403);
-            return;
-        }
-
-        $taskId = (int)$this->getParam('id');
-        if (!$taskId) {
-            Flight::jsonError('Task ID required', 400);
-            return;
-        }
-
-        $task = Bean::load('workbenchtask', $taskId);
-        if (!$task->id) {
-            Flight::jsonError('Task not found', 404);
-            return;
-        }
-
-        if (!$this->access->canRun($this->member->id, $task)) {
-            Flight::jsonError('Access denied', 403);
-            return;
-        }
-
-        try {
-            // Opt-in merge: "Mark Complete & merge" merges the task branch into its
-            // base (instance/<slug> for instance tasks) using the same gh-free path
-            // as Approve & Merge. Must run BEFORE we tear down the workspace/session.
-            $doMerge     = $this->getParam('merge') === '1';
-            $merged      = false;
-            $mergeReason = null;
-            if ($doMerge) {
-                $lm = $this->localMergeBack($task);
-                $merged = $lm['merged'] && $lm['pushed'];
-                $mergeReason = $lm['reason'];
-                $this->logTaskEvent($taskId, $merged ? 'info' : 'warning', 'system', 'Local merge: ' . $lm['reason']);
-            }
-
-            // Kill any existing tmux session
-            if ($task->tmuxSession) {
-                $workspacePath = !empty($task->projectPath) ? $task->projectPath : null;
-                $runner = new ClaudeRunner($taskId, $task->memberId, $task->teamId, $workspacePath);
-                if ($runner->exists()) {
-                    $runner->kill();
-                }
-            }
-
-            // Kill test server if running
-            if ($task->testServerSession) {
-                TmuxManager::kill($task->testServerSession);
-            }
-
-            // Delete proxy file for nginx subdomain routing
-            if (!empty($task->proxyFile) && file_exists($task->proxyFile)) {
-                unlink($task->proxyFile);
-                $this->logTaskEvent($taskId, 'info', 'system', "Deleted proxy file: {$task->proxyFile}");
-            }
-
-            // Create PR if task has a branch, workspace, and no PR yet — but never for
-            // instance tasks (local sandboxes: no gh CLI / remote, changes stay local)
-            // and not when we just merged locally.
-            $prUrl = null;
-            $prError = null;
-            if (!$doMerge && !empty($task->branchName) && !empty($task->projectPath) && empty($task->prUrl)
-                && $this->instanceDirForTask($task) === null) {
-                $prResult = $this->createPRViaCli($task);
-                $prUrl = $prResult['url'] ?? null;
-                $prError = $prResult['error'] ?? null;
-
-                if ($prUrl) {
-                    $task->prUrl = $prUrl;
-                }
-            }
-
-            // Mark as completed (or merged when a local merge actually landed) and
-            // clear session fields.
-            $task->status = $merged ? 'merged' : 'completed';
-            $task->progressMessage = $merged ? 'Merged' : 'Completed';
-            if ($merged) $task->mergedAt = date('Y-m-d H:i:s');
-            $task->completedAt = date('Y-m-d H:i:s');
-            $task->tmuxSession = null;
-            $task->testServerSession = null;
-            $task->proxyFile = null;
-            $task->updatedAt = date('Y-m-d H:i:s');
-            Bean::store($task);
-
-            $this->logTaskEvent($taskId, 'info', 'user', 'Task marked complete by ' . ($this->member->displayName ?? $this->member->email));
-
-            // Close the firehose loop: a detected-error task that merged is now fixed.
-            if ($merged) $this->resolveDetectedError($task);
-
-            $response = [
-                'success' => true,
-                'message' => $merged ? 'Task completed and merged' : 'Task completed',
-                'merged'  => $merged,
-            ];
-            if ($doMerge && !$merged) {
-                $response['message'] = 'Marked complete, but NOT merged';
-                $response['merge_reason'] = $mergeReason;
-            }
-            if ($prUrl) {
-                $response['pr_url'] = $prUrl;
-                $response['message'] = 'Task completed - PR created';
-            } elseif ($prError) {
-                $response['pr_error'] = $prError;
-            }
-
-            Flight::json($response);
-
-        } catch (Exception $e) {
-            $this->logger->error('Failed to complete task', ['error' => $e->getMessage()]);
-            Flight::jsonError('Failed to complete: ' . $e->getMessage(), 500);
-        }
+        Flight::jsonError('Marking a task complete by hand is not available — projects build in their own containers: run, review (Diff) and approve the task instead.', 409);
     }
 
     /**
@@ -2853,182 +2002,7 @@ class Workbench extends BuildControl {
             Flight::json(['success' => true, 'message' => 'Merged into the app']);
             return;
         }
-
-        // Get options from request
-        $createPr = $this->getParam('create_pr') === '1';
-        $mergePr = $this->getParam('merge_pr') === '1';
-        $stopSession = $this->getParam('stop_session') === '1';
-        $stopServer = $this->getParam('stop_server') === '1';
-        $deleteWorkspace = $this->getParam('delete_workspace') === '1';
-        $notes = $this->sanitize($this->getParam('notes', ''));
-
-        try {
-            $prCreated = false;
-            $prMerged = false;
-            $mergeError = null;
-            $workspaceDeleted = false;
-            $workspacePath = !empty($task->projectPath) ? $task->projectPath : null;
-
-            // Instance tasks are local sandboxes: their changes merge into the live
-            // instance repo locally (localMergeBack below), so we never open a GitHub PR
-            // for them — no `gh` CLI or remote required. PRs are only for clone-based
-            // tasks that target a real GitHub remote.
-            $isInstanceTask = $this->instanceDirForTask($task) !== null;
-
-            // Create PR if requested and doesn't exist (clone-based, GitHub-backed tasks only)
-            if ($createPr && !$isInstanceTask && empty($task->prUrl) && !empty($task->branchName) && $workspacePath) {
-                $prResult = $this->createPRViaCli($task);
-                if (!empty($prResult['url'])) {
-                    $task->prUrl = $prResult['url'];
-                    $prCreated = true;
-                    $this->logTaskEvent($taskId, 'info', 'system', "Created PR: {$prResult['url']}");
-                } elseif (!empty($prResult['error'])) {
-                    $this->logTaskEvent($taskId, 'warning', 'system', "PR creation failed: {$prResult['error']}");
-                }
-            }
-
-            // Merge PR if requested and exists
-            if ($mergePr && !empty($task->prUrl) && !empty($task->prNumber)) {
-                try {
-                    $github = $this->getGitHubService($task);
-                    if ($github) {
-                        $mergeResult = $github->mergePullRequest(
-                            (int)$task->prNumber,
-                            "Merge: {$task->title}",
-                            "Approved via Tiknix Workbench\n\nTask #{$task->id}",
-                            'squash'
-                        );
-                        $prMerged = !empty($mergeResult['merged']);
-                    }
-                } catch (Exception $e) {
-                    $mergeError = $e->getMessage();
-                    $this->logger->error('Failed to merge PR', [
-                        'task_id' => $taskId,
-                        'pr_number' => $task->prNumber,
-                        'error' => $e->getMessage()
-                    ]);
-                }
-            }
-
-            // Local merge fallback: when a merge was requested but no GitHub PR was
-            // merged (no gh / local-remote instance / no PR), merge the task branch
-            // into its base inside the workspace and push — the gh-free equivalent.
-            // Must run BEFORE any teardown below (it needs the workspace + branch).
-            $localMerged = false;
-            $mergeReason = null;
-            if ($mergePr && !$prMerged) {
-                $lm = $this->localMergeBack($task);
-                $localMerged = $lm['merged'] && $lm['pushed'];
-                $mergeReason = $lm['reason'];
-                $this->logTaskEvent($taskId, $localMerged ? 'info' : 'warning', 'system', 'Local merge: ' . $lm['reason']);
-            }
-            $merged = $prMerged || $localMerged;
-
-            // SAFETY: if a merge was REQUESTED but did not land, do NOT tear anything
-            // down. Deleting the workspace here destroys the task branch + the agent's
-            // commits, making a failed merge unrecoverable (this is exactly how task 164
-            // lost its work). Keep the workspace + session so the merge can be fixed and
-            // retried — teardown only happens once the change is safely merged.
-            $mergeFailedButRequested = $mergePr && !$merged;
-            if ($mergeFailedButRequested) {
-                $stopSession = false;
-                $stopServer = false;
-                $deleteWorkspace = false;
-                $this->logTaskEvent($taskId, 'warning', 'system',
-                    'Merge did not complete — workspace kept for retry. Reason: ' . ($mergeReason ?: $mergeError ?: 'unknown'));
-            }
-
-            // Stop tmux session if requested
-            if ($stopSession && $task->tmuxSession) {
-                $runner = new ClaudeRunner($taskId, $task->memberId, $task->teamId, $workspacePath);
-                if ($runner->exists()) {
-                    $runner->kill();
-                    $this->logTaskEvent($taskId, 'info', 'system', 'Stopped Claude session');
-                }
-                $task->tmuxSession = null;
-            }
-
-            // Stop test server if requested
-            if ($stopServer && $task->testServerSession) {
-                TmuxManager::kill($task->testServerSession);
-                $this->logTaskEvent($taskId, 'info', 'system', 'Stopped test server');
-                $task->testServerSession = null;
-            }
-
-            // Delete proxy file
-            if (!empty($task->proxyFile) && file_exists($task->proxyFile)) {
-                unlink($task->proxyFile);
-                $task->proxyFile = null;
-            }
-
-            // Delete workspace if requested
-            if ($deleteWorkspace && $workspacePath && is_dir($workspacePath)) {
-                $wasWorktree = GitService::isTaskWorktree($workspacePath);
-                GitService::removeTaskWorkspace($workspacePath);
-                $this->logTaskEvent($taskId, 'info', 'system', "Deleted workspace: {$workspacePath}");
-                // A worktree's branch lives in the project. Once merged it is spent: delete it
-                // with -d, which git refuses for a branch whose commits are not merged.
-                $projDir = $wasWorktree ? $this->instanceDirForTask($task) : null;
-                if ($merged && $projDir !== null && !empty($task->branchName)) {
-                    exec('git -C ' . escapeshellarg($projDir) . ' branch -d ' . escapeshellarg((string) $task->branchName) . ' 2>&1', $bdOut, $bdCode);
-                    if ($bdCode !== 0) $this->logTaskEvent($taskId, 'warning', 'system', 'Kept branch ' . $task->branchName . ': ' . implode(' ', $bdOut));
-                }
-                $task->projectPath = null;
-                $workspaceDeleted = true;
-            }
-
-            // Mark task as merged or completed — only 'merged' when a real merge
-            // (GitHub PR or local) actually landed, never silently on failure.
-            $task->status = $merged ? 'merged' : 'completed';
-            $task->progressMessage = $merged ? 'Merged' : 'Completed';
-            $task->completedAt = date('Y-m-d H:i:s');
-            $task->reviewedBy = $this->member->id;
-            $task->reviewedAt = date('Y-m-d H:i:s');
-            if ($merged) {
-                $task->mergedAt = date('Y-m-d H:i:s');
-            }
-            $task->updatedAt = date('Y-m-d H:i:s');
-            Bean::store($task);
-
-            // Close the firehose loop: a detected-error task that merged is now fixed.
-            if ($merged) $this->resolveDetectedError($task);
-
-            // Build log message
-            $message = 'Task approved by ' . ($this->member->displayName ?? $this->member->email);
-            $actions = [];
-            if ($prCreated) $actions[] = 'PR created';
-            if ($prMerged) $actions[] = 'PR merged';
-            if ($localMerged) $actions[] = 'merged locally';
-            if ($mergePr && !$merged && $mergeReason) $actions[] = "not merged: {$mergeReason}";
-            if ($mergeError) $actions[] = "PR merge failed: {$mergeError}";
-            if ($stopSession) $actions[] = 'session stopped';
-            if ($stopServer) $actions[] = 'server stopped';
-            if ($workspaceDeleted) $actions[] = 'workspace deleted';
-            if (!empty($actions)) {
-                $message .= ' (' . implode(', ', $actions) . ')';
-            }
-            if (!empty($notes)) {
-                $message .= "\nNotes: {$notes}";
-            }
-
-            $this->logTaskEvent($taskId, 'info', 'review', $message);
-
-            Flight::json([
-                'success' => true,
-                'message' => 'Task approved',
-                'pr_created' => $prCreated,
-                'pr_merged' => $prMerged,
-                'merged' => $merged,
-                'merge_requested' => $mergePr,
-                'merge_reason' => $mergeReason,
-                'merge_error' => $mergeError,
-                'workspace_deleted' => $workspaceDeleted
-            ]);
-
-        } catch (Exception $e) {
-            $this->logger->error('Failed to approve task', ['error' => $e->getMessage()]);
-            Flight::jsonError('Failed to approve: ' . $e->getMessage(), 500);
-        }
+        Flight::jsonError('This project is not running in its own container — tasks build only in a project\'s container.', 409);
     }
 
     /**
@@ -3256,27 +2230,7 @@ class Workbench extends BuildControl {
             Flight::json(['success' => true, 'message' => 'Task stopped']);
             return;
         }
-
-        try {
-            // Kill tmux session if exists
-            if ($task->tmuxSession) {
-                $workspacePath = !empty($task->projectPath) ? $task->projectPath : null;
-                $runner = new ClaudeRunner($taskId, $task->memberId, $task->teamId, $workspacePath);
-                $runner->kill();
-            }
-
-            $task->status = 'pending';
-            $task->tmuxSession = null;
-            $task->updatedAt = date('Y-m-d H:i:s');
-            Bean::store($task);
-
-            $this->logTaskEvent($taskId, 'warning', 'system', 'Task stopped by user');
-
-            Flight::json(['success' => true, 'message' => 'Task stopped']);
-
-        } catch (Exception $e) {
-            Flight::jsonError('Failed to stop task: ' . $e->getMessage(), 500);
-        }
+        Flight::jsonError('This project is not running in its own container — tasks build only in a project\'s container.', 409);
     }
 
     /**
@@ -3286,85 +2240,7 @@ class Workbench extends BuildControl {
      */
     public function startserver($params = []) {
         if (!$this->requireLogin()) return;
-        if ($ct = $this->tenantInst()) { Flight::jsonError('The local preview server is not available for a project in its own container — run, review (Diff) and approve the task instead.', 409); return; }
-
-        if (!SimpleCsrf::validate()) {
-            Flight::jsonError('CSRF validation failed', 403);
-            return;
-        }
-
-        $taskId = (int)$this->getParam('id');
-        $task = Bean::load('workbenchtask', $taskId);
-
-        if (!$task->id || !$this->access->canRun($this->member->id, $task)) {
-            Flight::jsonError('Access denied', 403);
-            return;
-        }
-
-        if (empty($task->branchName)) {
-            Flight::jsonError('No branch assigned to this task', 400);
-            return;
-        }
-        if (empty($task->projectPath) || !is_dir($task->projectPath)) {
-            Flight::jsonError('No workspace to preview yet — run the task first.', 400);
-            return;
-        }
-
-        try {
-            $initMessages = [];
-            if (empty($task->proxyHash)) $task->proxyHash = bin2hex(random_bytes(6));
-
-            // Pull the branch work + set up a fresh isolated db/config for the preview. A task
-            // WORKTREE is that branch already — its commits are in it, and its origin is the
-            // project's own remote, not the project — so only a legacy clone pulls.
-            if (!GitService::isTaskWorktree($task->projectPath)) {
-                exec(sprintf('cd %s && git pull origin %s 2>&1',
-                    escapeshellarg($task->projectPath), escapeshellarg($task->branchName)), $pullOutput, $pullCode);
-                if ($pullCode === 0) $initMessages[] = "Pulled latest changes from {$task->branchName}";
-            }
-
-            // The PREVIEW is just a symlink at the capricorn-auto-routed path pointing at the
-            // workspace — capricorn serves {host}.com → {host}/public/index.php directly.
-            // No php -S, no proxy file, NO PORT. Temporary; removed on stop / cleanup.
-            $slug = preg_replace('/[^a-z0-9]/', '', strtolower(explode('.', (string) $task->instanceTag)[0])) ?: 'ws';
-            $host = "{$slug}-{$task->proxyHash}.tiknix";        // e.g. bidsurge-4b1234ba0a55.tiknix
-
-            // The workspace's own baseurl is the address it is served at here.
-            $wsManager = new WorkspaceManager(null, $this->instanceDirForTask($task));
-            $wsManager->initialize($task->projectPath, "https://{$host}.com", $this->controlPlaneHost());
-            $initMessages[] = "Fresh database created with admin/admin1234";
-            $link = '/var/www/html/default/' . $host;
-            $target = rtrim($task->projectPath, '/');
-            // Safety: only ever link to a workspace clone under the default docroot.
-            if (strpos($target, '/var/www/html/default/') !== 0) {
-                Flight::jsonError('Refusing to preview: workspace path failed validation', 400); return;
-            }
-            @unlink($link);
-            if (!@symlink($target, $link)) {
-                Flight::jsonError('Could not create the preview link.', 500); return;
-            }
-
-            $task->testServerSession = $host;   // "preview live" marker + host for the UI
-            $task->proxyFile = $link;           // the symlink to remove on stop
-            $task->updatedAt = date('Y-m-d H:i:s');
-            Bean::store($task);
-
-            $testUrl = "https://{$host}.com";
-            foreach ($initMessages as $msg) $this->logTaskEvent($taskId, 'info', 'system', $msg);
-            $this->logTaskEvent($taskId, 'info', 'system', "Preview live at {$testUrl}");
-
-            Flight::json([
-                'success'      => true,
-                'message'      => "Preview live at {$testUrl}",
-                'session'      => $host,
-                'url'          => $testUrl,
-                'subdomain'    => "{$host}.com",
-                'init_details' => $initMessages,
-            ]);
-        } catch (Exception $e) {
-            $this->logger->error('Failed to start preview', ['error' => $e->getMessage()]);
-            Flight::jsonError('Failed to start preview: ' . $e->getMessage(), 500);
-        }
+        Flight::jsonError('The local preview server is not available — projects build in their own containers: run, review (Diff) and approve the task instead.', 409);
     }
 
     /**
@@ -3373,48 +2249,7 @@ class Workbench extends BuildControl {
      */
     public function stopserver($params = []) {
         if (!$this->requireLogin()) return;
-        if ($ct = $this->tenantInst()) { Flight::jsonError('The local preview server is not available for a project in its own container — run, review (Diff) and approve the task instead.', 409); return; }
-
-        if (!SimpleCsrf::validate()) {
-            Flight::jsonError('CSRF validation failed', 403);
-            return;
-        }
-
-        $taskId = (int)$this->getParam('id');
-        $task = Bean::load('workbenchtask', $taskId);
-
-        if (!$task->id || !$this->access->canRun($this->member->id, $task)) {
-            Flight::jsonError('Access denied', 403);
-            return;
-        }
-
-        if (empty($task->testServerSession) && empty($task->proxyFile)) {
-            Flight::jsonError('No preview is running', 400);
-            return;
-        }
-
-        try {
-            // New model: remove the symlink. Back-compat: also drop a legacy .proxy file and
-            // kill a legacy `php -S` tmux session if this task still has them.
-            if (!empty($task->proxyFile)) {
-                if (is_link($task->proxyFile)) @unlink($task->proxyFile);
-                elseif (file_exists($task->proxyFile)) @unlink($task->proxyFile);
-            }
-            if (!empty($task->testServerSession) && TmuxManager::exists($task->testServerSession)) {
-                TmuxManager::kill($task->testServerSession);
-            }
-
-            $task->testServerSession = null;
-            $task->proxyFile = null;
-            $task->updatedAt = date('Y-m-d H:i:s');
-            Bean::store($task);
-
-            $this->logTaskEvent($taskId, 'info', 'system', 'Preview stopped');
-            Flight::json(['success' => true, 'message' => 'Preview stopped']);
-        } catch (Exception $e) {
-            $this->logger->error('Failed to stop preview', ['error' => $e->getMessage()]);
-            Flight::jsonError('Failed to stop preview: ' . $e->getMessage(), 500);
-        }
+        Flight::jsonError('The local preview server is not available — projects build in their own containers: run, review (Diff) and approve the task instead.', 409);
     }
 
     /**
@@ -3486,20 +2321,6 @@ class Workbench extends BuildControl {
         ];
 
         // If running, get live progress from tmux
-        if (in_array($task->status, ['running', 'queued']) && $task->tmuxSession) {
-            try {
-                $workspacePath = !empty($task->projectPath) ? $task->projectPath : null;
-                $runner = new ClaudeRunner($taskId, $task->memberId, $task->teamId, $workspacePath);
-                if ($runner->isRunning()) {
-                    $progress['live'] = $runner->getProgress();
-                } else {
-                    // Session ended - check if completed or failed
-                    $progress['session_ended'] = true;
-                }
-            } catch (Exception $e) {
-                $progress['runner_error'] = $e->getMessage();
-            }
-        }
 
         // Get latest snapshot
         $snapshot = Bean::findOne('tasksnapshot', 'task_id = ? ORDER BY created_at DESC', [$taskId]);
@@ -3638,31 +2459,7 @@ class Workbench extends BuildControl {
 
             $sentToSession = false;
 
-            // If not an internal comment, try to send to Claude session if it exists
-            if (!$comment->isInternal) {
-                $workspacePath = !empty($task->projectPath) ? $task->projectPath : null;
-                $runner = new ClaudeRunner($taskId, $task->memberId, $task->teamId, $workspacePath);
-                if ($runner->exists()) {
-                    // Append reminder about tiknix MCP tools
-                    $messageWithReminder = $content . "\n\n[REMINDER: Use the tiknix MCP tools to update the project status]";
-                    $sentToSession = $runner->sendPrompt($messageWithReminder);
-                    if ($sentToSession) {
-                        $this->logTaskEvent($taskId, 'info', 'user', 'Message sent to Claude: ' . substr($content, 0, 100) . (strlen($content) > 100 ? '...' : ''));
-
-                        // The message reached a live session and the agent took it: the task
-                        // is running now, whatever it was — including `queued` (the brief
-                        // never started, then a message got through after a /login: task 173
-                        // on Serenity kept "queued" and the stale "press Run" text while the
-                        // agent worked, 2026-09-26). The stale reason goes with the status.
-                        if (in_array($task->status, ['queued', 'awaiting', 'completed', 'failed'])) {
-                            $task->status          = 'running';
-                            $task->progressMessage = '';
-                            $task->updatedAt       = date('Y-m-d H:i:s');
-                            Bean::store($task);
-                        }
-                    }
-                }
-            }
+            // A comment becomes part of the task's brief on its next Run (runInContainer).
 
             Flight::json([
                 'success' => true,
@@ -3690,147 +2487,7 @@ class Workbench extends BuildControl {
      */
     public function uploadimage($params = []) {
         if (!$this->requireLogin()) return;
-        if ($ct = $this->tenantInst()) { Flight::jsonError('Attaching an image to the agent is not available for a project in its own container — run, review (Diff) and approve the task instead.', 409); return; }
-
-        $request = Flight::request();
-        if ($request->method !== 'POST') {
-            Flight::jsonError('POST required', 405);
-            return;
-        }
-
-        if (!SimpleCsrf::validate()) {
-            Flight::jsonError('CSRF validation failed', 403);
-            return;
-        }
-
-        $taskId = (int)$this->getParam('id');
-        $task = Bean::load('workbenchtask', $taskId);
-
-        if (!$task->id || !$this->access->canComment($this->member->id, $task)) {
-            Flight::jsonError('Access denied', 403);
-            return;
-        }
-
-        // Check for uploaded file
-        if (empty($_FILES['image']) || $_FILES['image']['error'] !== UPLOAD_ERR_OK) {
-            $errorMessages = [
-                UPLOAD_ERR_INI_SIZE => 'File exceeds max upload size',
-                UPLOAD_ERR_FORM_SIZE => 'File exceeds form max size',
-                UPLOAD_ERR_PARTIAL => 'File was only partially uploaded',
-                UPLOAD_ERR_NO_FILE => 'No file was uploaded',
-                UPLOAD_ERR_NO_TMP_DIR => 'Missing temp folder',
-                UPLOAD_ERR_CANT_WRITE => 'Failed to write file',
-                UPLOAD_ERR_EXTENSION => 'Upload blocked by extension'
-            ];
-            $error = $_FILES['image']['error'] ?? UPLOAD_ERR_NO_FILE;
-            Flight::jsonError($errorMessages[$error] ?? 'File upload failed', 400);
-            return;
-        }
-
-        $file = $_FILES['image'];
-
-        // Validate file type
-        $finfo = new \finfo(FILEINFO_MIME_TYPE);
-        $mimeType = $finfo->file($file['tmp_name']);
-
-        $allowedTypes = [
-            'image/png' => 'png',
-            'image/jpeg' => 'jpeg',
-            'image/gif' => 'gif',
-            'image/webp' => 'webp'
-        ];
-
-        if (!isset($allowedTypes[$mimeType])) {
-            Flight::jsonError('Invalid image type. Allowed: PNG, JPEG, GIF, WEBP', 400);
-            return;
-        }
-
-        // Validate file size (max 10MB)
-        $maxSize = 10 * 1024 * 1024;
-        if ($file['size'] > $maxSize) {
-            Flight::jsonError('Image too large. Max size: 10MB', 400);
-            return;
-        }
-
-        try {
-            // Public path is where index.php lives (DOCUMENT_ROOT from nginx)
-            $publicRoot = rtrim($_SERVER['DOCUMENT_ROOT'] ?? dirname(__DIR__) . '/public', '/');
-
-            // Create upload directory
-            $uploadsDir = $publicRoot . '/uploads/workbench/' . $taskId;
-            if (!is_dir($uploadsDir)) {
-                if (!mkdir($uploadsDir, 0755, true)) {
-                    throw new Exception("Failed to create uploads directory");
-                }
-            }
-
-            // Generate unique filename
-            $extension = $allowedTypes[$mimeType];
-            $filename = date('Ymd_His') . '_' . bin2hex(random_bytes(4)) . '.' . $extension;
-            $savePath = $uploadsDir . '/' . $filename;
-
-            if (!move_uploaded_file($file['tmp_name'], $savePath)) {
-                throw new Exception("Failed to save uploaded file");
-            }
-
-            // Relative path for database
-            $relativePath = 'uploads/workbench/' . $taskId . '/' . $filename;
-
-            // Get optional caption/content
-            $content = trim($this->getParam('content', ''));
-
-            // Create comment with image
-            $comment = Bean::dispense('taskcomment');
-            $comment->taskId = $taskId;
-            $comment->memberId = $this->member->id;
-            $comment->content = $content ?: null;
-            $comment->imagePath = $relativePath;
-            $comment->isFromClaude = 0;
-            $comment->isInternal = 0;
-            $comment->createdAt = date('Y-m-d H:i:s');
-            Bean::store($comment);
-
-            $this->logTaskEvent($taskId, 'info', 'user', 'Image uploaded' . ($content ? " with caption" : ''));
-
-            // Try to send notification to Claude session if running
-            $sentToSession = false;
-            if (!empty($task->tmuxSession)) {
-                $workspacePath = !empty($task->projectPath) ? $task->projectPath : null;
-                $runner = new ClaudeRunner($taskId, $task->memberId, $task->teamId, $workspacePath);
-                if ($runner->exists()) {
-                    $message = "[User uploaded an image";
-                    if ($content) {
-                        $message .= " with message: {$content}";
-                    }
-                    $message .= ". View it in the task UI.]\n\n[REMINDER: Use the tiknix MCP tools to update the project status]";
-                    $sentToSession = $runner->sendPrompt($message);
-
-                    // If task was awaiting, mark as running
-                    if ($sentToSession && $task->status === 'awaiting') {
-                        $task->status = 'running';
-                        $task->updatedAt = date('Y-m-d H:i:s');
-                        Bean::store($task);
-                    }
-                }
-            }
-
-            Flight::json([
-                'success' => true,
-                'sent_to_session' => $sentToSession,
-                'comment' => [
-                    'id' => $comment->id,
-                    'content' => $comment->content,
-                    'image_path' => $relativePath,
-                    'image_url' => '/' . $relativePath,
-                    'author' => $this->member->displayName ?? $this->member->email,
-                    'created_at' => $comment->createdAt
-                ]
-            ]);
-
-        } catch (Exception $e) {
-            $this->logger->error('Failed to upload image', ['error' => $e->getMessage()]);
-            Flight::jsonError('Failed to upload image: ' . $e->getMessage(), 500);
-        }
+        Flight::jsonError('Attaching an image to the agent is not available — projects build in their own containers: run, review (Diff) and approve the task instead.', 409);
     }
 
     /**
@@ -4105,97 +2762,6 @@ class Workbench extends BuildControl {
         }
     }
 
-    /** Absolute git repo dir for a task's instance, or null if not instance-tagged / missing. */
-    private function instanceDirForTask($task): ?string {
-        // A task row lives in ONE project's workbench.db — the selected project's, which is
-        // the database this request opened (selectInstance). Filed without its project —
-        // create_task over MCP never set it, which is 111 of Serenity's rows — it belongs to
-        // that project all the same, and run() used to treat it as "not an instance task"
-        // and clone core's main repo instead. Stamp it, once.
-        if (empty($task->instanceId) && !empty($this->selected['id'])) {
-            $task->instanceId  = (int) $this->selected['id'];
-            $task->instanceTag = $this->selected['slug'] . '.' . ($this->selected['app'] ?: 'tiknix');
-            Bean::store($task);
-        }
-        if (empty($task->instanceId)) return null;
-        $inst = $this->access->instanceMeta((int)$task->instanceId);
-        if (!$inst->id) return null;
-        $dir = \app\WorkbenchDb::dirOf((string) $inst->slug, (string) ($inst->app ?? ''));
-        return is_dir($dir . '/.git') ? $dir : null;
-    }
-
-    /**
-     * The MCP endpoint + key an agent worktree for $task must use: the PROJECT's OWN.
-     *
-     * Not core's, and not this sidecar's. A worktree pointed at core runs every
-     * mcp__tiknix__* call inside CORE's process — core's database and core's source tree
-     * — while the task id it passes came from the PROJECT's data/workbench.db. Task ids
-     * are per-project autoincrements (the same reason session names carry the slug, see
-     * TmuxManager::buildTaskSessionName), so "task 1" names a different row in each. It
-     * resolves to somebody else's task and denies, or to a same-named row and silently
-     * writes the WRONG one. mtmoses's first build died on the first of those.
-     *
-     * The project already knows the answer: provisioning writes it a .mcp.json addressed
-     * to its own domain with its own agent key, and PlanExecutor already copies that file
-     * into plan-subtask worktrees. This is the same source of truth for solo tasks.
-     *
-     * NO FALLBACK to core. Writing core's url here is precisely the bug; a project whose
-     * config cannot be read must fail loudly and leave the worktree's config alone.
-     *
-     * @return array{baseUrl:string, apiKey:string}|null
-     */
-    private function projectMcpTarget($task): ?array {
-        $dir = $this->instanceDirForTask($task);
-        if ($dir === null) return null;
-
-        $file = $dir . '/.mcp.json';
-        if (!is_file($file)) return null;
-
-        $json = json_decode((string) @file_get_contents($file), true);
-        $srv  = $json['mcpServers']['tiknix'] ?? null;
-        if (!is_array($srv)) return null;
-
-        $url  = trim((string) ($srv['url'] ?? ''));
-        $auth = trim((string) ($srv['headers']['Authorization'] ?? ''));
-        if ($url === '' || stripos($auth, 'Bearer ') !== 0) return null;
-
-        // ensureMcpConfig() appends /mcp/message itself, so hand it the base.
-        return [
-            'baseUrl' => (string) preg_replace('#/mcp/message/?$#', '', rtrim($url, '/')),
-            'apiKey'  => trim(substr($auth, 7)),
-        ];
-    }
-
-    /**
-     * Write the worktree's .mcp.json from the PROJECT's target.
-     *
-     * THROWS rather than returning quietly. An unresolvable target is not a degraded run
-     * that happens to lack a few tools — it is a run whose worktree keeps whatever
-     * .mcp.json it had, which for an existing workspace is the CORE-addressed one this
-     * change exists to remove. Logging a warning and starting the agent anyway is how the
-     * original bug survived two weeks of daily builds: every symptom was inside an agent
-     * transcript nobody reads, and the board showed a task that merely never finished.
-     *
-     * The caller must refuse the run. See projectMcpTarget() for why there is no fallback.
-     *
-     * @throws \RuntimeException when the project's own MCP target cannot be resolved
-     */
-    private function writeProjectMcpConfig(string $workspacePath, $task, int $taskId, string $when): void {
-        $target = $this->projectMcpTarget($task);
-        if ($target === null) {
-            $msg = 'This project has no usable .mcp.json, so an agent started here would either '
-                 . 'have no tiknix tools or keep addressing core — reading and writing another '
-                 . 'project\'s tasks. Re-provision the project, or give it a .mcp.json pointing '
-                 . 'at its own /mcp/message.';
-            $this->logger->error('Project MCP config unresolvable — refusing to start the agent',
-                ['task' => $taskId, 'workspace' => $workspacePath]);
-            $this->logTaskEvent($taskId, 'error', 'system', $msg);
-            throw new \RuntimeException($msg);
-        }
-        $this->generateWorkspaceMcpConfig($workspacePath, $target['apiKey'], $target['baseUrl']);
-        $this->logTaskEvent($taskId, 'info', 'system', $when . " .mcp.json → {$target['baseUrl']}");
-    }
-
     /**
      * Non-DB uncommitted changes in a repo (a short path list), or '' if clean.
      * Live instances force-track their sqlite DB which churns every request, so
@@ -4341,137 +2907,32 @@ class Workbench extends BuildControl {
         };
     }
 
-    private function localMergeBack($task): array {
-        $ws   = (string)($task->projectPath ?? '');
-        $br   = (string)($task->branchName ?? '');
-        $base = (string)($task->baseBranch ?: 'main');
-        if ($ws === '' || !GitService::isWorkspace($ws)) {
-            return ['merged' => false, 'pushed' => false, 'reason' => 'workspace no longer available to merge from'];
-        }
-        if ($br === '') {
-            return ['merged' => false, 'pushed' => false, 'reason' => 'task has no branch'];
-        }
-        $git = function (string $dir, array $args): array {
-            $cmd = 'git -C ' . escapeshellarg($dir);
-            foreach ($args as $a) $cmd .= ' ' . escapeshellarg($a);
-            $out = []; $code = 0;
-            exec($cmd . ' 2>&1', $out, $code);
-            return ['ok' => $code === 0, 'out' => trim(implode("\n", $out))];
-        };
-        // Are there commits on the branch not already on base?
-        $ahead = $git($ws, ['rev-list', '--count', $base . '..' . $br]);
-        if (!$ahead['ok']) {
-            return ['merged' => false, 'pushed' => false, 'reason' => 'could not compare branch to base (' . $ahead['out'] . ')'];
-        }
-        if ((int)$ahead['out'] === 0) {
-            return ['merged' => false, 'pushed' => false, 'reason' => 'the agent made no committed changes on the branch'];
-        }
-
-        $instDir = $this->instanceDirForTask($task);
-        if ($instDir !== null) {
-            // Instance task: merge on the project's ORIGIN (lib/InstanceRepo.php, §13 C1),
-            // then bring the live tree level. The live tree is never the merge target.
-            // Pre-existing local edits used to stop the merge dead and send someone to a
-            // shell. Commit them onto the instance's own branch instead — recoverable,
-            // and it leaves the running site byte-identical; the sync pushes them to the
-            // origin. Only a git failure blocks now.
-            $absorbed = $this->absorbInstanceEdits($instDir, (int)$task->id);
-            if (!$absorbed['ok']) {
-                return ['merged' => false, 'pushed' => false,
-                        'reason' => 'the instance has uncommitted code changes ('
-                                  . implode(', ', array_slice($absorbed['files'], 0, 5)) . ') and they '
-                                  . $absorbed['error'] . ' — resolve them in the instance and merge again'];
-            }
-            try {
-                $slug = \app\InstanceRepo::slugFromDir($instDir);
-                $sync = \app\InstanceRepo::syncLive($instDir);
-                if ($sync['status'] === 'failed') {
-                    return ['merged' => false, 'pushed' => false, 'reason' => 'the live tree and its origin are out of step: ' . $sync['out']];
-                }
-                // $ws names the repository holding the branch when the origin does not (a
-                // workspace cut from the live clone before C1); otherwise the origin's own.
-                $merge = \app\InstanceRepo::merge($slug, $br, 'Merge ' . $br . ' (task #' . (int)$task->id . ')', $ws);
-            } catch (\Throwable $e) {
-                return ['merged' => false, 'pushed' => false, 'reason' => $e->getMessage()];
-            }
-            if ($merge['status'] !== 'merged') {
-                return ['merged' => false, 'pushed' => false,
-                        'reason' => ($merge['status'] === 'conflict' ? 'merge conflict on the origin — needs manual resolution' : 'merge failed on the origin: ' . $merge['out'])
-                                  . ($merge['files'] ? ' — conflicting files: ' . implode(', ', $merge['files']) : '')];
-            }
-            $sync = \app\InstanceRepo::syncLive($instDir);
-            if ($sync['status'] === 'failed') {
-                return ['merged' => false, 'pushed' => false,
-                        'reason' => "merged on the origin ({$merge['sha']}) but the live tree could not take it: {$sync['out']} — fix the live tree and merge again (nothing merges twice)"];
-            }
-            // The merge landed code only; its seeds (permissions, tables) reach the live
-            // instance through the same post-merge step a finished plan runs. Every line
-            // goes on the task log, and a FAILED line goes into the reason the person sees.
-            $seedLog = \app\PlanExecutor::applySeeds($instDir, $instDir . '/.aibuilder/task-' . (int)$task->id . '-seeds.txt');
-            $seedFailed = array_values(array_filter($seedLog, fn($l) => str_contains($l, 'FAILED')));
-            foreach ($seedLog as $line) {
-                $this->logTaskEvent((int)$task->id, str_contains($line, 'FAILED') ? 'error' : 'info', 'system', 'Seeds after merge: ' . $line);
-            }
-            return ['merged' => true, 'pushed' => true,
-                    'reason' => 'merged into ' . $base . ' on ' . ($task->instanceTag ?: 'the instance')
-                              . ($seedFailed ? ' — BUT seeds failed on the live instance: ' . implode('; ', $seedFailed) : '')
-                              . ($absorbed['files']
-                                 ? ' (committed ' . count($absorbed['files']) . ' pre-existing local edit(s) first: '
-                                   . implode(', ', array_slice($absorbed['files'], 0, 5))
-                                   . (count($absorbed['files']) > 5 ? ' …' : '') . ')'
-                                 : '')];
-        }
-
-        // Non-instance task: merge into base in the clone and push to origin.
-        if (!$git($ws, ['checkout', $base])['ok']) {
-            return ['merged' => false, 'pushed' => false, 'reason' => 'could not check out base branch ' . $base];
-        }
-        $merge = $git($ws, ['merge', '--no-ff', '-m', 'Merge ' . $br . ' (task #' . (int)$task->id . ')', $br]);
-        if (!$merge['ok']) {
-            $conf = $git($ws, ['diff', '--name-only', '--diff-filter=U']);
-            $files = $conf['ok'] ? str_replace("\n", ', ', trim($conf['out'])) : '';
-            $git($ws, ['merge', '--abort']);
-            return ['merged' => false, 'pushed' => false,
-                    'reason' => 'merge conflict on ' . $base . ' — needs manual resolution'
-                              . ($files !== '' ? ' — conflicting files: ' . $files : '')];
-        }
-        // Push the merged base to origin (gh-free). If this fails, the merge lives
-        // only in the soon-to-be-deleted clone, so it does NOT count as merged.
-        $push = $git($ws, ['push', 'origin', $base]);
-        return [
-            'merged' => true,
-            'pushed' => $push['ok'],
-            'reason' => $push['ok']
-                ? 'merged into ' . $base . ' and pushed to origin'
-                : 'merged locally but push to origin failed: ' . $push['out'],
-        ];
-    }
-
     /**
      * Diff summary of a task's branch vs its base (numstat), for the review UI.
      * Read-only. Returns null when there's no workspace/branch/changes, else
      * ['files'=>[['path','added','removed','binary'],...],'total_files','added','removed','base'].
      */
     private function taskDiffStat($task): ?array {
-        $ws   = (string)($task->projectPath ?? '');
-        $br   = (string)($task->branchName ?? '');
-        $base = (string)($task->baseBranch ?: 'main');
-        if ($ws === '' || !GitService::isWorkspace($ws) || $br === '') return null;
-        $out = []; $code = 0;
-        exec('git -C ' . escapeshellarg($ws) . ' diff --numstat ' . escapeshellarg($base . '...HEAD') . ' 2>/dev/null', $out, $code);
-        if ($code !== 0) return null;
+        // The task's branch is in the project's container: numstat it there (main...task/<id>).
+        $ct = $this->tenantInst();
+        $br = (string) $task->worktreeBranch;
+        if (!$ct || !str_starts_with($br, 'task/')) return null;
+        try {
+            [$c, $o] = \app\TenantHost::ssh($ct, 'app', 'cd /srv/app && git rev-parse --verify -q ' . escapeshellarg($br) . ' >/dev/null && git diff --numstat main...' . escapeshellarg($br), null, 30);
+        } catch (\RuntimeException $e) { return null; }
+        if ($c !== 0) return null;
         $files = []; $addT = 0; $remT = 0;
-        foreach ($out as $line) {
+        foreach (explode("\n", trim((string) $o)) as $line) {
             $p = explode("\t", $line);
             if (count($p) < 3) continue;
             $binary  = ($p[0] === '-');
-            $added   = $binary ? 0 : (int)$p[0];
-            $removed = ($p[1] === '-') ? 0 : (int)$p[1];
+            $added   = $binary ? 0 : (int) $p[0];
+            $removed = ($p[1] === '-') ? 0 : (int) $p[1];
             $files[] = ['path' => $p[2], 'added' => $added, 'removed' => $removed, 'binary' => $binary];
             $addT += $added; $remT += $removed;
         }
         if (!$files) return null;
-        return ['files' => $files, 'total_files' => count($files), 'added' => $addT, 'removed' => $remT, 'base' => $base];
+        return ['files' => $files, 'total_files' => count($files), 'added' => $addT, 'removed' => $remT, 'base' => 'main'];
     }
 
     /** GET /workbench/diff?id= — full patch of a task's branch vs base, for review. */
@@ -4487,15 +2948,15 @@ class Workbench extends BuildControl {
         if ($ct = $this->tenantInst()) {
             // The task's branch is in the app's container: diff it there (main...task/<id>).
             $br = (string) $task->worktreeBranch;
-            $patch = ''; $note = ''; $stat = '';
+            $patch = ''; $note = '';
             if (!str_starts_with($br, 'task/')) {
                 $note = 'This task has no branch in the container (not run yet, or merged / discarded).';
             } else {
-                [$c, $o] = \app\TenantHost::ssh($ct, 'app', 'cd /srv/app && git rev-parse --verify -q ' . escapeshellarg($br) . ' >/dev/null && { git diff --stat main...' . escapeshellarg($br) . '; echo ---PATCH---; git diff main...' . escapeshellarg($br) . ' | head -c 500001; } || echo NOBRANCH', null, 60);
+                [$c, $o] = \app\TenantHost::ssh($ct, 'app', 'cd /srv/app && git rev-parse --verify -q ' . escapeshellarg($br) . ' >/dev/null && { echo ---PATCH---; git diff main...' . escapeshellarg($br) . ' | head -c 500001; } || echo NOBRANCH', null, 60);
                 if ($c !== 0) $note = "Could not read the diff from {$ct->slug}'s container: " . trim((string) $o);
                 elseif (trim((string) $o) === 'NOBRANCH') $note = "No branch {$br} in the container — it may have been merged or discarded.";
                 else {
-                    [$stat, $patch] = array_pad(explode("---PATCH---\n", (string) $o, 2), 2, '');
+                    $patch = (string) substr((string) $o, (int) strpos((string) $o, "---PATCH---\n") + 12);
                     if (strlen($patch) > 500000) { $patch = substr($patch, 0, 500000); $note = 'Diff truncated (very large).'; }
                     elseif (trim($patch) === '') $note = 'No changes on this branch.';
                 }
@@ -4504,28 +2965,15 @@ class Workbench extends BuildControl {
             $this->viewData['task']  = $task;
             $this->viewData['patch'] = $patch;
             $this->viewData['note']  = $note;
-            $this->viewData['stat']  = trim($stat);
+            $this->viewData['stat']  = $this->taskDiffStat($task);
             $this->render('workbench/diff', $this->viewData);
             return;
         }
-        $ws   = (string)($task->projectPath ?? '');
-        $br   = (string)($task->branchName ?? '');
-        $base = (string)($task->baseBranch ?: 'main');
-        $patch = ''; $note = '';
-        if ($ws === '' || !GitService::isWorkspace($ws) || $br === '') {
-            $note = 'No workspace branch is available for this task — it may have been merged or cleaned up.';
-        } else {
-            $out = [];
-            exec('git -C ' . escapeshellarg($ws) . ' diff ' . escapeshellarg($base . '...HEAD') . ' 2>&1', $out);
-            $patch = implode("\n", $out);
-            if (strlen($patch) > 500000) { $patch = substr($patch, 0, 500000); $note = 'Diff truncated (very large).'; }
-            elseif (trim($patch) === '') { $note = 'No changes on this branch.'; }
-        }
         $this->viewData['title'] = 'Diff — ' . $task->title;
         $this->viewData['task']  = $task;
-        $this->viewData['patch'] = $patch;
-        $this->viewData['note']  = $note;
-        $this->viewData['stat']  = $this->taskDiffStat($task);
+        $this->viewData['patch'] = '';
+        $this->viewData['note']  = 'This project is not running in its own container — its tasks have no branch to diff.';
+        $this->viewData['stat']  = null;
         $this->render('workbench/diff', $this->viewData);
     }
 
@@ -4622,96 +3070,6 @@ class Workbench extends BuildControl {
         }
 
         return null;
-    }
-
-    /**
-     * Auto-start test server for a task (non-blocking)
-     * Called automatically when a task starts running
-     *
-     * @param object $task The task bean
-     * @param int $memberId The member starting the task
-     * @return array|null Server info if started, null if skipped/failed
-     */
-    private function autoStartTestServer($task, int $memberId): ?array {
-        // Skip if no branch or port assigned
-        if (empty($task->branchName) || empty($task->assignedPort)) {
-            return null;
-        }
-
-        // Skip if test server already running
-        if (!empty($task->testServerSession) && TmuxManager::exists($task->testServerSession)) {
-            return null;
-        }
-
-        // Skip if port is not available
-        if (!PortManager::isPortAvailable($task->assignedPort)) {
-            $this->logger->warning('Auto-start skipped: port in use', [
-                'task_id' => $task->id,
-                'port' => $task->assignedPort
-            ]);
-            return null;
-        }
-
-        try {
-            $sessionName = TmuxManager::buildServerSessionName($memberId, $task->id, preg_replace('/\.[a-z0-9]+$/i', '', (string) $task->instanceTag));
-            $projectPath = !empty($task->projectPath) ? $task->projectPath : dirname(__DIR__);
-
-            // Build the server command
-            if (!empty($task->projectPath)) {
-                // Workspace mode - already on correct branch
-                $serverCmd = sprintf(
-                    // 4 workers: server.php asks this same server whether the app can produce
-                    // an image (else it shows a placeholder), which a single worker would deadlock.
-                    'cd %s && PHP_CLI_SERVER_WORKERS=4 php -S 0.0.0.0:%d server.php; echo "Server stopped. Press Enter to close..."; read',
-                    escapeshellarg($projectPath),
-                    $task->assignedPort
-                );
-            } else {
-                // Main project mode - checkout branch first
-                $serverCmd = sprintf(
-                    'cd %s && git checkout %s && php -S 0.0.0.0:%d server.php; echo "Server stopped. Press Enter to close..."; read',
-                    escapeshellarg($projectPath),
-                    escapeshellarg($task->branchName),
-                    $task->assignedPort
-                );
-            }
-
-            TmuxManager::create($sessionName, $serverCmd, $projectPath);
-
-            $task->testServerSession = $sessionName;
-
-            // Create .proxy file for subdomain routing
-            // File format: proxyhost=X\nproxyport=Y (lua loadEnvFile expects key=value)
-            // Filename: .proxy.{hash}.{domain} (no TLD - nginx lua strips it)
-            $testUrl = $this->testServerUrl($task);
-            if (!empty($task->proxyHash)) {
-                // The proxy file is named for the host WITHOUT its TLD — determine_proxy.lua
-                // looks up /var/www/html/.proxy.<name> with the TLD already stripped.
-                $proxyName = preg_replace('/\.[a-z]{2,}$/i', '', (string) parse_url($testUrl, PHP_URL_HOST));
-                $proxyFile = "/var/www/html/.proxy.{$proxyName}";
-                $proxyContent = "proxyhost=127.0.0.1\nproxyport={$task->assignedPort}";
-                if (file_put_contents($proxyFile, $proxyContent) !== false) {
-                    $task->proxyFile = $proxyFile;
-                }
-            }
-
-            Bean::store($task);
-
-            $this->logTaskEvent($task->id, 'info', 'system', "Test server auto-started on port {$task->assignedPort}");
-
-            return [
-                'session' => $sessionName,
-                'port' => $task->assignedPort,
-                'url' => $testUrl
-            ];
-
-        } catch (Exception $e) {
-            $this->logger->warning('Auto-start test server failed', [
-                'task_id' => $task->id,
-                'error' => $e->getMessage()
-            ]);
-            return null;
-        }
     }
 
     /**
