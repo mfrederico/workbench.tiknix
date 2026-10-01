@@ -171,6 +171,16 @@ class Aibuilder extends BuildControl {
     }
 
     /** The token for the app's bridge, signed with THAT app's key (instance.terminal_key). */
+    /**
+     * Refuse, by name, an action this page still performs on THIS host's copy of a project, for a
+     * project that lives in its own container (there is no copy here — only its board).
+     */
+    private function refuseInContainer(object $inst, string $what): bool {
+        if (!$this->inContainer($inst)) return false;
+        Flight::jsonError("{$what}: not available from this page yet for {$inst->slug}, which runs in its own container.", 409);
+        return true;
+    }
+
     private function mintAppToken(object $inst, int $memberId, bool $resume): string {
         $key = (string) ($inst->terminalKey ?? '');
         if (strlen($key) < 64) {
@@ -233,8 +243,16 @@ class Aibuilder extends BuildControl {
         $id = (int) $id;
         if (!$id || !$this->access->ownsInstance((int) $this->member->id, $id)) return null;
         $inst = $this->access->instanceMeta($id);
-        if (!$inst || !is_file($this->instanceDir($inst->slug) . '/public/index.php')) return null;
+        if (!$inst || !$this->onDisk($inst)) return null;
         return $inst;
+    }
+
+    /**
+     * The project's code is where this page can reach it: on this host, or — for a project in its
+     * own container — in the container (its workspace here holds only the board, data/workbench.db).
+     */
+    private function onDisk(object $inst): bool {
+        return $this->inContainer($inst) || is_file($this->instanceDir($inst->slug) . '/public/index.php');
     }
 
     /** An instance the current member may USE: owned OR shared with one of their teams. */
@@ -245,7 +263,7 @@ class Aibuilder extends BuildControl {
         // The "(default)" core instance is the live control plane (core.tiknix symlinks to the
         // running app) — not a buildable instance. It's excluded from the AI Builder entirely.
         if (!$inst || !empty($inst->isDefault)) return null;
-        if (!is_file($this->instanceDir($inst->slug) . '/public/index.php')) return null;
+        if (!$this->onDisk($inst)) return null;
         return $inst;
     }
 
@@ -255,8 +273,16 @@ class Aibuilder extends BuildControl {
     }
 
     /** Run git inside an instance's directory (read/write its own repo only). */
-    private function gitInstance(string $slug, array $args): array {
+    private function gitInstance(object $inst, array $args): array {
+        $slug = (string) $inst->slug;
         if (!preg_match(self::SLUG_RE, $slug)) return ['ok' => false, 'out' => '', 'code' => 1];
+        if ($this->inContainer($inst)) {
+            // The project's repository is the app in its container (/srv/app), not its workspace here.
+            $cmd = 'git -C /srv/app';
+            foreach ($args as $a) { $cmd .= ' ' . escapeshellarg((string) $a); }
+            [$code, $out] = \app\TenantHost::ssh($inst, 'app', $cmd . ' 2>&1', null, 30);
+            return ['ok' => $code === 0, 'out' => rtrim((string) $out, "\n"), 'code' => $code];
+        }
         $cmd = 'git -C ' . escapeshellarg($this->instanceDir($slug));
         foreach ($args as $a) { $cmd .= ' ' . escapeshellarg((string)$a); }
         $lines = []; $code = 0;
@@ -496,6 +522,7 @@ class Aibuilder extends BuildControl {
             // connect to core's host, not this sidecar's. wss://<core-host>. See coreWsBase().
             'ab_ws_base'     => $inCt ? $ctWs : $this->coreWsBase(),
             'ab_hasInstance' => (bool)$selected,
+            'ab_inCt'        => $inCt,
             'ab_isDefault'   => $selected ? (bool)$selected->isDefault : false,
             'ab_isRoot'      => $this->hasLevel(LEVELS['ROOT']),
             'ab_canCreate'   => $this->hasLevel(LEVELS['ADMIN']),
@@ -633,6 +660,7 @@ class Aibuilder extends BuildControl {
         if (!$this->requireLevel($this->minLevel())) return;
         $inst = $this->accessibleInstance($this->getParam('id', 0));
         if (!$inst) { Flight::jsonError('No such instance', 404); return; }
+        if ($this->refuseInContainer($inst, 'The terminal sign-in capture')) return;
 
         $url = $this->signinUrlFromPane($this->paneText($inst->slug));
         if ($url !== '' && preg_match('#^https://[a-z0-9.-]*claude\.(?:com|ai)/[^\s]*oauth/authorize\?#i', $url)) {
@@ -650,7 +678,8 @@ class Aibuilder extends BuildControl {
 
         // Uncommitted working-tree changes == the delta since the last checkpoint
         // (snapshot-instance.sh commits everything, so this self-resets per checkpoint).
-        $out = $this->gitInstance($inst->slug, ['status', '--porcelain']);
+        $out = $this->gitInstance($inst, ['status', '--porcelain']);
+        if (!$out['ok']) { Flight::jsonError("git status failed for {$inst->slug}: " . mb_substr($out['out'], 0, 300), 502); return; }
         $files = [];
         foreach (explode("\n", $out['out']) as $line) {
             if (trim($line) === '') continue;
@@ -676,6 +705,13 @@ class Aibuilder extends BuildControl {
         if (is_file($file)) require_once $file;
         $cls = 'app\\mcptools\\Introspector';
         if (!class_exists($cls)) { Flight::jsonError('Introspector unavailable', 500); return; }
+        if ($this->inContainer($inst)) {
+            // Read in the container, where the code is (the planner's own source, TenantBuilder::digest).
+            $digest = \app\TenantBuilder::digest($inst);
+            if (str_starts_with($digest, '_(codebase inventory unavailable')) { Flight::jsonError("{$inst->slug}'s container gave no codebase inventory — see core's log", 502); return; }
+            Flight::jsonSuccess(['slug' => $inst->slug, 'digest' => $digest]);
+            return;
+        }
         try {
             $digest = (new $cls($this->instanceDir($inst->slug)))->digest();
         } catch (\Throwable $e) {
@@ -690,6 +726,7 @@ class Aibuilder extends BuildControl {
         if (!$this->validateCSRF()) return;
         $inst = $this->accessibleInstance($this->getParam('id', 0));
         if (!$inst) { Flight::jsonError('No such instance', 404); return; }
+        if ($this->refuseInContainer($inst, 'Checkpoints')) return;
 
         $desc = mb_substr(trim(preg_replace('/[\r\n]+/', ' ', (string)$this->getParam('label', ''))), 0, 200);
 
@@ -703,7 +740,7 @@ class Aibuilder extends BuildControl {
         }
         // Re-tag as an ANNOTATED tag carrying the description (git-native; HEAD is the snapshot commit).
         if ($tag !== '' && $desc !== '') {
-            $this->gitInstance($inst->slug, ['tag', '-f', '-a', $tag, '-m', $desc]);
+            $this->gitInstance($inst, ['tag', '-f', '-a', $tag, '-m', $desc]);
         }
 
         // A checkpoint is a local git tag and nothing more. Auto-publish used to ride
@@ -721,9 +758,10 @@ class Aibuilder extends BuildControl {
         $inst = $this->accessibleInstance($this->getParam('id', 0));
         if (!$inst) { Flight::jsonError('No such instance', 404); return; }
 
-        $out = $this->gitInstance($inst->slug, ['for-each-ref', '--sort=-creatordate',
+        $out = $this->gitInstance($inst, ['for-each-ref', '--sort=-creatordate',
             '--format=%(refname:short)|%(creatordate:short)|%(objectname:short)|%(contents:subject)',
             'refs/tags/checkpoint-*']);
+        if (!$out['ok']) { Flight::jsonError("could not list checkpoints for {$inst->slug}: " . mb_substr($out['out'], 0, 300), 502); return; }
         $items = [];
         foreach (explode("\n", $out['out']) as $line) {
             if ($line === '') continue;
@@ -745,6 +783,7 @@ class Aibuilder extends BuildControl {
         // Owner-only: rollback resets the whole (possibly team-shared) instance.
         $inst = $this->ownedInstance($this->getParam('id', 0));
         if (!$inst) { Flight::jsonError('No such instance (owner only)', 404); return; }
+        if ($this->refuseInContainer($inst, 'Rollback')) return;
 
         $ckpt = (string)($params['operation']->name ?? $this->getParam('checkpoint', 'checkpoint-baseline'));
         if (!preg_match('/^[a-z0-9-]{3,60}$/i', $ckpt)) {
@@ -821,7 +860,7 @@ class Aibuilder extends BuildControl {
             if (preg_match('/^checkpoint-[A-Za-z0-9._-]+$/', $l)) { $tag = $l; break; }
         }
         if ($tag !== '') {
-            $this->gitInstance($inst->slug, ['tag', '-f', '-a', $tag, '-m', 'plan: ' . mb_substr((string)$plan['title'], 0, 80)]);
+            $this->gitInstance($inst, ['tag', '-f', '-a', $tag, '-m', 'plan: ' . mb_substr((string)$plan['title'], 0, 80)]);
         }
 
         // Deterministic tree creation is shared with the headless CLI ingester.
@@ -1127,6 +1166,7 @@ class Aibuilder extends BuildControl {
         if (!$this->validateCSRF()) return;
         $inst = $this->accessibleInstance($this->getParam('id', 0));
         if (!$inst) { Flight::jsonError('No such instance', 404); return; }
+        if ($this->refuseInContainer($inst, 'Uploads')) return;
 
         $bucket    = $this->getParam('bucket', 'secure') === 'public' ? 'public' : 'secure';
         $overwrite = filter_var($this->getParam('overwrite', false), FILTER_VALIDATE_BOOLEAN);
@@ -1165,7 +1205,7 @@ class Aibuilder extends BuildControl {
                 @chmod($dest, 0664);
                 $rel = $this->uploadBucketRel($bucket) . '/' . basename($dest);
                 // Track the file so it publishes with the next checkpoint (both buckets publish).
-                $this->gitInstance($inst->slug, ['add', $rel]);
+                $this->gitInstance($inst, ['add', $rel]);
                 $stored[] = ['name' => basename($dest), 'path' => $rel, 'ref' => '@' . $rel, 'bucket' => $bucket];
             } else {
                 $errors[] = $origName . ': write failed';
@@ -1179,6 +1219,7 @@ class Aibuilder extends BuildControl {
         if (!$this->requireLevel($this->minLevel())) return;
         $inst = $this->accessibleInstance($this->getParam('id', 0));
         if (!$inst) { Flight::jsonError('No such instance', 404); return; }
+        if ($this->refuseInContainer($inst, 'Uploads')) return;
         $out = ['secure' => [], 'public' => []];
         foreach (['secure', 'public'] as $b) {
             $dir = $this->instanceDir($inst->slug) . '/' . $this->uploadBucketRel($b);
@@ -1200,6 +1241,7 @@ class Aibuilder extends BuildControl {
         if (!$this->validateCSRF()) return;
         $inst = $this->accessibleInstance($this->getParam('id', 0));
         if (!$inst) { Flight::jsonError('No such instance', 404); return; }
+        if ($this->refuseInContainer($inst, 'Uploads')) return;
         $bucket = $this->getParam('bucket', 'secure') === 'public' ? 'public' : 'secure';
         $name   = basename((string)$this->getParam('name', ''));
         if ($name === '' || $name === '.gitkeep') { Flight::jsonError('Invalid file', 400); return; }
@@ -1210,7 +1252,7 @@ class Aibuilder extends BuildControl {
         if (!$real || !$bucketDir || strpos($real, $bucketDir) !== 0 || !is_file($real)) {
             Flight::jsonError('Not found', 404); return;
         }
-        $this->gitInstance($inst->slug, ['rm', '-f', '--cached', $relDir . '/' . $name]);
+        $this->gitInstance($inst, ['rm', '-f', '--cached', $relDir . '/' . $name]);
         @unlink($real);
         Flight::jsonSuccess([], 'Deleted');
     }

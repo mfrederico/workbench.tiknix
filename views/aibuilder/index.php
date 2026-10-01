@@ -215,6 +215,8 @@ foreach ($instances as $__i) { if (!empty($__i->isDefault)) { $hasDefault = true
             <div id="ab-changes" class="mb-3"><div class="text-body-secondary small">No changes yet.</div></div>
 
             <!-- 2) Uploads -->
+            <?php /* Uploads land in THIS host's copy; a project in its own container has none here. */ ?>
+            <div<?= !empty($ab_inCt) ? ' class="d-none"' : '' ?>>
             <div class="text-uppercase text-body-secondary fw-semibold mb-1" style="font-size:.68rem;letter-spacing:.04em"><i class="bi bi-paperclip me-1"></i>Uploads <span class="fw-normal text-lowercase">— @reference in the terminal</span></div>
             <form id="ab-upload-form" class="mb-2">
               <input id="ab-upload-file" type="file" class="form-control form-control-sm mb-2" multiple>
@@ -233,6 +235,7 @@ foreach ($instances as $__i) { if (!empty($__i->isDefault)) { $hasDefault = true
             </form>
             <div id="ab-upload-list" class="small mb-3"></div>
 
+            </div>
             <!-- 3) Checkpoint (commits everything above; local only — publishing is the Publisher's) -->
             <hr class="my-2">
             <div class="text-uppercase text-body-secondary fw-semibold mb-1" style="font-size:.68rem;letter-spacing:.04em"><i class="bi bi-bookmark-plus me-1"></i>Checkpoint</div>
@@ -372,6 +375,8 @@ const AB = {
   // mints a plain token and the resumed session quietly becomes a cold one.
   resume: <?= (($_GET['resume'] ?? '') === '1') ? 'true' : 'false' ?>,
   isDefault: <?= $ab_isDefault ? 'true' : 'false' ?>,
+  // In its own container: the terminal is the app's; host-side uploads and sign-in capture do not apply.
+  inCt: <?= !empty($ab_inCt) ? 'true' : 'false' ?>,
   url: <?= json_encode($ab_url ?? '') ?>,
   wsBase: <?= json_encode($ab_ws_base ?? '') ?>,
   // The engine this page resolved to. Must ride along on every token refresh: the token
@@ -767,7 +772,7 @@ if (AB.has && !AB.keyNeeded) {
     }
     subBtn.addEventListener('click',connect);
 
-    setInterval(()=>{
+    if(!AB.inCt) setInterval(()=>{
       if(busy) return;
       fetch('/aibuilder/oauthstatus?id='+AB.id,{headers:{'X-Requested-With':'XMLHttpRequest'}})
         .then(r=>r.json()).then(j=>{
@@ -816,7 +821,7 @@ if (AB.has && !AB.keyNeeded) {
   } else {
     setStatus('connecting…'); initTerminal();
   }
-  refreshChanges(); loadCheckpoints(); loadUploads();
+  refreshChanges(); loadCheckpoints(); if(!AB.inCt) loadUploads();
   setInterval(refreshChanges, 4000);
 
 }
