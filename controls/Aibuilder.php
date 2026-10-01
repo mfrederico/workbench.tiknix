@@ -444,11 +444,20 @@ class Aibuilder extends BuildControl {
         // first-run `claude` sign-in surfaces in the gate instead of a dead browser.
         $termEngine = ''; $termError = '';
         $inCt = $selected && $this->inContainer($selected);
-        $ctToken = ''; $ctWs = '';
+        $ctToken = ''; $ctWs = ''; $ctAgentNote = null;
         if ($inCt) {
             try {
                 $ctToken = $this->mintAppToken($selected, $mid, $this->getParam('resume', '') === '1');
                 $ctWs = $this->appWsBase($selected);
+                // The terminal runs the APP's agent with the APP's credential, set on the app's own
+                // AI agents page — say so up front, with the link, instead of only inside the terminal.
+                try {
+                    $ag = \app\TenantBuilder::agents($selected);
+                    $problem = (string) ($ag['claude']['problem'] ?? '');
+                    if (empty($ag['agents']) && $problem !== '') $ctAgentNote = ['problem' => $problem, 'url' => preg_replace('#^wss://#', 'https://', $ctWs) . '/agents'];
+                } catch (\RuntimeException $e) {
+                    $ctAgentNote = ['problem' => $e->getMessage(), 'url' => ''];
+                }
             } catch (\RuntimeException $e) {
                 $termError = $e->getMessage();
                 $this->logger->error('Terminal: container project not ready', ['instance' => $selected->slug, 'err' => $termError]);
@@ -523,6 +532,7 @@ class Aibuilder extends BuildControl {
             'ab_ws_base'     => $inCt ? $ctWs : $this->coreWsBase(),
             'ab_hasInstance' => (bool)$selected,
             'ab_inCt'        => $inCt,
+            'ab_agentNote'   => $ctAgentNote,
             'ab_isDefault'   => $selected ? (bool)$selected->isDefault : false,
             'ab_isRoot'      => $this->hasLevel(LEVELS['ROOT']),
             'ab_canCreate'   => $this->hasLevel(LEVELS['ADMIN']),

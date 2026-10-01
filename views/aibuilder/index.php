@@ -160,6 +160,18 @@ foreach ($instances as $__i) { if (!empty($__i->isDefault)) { $hasDefault = true
               </a>
             </div>
             <?php endif; ?>
+            <?php if (!empty($ab_agentNote)): ?>
+            <div class="alert alert-warning d-flex flex-wrap align-items-center gap-2 py-2 small mb-2" role="alert">
+              <i class="bi bi-person-gear"></i>
+              <span class="me-auto"><strong>This project's agent can't start yet.</strong> <?= htmlspecialchars($ab_agentNote['problem']) ?></span>
+              <?php if ($ab_agentNote['url'] !== ''): ?>
+              <a href="<?= htmlspecialchars($ab_agentNote['url']) ?>" target="_blank" rel="noopener" class="btn btn-sm btn-warning">
+                <i class="bi bi-box-arrow-up-right me-1"></i>Open <?= htmlspecialchars($ab_sub) ?>'s AI agents
+              </a>
+              <span class="text-body-secondary">then press Enter in the terminal</span>
+              <?php endif; ?>
+            </div>
+            <?php endif; ?>
             <?php if (!empty($ab_termError)): ?>
             <div class="alert alert-danger mb-2">
               <i class="bi bi-exclamation-octagon me-1"></i>The terminal cannot open:
