@@ -1651,7 +1651,8 @@ class Workbench extends BuildControl {
         try {
             // A previous attempt's branch goes first: a rerun starts from the app as it is now.
             \app\TenantHost::discardTask($ct, $id);
-            \app\TenantRun::start($ct, $this->boardSession($ct, $task), $id, '--agent-task=' . escapeshellarg($id) . ' --timeout=1800', $brief);
+            \app\TenantRun::start($ct, $this->boardSession($ct, $task), $id, '--agent-task=' . escapeshellarg($id) . ' --timeout=1800', $brief,
+                \app\TenantHost::author((int) $this->member->id));   // its commits are the member's who ran it
         } catch (\Throwable $e) {
             Flight::jsonError("Could not start the task in {$ct->slug}'s container: " . $e->getMessage(), 502);
             return;
@@ -1968,7 +1969,11 @@ class Workbench extends BuildControl {
             // Merging IS publishing: the task branch into the app in its container (seeds run).
             $branch = (string) $task->worktreeBranch;
             if (!str_starts_with($branch, 'task/')) { Flight::jsonError('This task has no branch in the container to merge.', 409); return; }
-            $m = \app\TenantHost::mergeTask($ct, substr($branch, 5));
+            try {
+                $m = \app\TenantHost::mergeTask($ct, substr($branch, 5), \app\TenantHost::author((int) $this->member->id));   // the approver's merge
+            } catch (\RuntimeException $e) {
+                $m = ['ok' => false, 'error' => $e->getMessage()];
+            }
             if (empty($m['ok'])) {
                 $err = (string) ($m['error'] ?? 'the merge failed');
                 $this->logTaskEvent((int) $task->id, 'error', 'system', 'Merge failed: ' . $err);

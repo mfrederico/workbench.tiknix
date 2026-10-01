@@ -559,8 +559,9 @@ if (AB.has && !AB.keyNeeded) {
   document.getElementById('ab-ckpt-form').addEventListener('submit',function(e){
     e.preventDefault(); const inp=document.getElementById('ab-ckpt-desc'); const btn=this.querySelector('button'); btn.disabled=true;
     post('/aibuilder/checkpoint',{label:inp.value.trim()}).then(j=>{
+      if(!j||!j.success){ tkAlert((j&&j.message)||'The checkpoint was not saved.'); return; }
       inp.value=''; loadCheckpoints(); refreshChanges();
-    }).finally(()=>btn.disabled=false);
+    }).catch(()=>tkAlert('The checkpoint was not saved — the request failed.')).finally(()=>btn.disabled=false);
   });
   let _ckpt=null;
   function openCkptModal(ckpt){

@@ -427,10 +427,30 @@ class Aibuilder extends BuildControl {
         Flight::jsonSuccess(['slug' => $inst->slug, 'digest' => $digest]);
     }
 
-    /** POST /aibuilder/checkpoint?id= — checkpoint with an optional description. JSON. */
+    /**
+     * POST /aibuilder/checkpoint?id= — checkpoint the app as it is now, with an optional
+     * description (label). Taken in the container (TenantHost::checkpoint): what is uncommitted
+     * is committed, HEAD tagged, each database copied — all by the member saving it. JSON.
+     */
     public function checkpoint($params = []): void {
         if (!$this->requireLevel($this->minLevel())) return;
-        Flight::jsonError('Taking a checkpoint from this page is not available for a project in its own container yet.', 409);
+        if (!$this->validateCSRF()) return;
+        $inst = $this->accessibleInstance($this->getParam('id', 0));
+        if (!$inst) { Flight::jsonError('No such instance', 404); return; }
+        if (!$this->inContainer($inst)) { Flight::jsonError("{$inst->slug} is not running in its own container, so it cannot be checkpointed here.", 409); return; }
+        $label = mb_substr(trim((string) $this->getParam('label', '')), 0, 200);
+        try {
+            $c = \app\TenantHost::checkpoint($inst, 'checkpoint-' . date('Ymd-His'), $label, \app\TenantHost::author((int) $this->member->id));
+        } catch (\RuntimeException $e) {
+            $c = ['ok' => false, 'error' => $e->getMessage()];
+        }
+        if (!$c['ok']) {
+            $this->logger->error('aibuilder checkpoint failed', ['instance' => $inst->slug, 'error' => $c['error']]);
+            Flight::jsonError('Checkpoint failed: ' . $c['error'], 502);
+            return;
+        }
+        $this->logger->info('aibuilder checkpoint', ['instance' => $inst->slug, 'tag' => $c['tag'], 'member' => (int) $this->member->id]);
+        Flight::jsonSuccess($c, 'Checkpoint ' . preg_replace('/^checkpoint-/', '', $c['tag']) . ' saved' . ($c['committed'] ? ' (uncommitted changes included)' : ''));
     }
 
     /** GET /aibuilder/checkpoints?id= — list checkpoints with descriptions. JSON. */
@@ -523,14 +543,17 @@ class Aibuilder extends BuildControl {
     /** Persist a decomposed plan as a workbench task tree + take a baseline checkpoint. */
     private function savePlanTree($inst, array $plan): array {
         // Baseline checkpoint so the WHOLE plan is reversible to the pre-plan state.
-        $snap = $this->runScript('snapshot-instance.sh', [$this->appNamespace(), $inst->slug]);
+        // Taken in the container by the member saving the plan; if it cannot be, the plan is still
+        // saved and PlanExecutor takes its rollback point before the first task (or refuses to run).
         $tag = '';
-        foreach (array_reverse(array_filter(array_map('trim', explode("\n", $snap['out'])))) as $l) {
-            if (preg_match('/^checkpoint-[A-Za-z0-9._-]+$/', $l)) { $tag = $l; break; }
+        try {
+            $c = \app\TenantHost::checkpoint($inst, 'checkpoint-plan-' . date('Ymd-His'), 'plan: ' . mb_substr((string) $plan['title'], 0, 80),
+                \app\TenantHost::author((int) $this->member->id));
+        } catch (\RuntimeException $e) {
+            $c = ['ok' => false, 'error' => $e->getMessage()];
         }
-        if ($tag !== '') {
-            $this->gitInstance($inst, ['tag', '-f', '-a', $tag, '-m', 'plan: ' . mb_substr((string)$plan['title'], 0, 80)]);
-        }
+        if ($c['ok']) $tag = $c['tag'];
+        else $this->logger->error('aibuilder plan baseline checkpoint failed', ['instance' => $inst->slug, 'error' => $c['error']]);
 
         // Deterministic tree creation is shared with the headless CLI ingester.
         $res = \app\PlanIngestor::ingest($inst, $plan, (int)$this->member->id, $tag, $this->appNamespace());
