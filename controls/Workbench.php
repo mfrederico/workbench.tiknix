@@ -1757,6 +1757,13 @@ class Workbench extends BuildControl {
      *
      * @return int subtasks removed alongside it
      */
+    /** The selected project when it runs in its own container (its tasks run there — TenantRun), else null. */
+    private function tenantInst(): ?object {
+        $id = (int) ($this->selected['id'] ?? 0);
+        $inst = $id ? $this->access->instanceMeta($id) : null;
+        return ($inst && trim((string) ($inst->ctIp ?? '')) !== '') ? $inst : null;
+    }
+
     private function purgeTask($task): int {
         $taskId = (int) $task->id;
             // Kill any running sessions
@@ -1803,7 +1810,24 @@ class Workbench extends BuildControl {
             PlanOrchestrator::stop($taskId, (string) (strstr((string)($task->instanceTag ?? ''), '.', true) ?: ''));
             $subtaskCount = 0;
             foreach (Bean::find('workbenchtask', 'parent_task_id = ?', [$taskId]) as $sub) {
-                if (!empty($sub->agentSession)) TmuxManager::kill((string)$sub->agentSession);
+                if (!empty($sub->agentSession)) {
+                    if ($ct = $this->tenantInst()) {
+                        // In the container: end the agent there and drop its branch, or it keeps
+                        // working on a plan that no longer exists.
+                        try {
+                            \app\TenantRun::kill($ct, (string) $sub->agentSession);
+                            $branch = (string) $sub->worktreeBranch;
+                            if (str_starts_with($branch, 'task/')) {
+                                $d = \app\TenantHost::discardTask($ct, substr($branch, 5));
+                                if (empty($d['ok'])) $this->logger->error('Purge: could not discard the container branch', ['branch' => $branch, 'error' => $d['error'] ?? '']);
+                            }
+                        } catch (\RuntimeException $e) {
+                            $this->logger->error('Purge: could not stop the container task', ['session' => (string) $sub->agentSession, 'error' => $e->getMessage()]);
+                        }
+                    } else {
+                        TmuxManager::kill((string) $sub->agentSession);
+                    }
+                }
                 $sub->xownTasklogList;
                 $sub->xownTasksnapshotList;
                 $sub->xownTaskcommentList;
@@ -3290,6 +3314,19 @@ class Workbench extends BuildControl {
 
         $session = (string)($task->tmuxSession ?: $task->agentSession ?: '');
         $lines   = max(50, min(4000, (int)$this->getParam('lines', 1500)));
+        if ($ct = $this->tenantInst()) {
+            // The task runs in the project's container (TenantRun), headless: there is no live
+            // screen to show — its output is recorded on the task when it finishes.
+            try { $alive = $session !== '' && \app\TenantRun::alive($ct, $session); }
+            catch (\RuntimeException $e) { Flight::jsonError($e->getMessage(), 502); return; }
+            Flight::jsonSuccess([
+                'session' => $session,
+                'alive'   => $alive,
+                'content' => $alive ? "Running in {$ct->slug}'s container. The agent's output is added to this task when it finishes.\n" : '',
+                'status'  => $task->status,
+            ]);
+            return;
+        }
         $alive   = $session !== '' && TmuxManager::exists($session);
 
         Flight::jsonSuccess([
