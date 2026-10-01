@@ -13,7 +13,6 @@ use \app\Bean;
 use \app\TaskAccessControl;
 use \app\SimpleCsrf;
 use \app\PromptBuilder;
-use \app\GitService;
 use \app\PortManager;
 use \app\TmuxManager;
 use \app\PlanRunner;
@@ -324,16 +323,9 @@ class Workbench extends BuildControl {
         // Get user's teams
         $teams = $this->access->getMemberTeams($this->member->id);
 
-        // Get available branches from git (only remote branches - local-only won't work for cloning)
-        $gitService = new GitService();
-        $branchData = $gitService->getBranches();
-        $currentBranch = $gitService->getCurrentBranch();
-
-        // Use remote branches only - local-only branches can't be used as base for new workspaces
-        $remoteBranches = $branchData['remote'];
-        if (empty($remoteBranches)) {
-            $remoteBranches = ['main']; // Fallback
-        }
+        // A task builds on the app's main branch, in the project's container — there is no other base.
+        $remoteBranches = ['main'];
+        $currentBranch = 'main';
 
         $this->viewData['teams'] = $teams;
         $this->viewData['preselectedTeamId'] = $preselectedTeamId;
@@ -1457,18 +1449,8 @@ class Workbench extends BuildControl {
         // Only show remote branches - local-only branches can't be used as base for new workspaces
         $branches = [];
         $currentBranch = 'main';
-        if (empty($task->branchName)) {
-            $gitService = new GitService();
-            $branchData = $gitService->getBranches();
-            $branches = $branchData['remote'];
-            if (empty($branches)) {
-                $branches = ['main']; // Fallback
-            }
-            $currentBranch = $gitService->getCurrentBranch();
-            if (!in_array($currentBranch, $branches)) {
-                $currentBranch = 'main';
-            }
-        }
+        // A task builds on the app's main branch, in the project's container — there is no other base.
+        if (empty($task->branchName)) $branches = ['main'];
 
         $this->viewData['title'] = 'Edit Task';
         $this->viewData['task'] = $task;
