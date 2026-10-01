@@ -443,7 +443,10 @@ class Aibuilder extends BuildControl {
                 try {
                     $ag = \app\TenantBuilder::agents($selected);
                     $problem = (string) ($ag['claude']['problem'] ?? '');
-                    if (empty($ag['agents']) && $problem !== '') $ctAgentNote = ['problem' => $problem, 'url' => preg_replace('#^wss://#', 'https://', $ctWs) . '/agents'];
+                    // Through core's /projects/open: it signs you in to the app (a direct link to the
+                    // app's /agents lands on the app's own login page).
+                    $core = rtrim((string) \Flight::get('sidecar.core_url'), '/');
+                    if (empty($ag['agents']) && $problem !== '') $ctAgentNote = ['problem' => $problem, 'url' => $core . '/projects/open?to=' . rawurlencode('/agents')];
                 } catch (\RuntimeException $e) {
                     $ctAgentNote = ['problem' => $e->getMessage(), 'url' => ''];
                 }
