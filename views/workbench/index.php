@@ -277,11 +277,20 @@
                 <div id="wbDecomposeBanner" class="alert alert-info d-flex align-items-center">
                     <span class="spinner-border spinner-border-sm me-2" role="status"></span>
                     <div>
-                        <strong>Decomposing your goal into a plan…</strong>
+                        <?php /* Named, so Stop is a decision about THIS goal — the moment you need it
+                                 is the moment you realise it is planning the wrong thing. */ ?>
+                        <?php if (!empty($decomposingGoal)): ?>
+                            <strong>Planning “<span id="wbDecomposeTitle"><?= htmlspecialchars($decomposingGoal['title']) ?></span>”…</strong>
+                        <?php else: ?>
+                            <strong>Turning your goal into a plan…</strong>
+                        <?php endif; ?>
                         <?php if (!empty($decomposingTag)): ?>
                             <span class="ui-mono small">(<?= htmlspecialchars($decomposingTag) ?>)</span>
                         <?php endif; ?>
-                        <div class="small text-muted">The planner is grounding itself in the codebase and drafting tasks. This page refreshes automatically when the plan is ready — you can browse away and it'll keep working.</div>
+                        <?php if (!empty($decomposingGoal['excerpt'])): ?>
+                            <div class="small"><?= htmlspecialchars($decomposingGoal['excerpt']) ?></div>
+                        <?php endif; ?>
+                        <div class="small text-muted">The planner is reading the project and drafting the tasks. This page refreshes by itself when the plan is ready — you can browse away and it keeps working.</div>
                     </div>
                     <?php /* Cancelling used to mean killing a tmux session from a shell. The
                              moment you need it is the moment you realise it is planning the
@@ -329,7 +338,8 @@
 
                     var stopBtn = document.getElementById('wbDecomposeStop');
                     if (stopBtn) stopBtn.addEventListener('click', async function () {
-                        if (!await tkConfirm('Stop decomposing? The planner run so far is discarded.', {okText: 'Stop', danger: true})) return;
+                        var named = document.getElementById('wbDecomposeTitle');
+                        if (!await tkConfirm((named ? 'Stop planning “' + named.textContent + '”?' : 'Stop planning?') + ' What the planner has worked out so far is thrown away; your goal is kept under Prompts.', {okText: 'Stop', danger: true})) return;
                         stopBtn.disabled = true;
                         stopBtn.textContent = 'Stopping…';
                         fetch('/workbench/decomposestop', {

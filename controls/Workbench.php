@@ -267,6 +267,8 @@ class Workbench extends BuildControl {
         $this->viewData['decomposing'] = $decomposing || $this->getParam('decomposing', '') !== '';
         $this->viewData['decomposingTag'] = $this->selected
             ? $this->selected['slug'] . '.' . ($this->selected['app'] ?: 'tiknix') : '';
+        // WHAT is being planned — so "Stop" is a decision about a named thing, not about "your goal".
+        $this->viewData['decomposingGoal'] = $this->viewData['decomposing'] ? $this->decomposingGoal() : null;
 
         // Drives the 'Import from monday.com' button: shown only when the
         // selected project has a live connection.
@@ -1240,6 +1242,48 @@ class Workbench extends BuildControl {
         $this->logger->info('decompose stopped', ['instance' => $instance->slug, 'member' => $this->member->id]);
         Flight::jsonSuccess(['stopped' => $ok],
             $ok ? 'Stopped decomposing. Nothing was ingested.' : 'Could not stop the planner.');
+    }
+
+    /**
+     * The goal the selected project's planner is working on: {title, excerpt}, or null when it
+     * cannot be told.
+     *
+     * The goal itself is the workspace's .aibuilder/plan-goal.md, which PlanRunner writes when
+     * a planner starts — whoever started it (the form, a re-run, "continue", a queued retry).
+     * Its NAME is the title typed on the form, kept in the member's prompt log with the goal as
+     * the body: the row whose body is this goal names it. A goal nobody named (or named only
+     * "Decompose", the form's old default) is called by its own first line.
+     */
+    private function decomposingGoal(): ?array {
+        if (!$this->selected) return null;
+        $slug = (string) $this->selected['slug'];
+        $app  = (string) ($this->selected['app'] ?? '');
+        $file = rtrim(\app\WorkbenchDb::dirOf($slug, $app), '/') . '/.aibuilder/plan-goal.md';
+        if (!is_file($file)) return null;
+        $goal = trim((string) file_get_contents($file));
+        if ($goal === '') return null;
+
+        $title = '';
+        $rows = (array) \app\CoreDb::with(
+            fn() => \app\PromptLog::forMember((int) $this->member->id, \app\PromptLog::SOURCE_DECOMPOSE, 30, $slug . '.' . ($app ?: 'tiknix')),
+            []
+        );
+        foreach ($rows as $r) {
+            if (trim((string) $r->body) !== $goal) continue;
+            $t = trim((string) $r->title);
+            if ($t !== '' && $t !== 'Decompose') $title = $t;
+            break;   // newest first: the run in progress
+        }
+        // What was asked, without the form's answers written under it (app\GoalBrief).
+        $asked = \app\GoalBrief::split($goal)['goal'];
+        $lines = array_values(array_filter(array_map(fn($l) => trim(ltrim(trim($l), '#')), explode("\n", $asked)), fn($l) => $l !== ''));
+        if ($title === '') $title = (string) ($lines[0] ?? '');
+        if ($title === '') return null;
+        $excerpt = implode(' ', array_filter($lines, fn($l) => $l !== $title));
+        return [
+            'title'   => mb_strlen($title) > 90 ? mb_substr($title, 0, 89) . '…' : $title,
+            'excerpt' => mb_strlen($excerpt) > 180 ? mb_substr($excerpt, 0, 179) . '…' : $excerpt,
+        ];
     }
 
     /**
