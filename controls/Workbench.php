@@ -296,7 +296,7 @@ class Workbench extends BuildControl {
          * Read through CoreDb: promptlog lives in core, while this sidecar's default
          * connection is the instance's own database. */
         $this->viewData['recentPrompts'] = [];
-        $this->viewData['prefill'] = ['title' => '', 'body' => ''];
+        $this->viewData['prefill'] = ['title' => '', 'body' => '', 'audience' => '', 'acceptance' => '', 'prompt_id' => 0, 'plan' => true];
         if ($this->selected) {
             $tag = (string) ($this->selected['slug'] ?? '') . '.' . ($this->selected['app'] ?: 'tiknix');
             $rows = (array) \app\CoreDb::with(
@@ -314,26 +314,26 @@ class Workbench extends BuildControl {
                     null
                 );
                 if ($one) {
+                    // The answers were written into the goal (app\GoalBrief): take them back
+                    // out, so they return to their own questions instead of being appended twice.
+                    $was = \app\GoalBrief::split((string) ($one['body'] ?? ''));
                     $this->viewData['prefill'] = [
                         'title' => (string) ($one['title'] ?? ''),
-                        'body'  => (string) ($one['body'] ?? ''),
+                        'body'  => $was['goal'],
+                        'audience'   => $was['audience'],
+                        'acceptance' => $was['acceptance'],
+                        'prompt_id'  => $wantId,
+                        // What it was last time: a goal that became a single task comes back as one.
+                        'plan'       => (string) ($one['source'] ?? '') !== \app\PromptLog::SOURCE_TASK,
                     ];
                 }
             }
         }
 
-        // Pre-select team if specified
-        $preselectedTeamId = $this->getParam('team_id');
-
-        // Get user's teams
-        $teams = $this->access->getMemberTeams($this->member->id);
-
         // A task builds on the app's main branch, in the project's container — there is no other base.
         $remoteBranches = ['main'];
         $currentBranch = 'main';
 
-        $this->viewData['teams'] = $teams;
-        $this->viewData['preselectedTeamId'] = $preselectedTeamId;
         /* Engine+model pairs, and which one is preselected. The default is the PROJECT's
            engine at its worker tier — the thing that would have run anyway — so the picker
            changes what you can choose without changing what happens if you ignore it. */
@@ -351,8 +351,6 @@ class Workbench extends BuildControl {
             $projectEngine . ':' . \app\EngineRegistry::model($projectEngine, 'worker');
         $this->viewData['taskTypes'] = $this->getTaskTypes();
         $this->viewData['priorities'] = $this->getPriorities();
-        $this->viewData['authcontrolLevels'] = $this->getAuthcontrolLevels();
-        $this->viewData['memberLevel'] = $this->member->level;
         $this->viewData['branches'] = $remoteBranches;
         $this->viewData['currentBranch'] = in_array($currentBranch, $remoteBranches) ? $currentBranch : 'main';
 
@@ -410,7 +408,11 @@ class Workbench extends BuildControl {
     }
 
     /**
-     * Store new task
+     * POST /workbench/store — the create form's one button.
+     *
+     * "Plan it first" ticked (the default) hands the goal to the planner (decompose()); unticked,
+     * it is one task for one agent, saved here. Either way the form's two answers — who it is
+     * for, how we will know it worked — travel INSIDE the goal (app\GoalBrief).
      */
     public function store($params = []) {
         if (!$this->requireLogin()) return;
@@ -420,6 +422,7 @@ class Workbench extends BuildControl {
             Flight::redirect('/workbench');
             return;
         }
+        if ($this->wantsPlan()) { $this->decompose($params); return; }
 
         if (!Flight::csrf()->validateRequest()) {
             $this->flash('error', 'Invalid CSRF token');
@@ -435,25 +438,12 @@ class Workbench extends BuildControl {
             return;
         }
 
-        // Get team ID (null = personal task)
-        $teamId = $this->getParam('team_id');
-        if ($teamId === null || $teamId === '' || $teamId === 'personal') {   // absent = personal, not team 0
-            $teamId = null;
-        } else {
-            $teamId = (int)$teamId;
-            // Verify membership
-            if (!$this->access->isTeamMember($teamId, $this->member->id)) {
-                $this->flash('error', 'You are not a member of this team');
-                Flight::redirect('/workbench/create');
-                return;
-            }
-        }
+        // No team is asked for: who may see a task follows who the PROJECT is shared with
+        // (WorkbenchAccess), and a task that named a team of its own could disagree with that.
+        $teamId = null;
 
-        // Validate authcontrol level (must be >= member's level)
-        $authcontrolLevel = (int)$this->getParam('authcontrol_level', $this->member->level);
-        if ($authcontrolLevel < $this->member->level) {
-            $authcontrolLevel = $this->member->level; // Can't assign higher privilege than you have
-        }
+        $brief = $this->brief();
+        if ($brief === null) return;
 
         // The instance comes from the SELECTED PROJECT, never from the request. Taking it
         // from a posted field would leave the create form's chooser alive in everything
@@ -469,7 +459,8 @@ class Workbench extends BuildControl {
         try {
             $task = Bean::dispense('workbenchtask');
             $task->title = $title;
-            $task->description = trim($this->getParam('description', ''));
+            // The goal WITH its answers: the description is what the agent is handed.
+            $task->description = $brief['text'];
             $task->taskType = $this->getParam('task_type', 'feature');
             $task->priority = (int)$this->getParam('priority', 3);
             /* Engine+model as ONE pick (app\EngineRegistry::parseRunChoice), never two
@@ -484,7 +475,11 @@ class Workbench extends BuildControl {
             $task->status = 'pending';
             $task->memberId = $this->member->id;
             $task->teamId = $teamId;
-            $task->authcontrolLevel = $authcontrolLevel;
+            $task->authcontrolLevel = $brief['level'];
+            // A project in its own container builds on ITS agents: the one picked, '' = its default.
+            if (\app\TenantBuilder::bySlug((string) $instance->slug)) {
+                $task->agent = \app\PlanIngestor::agentName($this->getParam('agent', ''));
+            }
             /* Engine + model as ONE choice, validated against what the registry actually
                offers rather than parsed from the form. Both values leave PHP: the engine
                becomes a shell assignment in jail-run.sh and the model a --model flag, so an
@@ -496,7 +491,6 @@ class Workbench extends BuildControl {
                 $task->engine = $pick['engine'];
                 $task->model  = $pick['model'];
             }
-            $task->acceptanceCriteria = trim($this->getParam('acceptance_criteria', ''));
             $task->relatedFiles = json_encode(array_filter(explode("\n", $this->getParam('related_files', ''))));
             $task->tags = json_encode(array_filter(array_map('trim', explode(',', $this->getParam('tags', '')))));
             $task->baseBranch = trim($this->getParam('base_branch', 'main'));
@@ -515,7 +509,8 @@ class Workbench extends BuildControl {
             // A task description is a prompt too — it is what the agent is handed. Kept in
             // the member's prompt log so it is still findable after you have moved on to
             // the next task, which is the point at which it used to disappear from view.
-            $body = trim($this->getParam('description', ''));
+            $body = $brief['text'];
+            $this->recordFormUse('task', $brief, (int) $instance->id);
             if ($body !== '') {
                 \app\PromptLog::record([
                     'member_id'    => (int) $this->member->id,
@@ -569,6 +564,64 @@ class Workbench extends BuildControl {
     private function wantsAutoBuild(): bool {
         $v = $this->getParam('auto_build', '');
         return in_array((string)$v, ['1', 'on', 'true', 'yes'], true);
+    }
+
+    /** Did the member leave "Plan it first" ticked on the create form? */
+    private function wantsPlan(): bool {
+        return in_array((string) $this->getParam('plan', ''), ['1', 'on', 'true', 'yes'], true);
+    }
+
+    /**
+     * The create form's goal and its two answers, composed into the text the planner or the
+     * agent reads (app\GoalBrief). "Who is it for" has no default: an unanswered form is sent
+     * back with the question, having answered the request — callers return on null.
+     *
+     * @return array{goal:string,audience:string,acceptance:string,level:?int,text:string}|null
+     */
+    private function brief(): ?array {
+        $audience = (string) $this->getParam('audience', '');
+        if (!\app\GoalBrief::isAudience($audience)) {
+            $this->flash('error', 'One more thing before we start: who is this for? Pick one of the cards under the description.');
+            Flight::redirect('/workbench/create');
+            return null;
+        }
+        $goal = trim((string) $this->getParam('description', ''));
+        if ($goal === '') $goal = trim((string) $this->getParam('title', ''));
+        $acceptance = trim((string) $this->getParam('acceptance_criteria', ''));
+        return [
+            'goal' => $goal, 'audience' => $audience, 'acceptance' => $acceptance,
+            'level' => \app\GoalBrief::level($audience),
+            'text' => \app\GoalBrief::compose($goal, $audience, $acceptance),
+        ];
+    }
+
+    /**
+     * Note which parts of the create form this submit used (app\ToolUse, tool 'builder.create')
+     * — choices only, never what was typed — so the parts nobody uses can be taken out. The
+     * single-task extras are noted only for a single task: a plan does not read them.
+     */
+    private function recordFormUse(string $path, array $brief, int $instanceId): void {
+        $said = fn(string $k) => trim((string) $this->getParam($k, '')) !== '';
+        $use = [
+            'path'        => $path,                       // plan | task
+            'straight'    => $this->wantsAutoBuild(),
+            'audience'    => $brief['audience'],
+            'acceptance'  => $brief['acceptance'] !== '',
+            'md_file'     => $this->getParam('md_file', '') === '1',
+            'reused_goal' => (int) $this->getParam('from_prompt', 0) > 0,
+            'picked_agent' => $said('agent') || ($said('run_with') && $this->getParam('run_with') !== $this->getParam('run_with_default', '')),
+        ];
+        if ($path === 'task') {
+            $use += [
+                'more_opened'   => $this->getParam('more_opened', '') === '1',
+                'type'          => preg_match('/^[a-z]{1,20}$/', (string) $this->getParam('task_type', '')) ? (string) $this->getParam('task_type') : 'other',
+                'priority'      => (int) $this->getParam('priority', 3),
+                'fresh_data'    => $this->getParam('db_source', 'live') === 'fresh',
+                'related_files' => $said('related_files'),
+                'tags'          => $said('tags'),
+            ];
+        }
+        \app\ToolUse::record('builder.create', (int) $this->member->id, $use, $instanceId);
     }
 
     /**
@@ -714,13 +767,15 @@ class Workbench extends BuildControl {
         }
 
         // The goal is the Markdown/description body (an uploaded .md fills this).
-        $goal = trim($this->getParam('description', ''));
-        if ($goal === '') { $goal = trim($this->getParam('title', '')); }
-        if (mb_strlen($goal) < 20) {
-            $this->flash('error', 'Add a goal document (drop a .md or write a spec — at least 20 characters) to decompose.');
+        $brief = $this->brief();
+        if ($brief === null) return;
+        if (mb_strlen($brief['goal']) < 20) {
+            $this->flash('error', 'A plan needs a little more to go on — describe what you want in a sentence or two (or drop in a .md file).');
             Flight::redirect('/workbench/create');
             return;
         }
+        // What the planner reads: the goal, then who it is for and how we will know it worked.
+        $goal = $brief['text'];
 
         $slug = (string)$instance->slug;
         $app  = $instance->app ?: 'tiknix';
@@ -771,6 +826,7 @@ class Workbench extends BuildControl {
         // the moment it is ingested. Opt-in per submission and deliberately not sticky —
         // it lands agent-written code in the instance with nobody having read the plan.
         $autoBuild = $this->wantsAutoBuild();
+        $this->recordFormUse('plan', $brief, (int) $instance->id);
 
         // Keep the ask BEFORE running the planner, not after it succeeds. The goal file is
         // overwritten by the next decompose and the copy on the plan only exists if the
