@@ -1821,7 +1821,11 @@ class Workbench extends BuildControl {
         try {
             // A previous attempt's branch goes first: a rerun starts from the app as it is now.
             \app\TenantHost::discardTask($ct, $id);
-            \app\TenantRun::start($ct, $this->boardSession($ct, $task), $id, '--agent-task=' . escapeshellarg($id) . ' --timeout=1800', $brief,
+            // On the agent picked for the task ('' = the app's default), in a sandbox holding a copy
+            // of the app's data — or none of it, when the task was created with "An empty database".
+            $how = \app\TenantHost::agentArg(\app\PlanIngestor::agentName($task->agent ?? ''))
+                 . ' --timeout=1800' . ((string) $task->dbSource === 'fresh' ? ' --sandbox=fresh' : '');
+            \app\TenantRun::start($ct, $this->boardSession($ct, $task), $id, '--agent-task=' . escapeshellarg($id) . $how, $brief,
                 \app\TenantHost::author((int) $this->member->id));   // its commits are the member's who ran it
         } catch (\Throwable $e) {
             Flight::jsonError("Could not start the task in {$ct->slug}'s container: " . $e->getMessage(), 502);
@@ -1856,6 +1860,8 @@ class Workbench extends BuildControl {
         $task->agentSession = null;
         $task->completedAt = date('Y-m-d H:i:s');
         $task->updatedAt = date('Y-m-d H:i:s');
+        // What the agent had to check its work with — a sandbox, or none and why (AgentTask::sandbox).
+        if ($r !== null && !empty($r['sandbox'])) $this->logTaskEvent((int) $task->id, str_starts_with((string) $r['sandbox'], 'none') ? 'warning' : 'info', 'agent', 'Sandbox: ' . $r['sandbox']);
         if ($r !== null && !empty($r['output'])) $this->logTaskEvent((int) $task->id, 'info', 'agent', 'Agent output (tail): ' . mb_substr((string) $r['output'], -1500));
         $status = (string) ($r['status'] ?? '');
         if ($status === 'changed') {
