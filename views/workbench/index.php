@@ -1,9 +1,12 @@
 <div class="container-fluid py-4">
+    <?php // A Get-started project still waiting for its agent: the board is that one step (see the banner
+          // below) — none of its buttons lead anywhere that would not be refused.
+          $__boardLocked = !empty($handoff) && in_array($handoff['progress'] ?? '', ['setting-up', 'plan-committed', 'waiting-agent'], true); ?>
     <?php /* Wraps on a phone: the title takes its own line and the secondary buttons are
              icons (label kept as tooltip + for screen readers); New Task keeps its words. */ ?>
     <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-4">
         <h1 class="h2 mb-0">Task Board</h1>
-        <div class="d-flex flex-wrap align-items-center gap-2">
+        <div class="d-flex flex-wrap align-items-center gap-2"<?= $__boardLocked ? ' hidden' : '' ?>>
             <a href="<?= htmlspecialchars((string)Flight::get('sidecar.core_url')) ?>/firehose" target="_top" class="btn btn-outline-danger" title="Firehose — errors captured live from your instances">
                 <i class="bi bi-fire"></i><span class="d-none d-sm-inline"> Firehose</span><span class="visually-hidden d-sm-none">Firehose</span>
             </a>
