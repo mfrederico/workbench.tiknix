@@ -3293,7 +3293,12 @@ class Workbench extends BuildControl {
         $iid = (int) $this->selected['id']; $mid = (int) $this->member->id;
         $st = \app\CoreDb::with(function () use ($iid, $mid) {
             $h = \app\Bean::findOne('planhandoff', 'instance_ref = ? AND member_ref = ? ORDER BY id DESC', [$iid, $mid]);
-            return ($h && $h->id) ? \app\PlanHandoff::state($h) + ['token' => (string) $h->token] : null;
+            if (!$h || !$h->id) return null;
+            // Waiting for the project's agent: ask the project now (the board refreshes every few
+            // seconds), so Phase 1 starts right after the sign-in — not up to a minute later when
+            // the cron backstop (tenant.php --handoff-pending) gets to it.
+            if ((string) $h->progress === 'waiting-agent' && !empty($h->decompose)) \app\PlanHandoff::startPhaseOne($h);
+            return \app\PlanHandoff::state($h) + ['token' => (string) $h->token];
         });
         if (!$st || !in_array($st['progress'], ['setting-up', 'plan-committed', 'waiting-agent', 'planning', 'failed'], true)) return null;
         // Once Phase 1's tasks are on the board, the board says the rest itself.

@@ -85,7 +85,7 @@
             <?php endif; ?>
         </div>
     </div>
-    <?php if ($hp !== 'failed'): ?><script>setTimeout(function () { location.reload(); }, <?= $hp === 'waiting-agent' ? 15000 : 10000 ?>);</script><?php endif; ?>
+    <?php if ($hp !== 'failed'): ?><script>setTimeout(function () { location.reload(); }, <?= $hp === 'waiting-agent' ? 8000 : 10000 ?>);</script><?php endif; ?>
     <?php // Until the project has its agent there is nothing to show or do on the board: the steps above are all of it.
           if (in_array($hp, ['setting-up', 'plan-committed', 'waiting-agent'], true)): ?></div><?php return; endif; ?>
     <?php endif; ?>
