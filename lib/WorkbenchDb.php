@@ -38,6 +38,10 @@ class WorkbenchDb {
     /** Select this instance's workbench.db (creates dir + DB + tables on first use). */
     public static function select(string $instanceDir, string $slug): void {
         $key = self::key($slug);
+        // A project whose directory is gone (archived after it moved to its own container) has
+        // no workbench here: refuse, rather than mkdir a data/ and an empty workbench.db into a
+        // fresh stub of it — a builder tab left open re-created one every second (2026-10-01).
+        if (!is_dir($instanceDir)) throw new \RuntimeException("WorkbenchDb: {$slug} has no directory here ({$instanceDir}) — it moved or was archived");
         $dir = rtrim($instanceDir, '/') . '/data';
         if (!is_dir($dir)) @mkdir($dir, 0775, true);
 
