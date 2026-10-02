@@ -72,8 +72,8 @@
             <?php elseif ($hp === 'plan-committed'): ?>
                 <strong>Your <code>PLAN.md</code> is in the project.</strong> Phase 1 is about to be planned.
             <?php elseif ($hp === 'waiting-agent'): ?>
-                <strong>Connect an AI agent and Phase 1 starts by itself.</strong> Your plan is in the project; it builds with the project&rsquo;s own agent. Sign one in on its AI agents page &mdash; within a minute the planner starts and Phase 1&rsquo;s tasks appear here.
-                <div class="mt-2"><a class="btn btn-sm btn-primary" href="<?= htmlspecialchars($handoff['core']) ?>/projects/open?to=<?= rawurlencode('/agents') ?>" target="_blank" rel="noopener">Connect an agent</a></div>
+                <strong>Connect your AI agent first.</strong> Your plan is in the project, and it builds with the project&rsquo;s own agent &mdash; nothing is planned or built until one is signed in. Phase 1 starts by itself as soon as it is.
+                <div class="mt-2"><a class="btn btn-sm btn-primary" href="<?= htmlspecialchars($handoff['core']) ?>/projects/open?to=<?= rawurlencode('/agents') ?>" target="_blank" rel="noopener">Sign in with Claude</a></div>
             <?php elseif ($hp === 'planning'): ?>
                 <strong>Phase 1 is being planned from your <code>PLAN.md</code>.</strong> Its tasks appear here when the planner finishes &mdash; usually a few minutes.
             <?php else: ?>
@@ -82,7 +82,9 @@
             <?php endif; ?>
         </div>
     </div>
-    <?php if ($hp !== 'failed'): ?><script>setTimeout(function () { location.reload(); }, <?= $hp === 'waiting-agent' ? 20000 : 10000 ?>);</script><?php endif; ?>
+    <?php if ($hp !== 'failed'): ?><script>setTimeout(function () { location.reload(); }, <?= $hp === 'waiting-agent' ? 15000 : 10000 ?>);</script><?php endif; ?>
+    <?php // Until the project has its agent there is nothing to show or do on the board: the steps above are all of it.
+          if (in_array($hp, ['setting-up', 'plan-committed', 'waiting-agent'], true)): ?></div><?php return; endif; ?>
     <?php endif; ?>
 
     <?php
