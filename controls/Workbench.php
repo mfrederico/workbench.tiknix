@@ -369,15 +369,7 @@ class Workbench extends BuildControl {
         $this->viewData['projectPickerUrl'] = \app\Sidecar\Sso::projectPickerUrl();
         // A project in its own container builds on ITS agents (its AI agents page), not on
         // an engine and the member's credentials: the form offers those instead.
-        $tenant = \app\TenantBuilder::bySlug((string) $this->selected['slug']);
-        if ($tenant) {
-            $this->viewData['tenantAgentsUrl'] = 'https://' . $tenant->ctDomain . '/agents';
-            try { $this->viewData['appAgents'] = \app\TenantBuilder::agents($tenant); }
-            catch (\Throwable $e) {
-                $this->logger->error('Workbench: could not list the app\'s agents', ['instance' => $tenant->slug, 'err' => $e->getMessage()]);
-                $this->viewData['appAgentsError'] = $e->getMessage();
-            }
-        }
+        $this->offerAppAgents((string) $this->selected['slug']);
         // A project nobody has signed in for cannot build. Say so on the form, where the
         // decision to write a spec is being made, rather than after it is submitted.
         $projDir = \app\WorkbenchDb::dirOf((string) $this->selected['slug'], (string) ($this->selected['app'] ?? ''));
@@ -566,6 +558,21 @@ class Workbench extends BuildControl {
     private function wantsAutoBuild(): bool {
         $v = $this->getParam('auto_build', '');
         return in_array((string)$v, ['1', 'on', 'true', 'yes'], true);
+    }
+
+    /**
+     * For a project in its own container, put ITS agents (its AI agents page) in front of the
+     * form — or the reason they could not be listed, which the form shows in their place.
+     */
+    private function offerAppAgents(string $slug): void {
+        $tenant = \app\TenantBuilder::bySlug($slug);
+        if (!$tenant) return;
+        $this->viewData['tenantAgentsUrl'] = 'https://' . $tenant->ctDomain . '/agents';
+        try { $this->viewData['appAgents'] = \app\TenantBuilder::agents($tenant); }
+        catch (\Throwable $e) {
+            $this->logger->error('Workbench: could not list the app\'s agents', ['instance' => $tenant->slug, 'err' => $e->getMessage()]);
+            $this->viewData['appAgentsError'] = $e->getMessage();
+        }
     }
 
     /** Did the member leave "Plan it first" ticked on the create form? */
@@ -1553,9 +1560,6 @@ class Workbench extends BuildControl {
             return;
         }
 
-        // Get user's teams
-        $teams = $this->access->getMemberTeams($this->member->id);
-
         // Get available branches from git (only if task hasn't been run yet)
         // Only show remote branches - local-only branches can't be used as base for new workspaces
         $branches = [];
@@ -1586,11 +1590,23 @@ class Workbench extends BuildControl {
             if ($current === '') $current = $c['value'];      // first for this engine
         }
         $this->viewData['currentRunChoice'] = $current;
-        $this->viewData['teams'] = $teams;
+        $this->viewData['defaultRunChoice'] = $current;
         $this->viewData['taskTypes'] = $this->getTaskTypes();
         $this->viewData['priorities'] = $this->getPriorities();
-        $this->viewData['authcontrolLevels'] = $this->getAuthcontrolLevels();
-        $this->viewData['memberLevel'] = $this->member->level;
+        // A project in its own container builds on ITS agents: offer those, as the create form does.
+        $this->offerAppAgents(explode('.', (string) $task->instanceTag, 2)[0]);
+        /* "Who is it for" and "how will you know it worked" live IN the description
+           (app\GoalBrief): taken back out here so they are edited as answers, and written back
+           by update(). A task from before that kept its criteria in a column of their own; they
+           are shown in the same box and move into the description on the next save. A task with
+           no answer written (the planner's own tasks say it in their words) gets 'none', which
+           writes nothing. */
+        $was = \app\GoalBrief::split((string) $task->description);
+        $this->viewData['brief'] = [
+            'goal'       => $was['goal'],
+            'audience'   => $was['audience'] !== '' ? $was['audience'] : 'none',
+            'acceptance' => $was['acceptance'] !== '' ? $was['acceptance'] : trim((string) ($task->acceptanceCriteria ?? '')),
+        ];
         $this->viewData['branches'] = $branches;
         $this->viewData['currentBranch'] = $currentBranch;
 
@@ -1641,21 +1657,63 @@ class Workbench extends BuildControl {
             return;
         }
 
-        // Validate authcontrol level (must be >= member's level)
-        $authcontrolLevel = (int)$this->getParam('authcontrol_level', $task->authcontrolLevel ?? $this->member->level);
-        if ($authcontrolLevel < $this->member->level) {
-            $authcontrolLevel = $this->member->level;
+        // The two answers go back INTO the description, where the agent reads them (app\GoalBrief).
+        $audience = (string) $this->getParam('audience', '');
+        if (!\app\GoalBrief::isAudience($audience)) {
+            $this->flash('error', 'Pick who this is for — or "Leave it to the description".');
+            Flight::redirect('/workbench/edit?id=' . $taskId);
+            return;
+        }
+        $acceptance  = trim((string) $this->getParam('acceptance_criteria', ''));
+        $description = ltrim(\app\GoalBrief::compose(trim((string) $this->getParam('description', '')), $audience, $acceptance));
+
+        // Who builds it: the app's agent for a project in its own container, else an engine+model
+        // pair. (The picker used to be shown here and never saved.)
+        $tenant = \app\TenantBuilder::bySlug(explode('.', (string) $task->instanceTag, 2)[0]);
+        $agent  = null;
+        if ($tenant) {
+            try { $agent = \app\PlanIngestor::agentName($this->getParam('agent', '')); }
+            catch (\RuntimeException $e) {
+                $this->flash('error', $e->getMessage());
+                Flight::redirect('/workbench/edit?id=' . $taskId);
+                return;
+            }
         }
 
         try {
+            $relatedFiles = json_encode(array_values(array_filter(array_map('trim', explode("\n", (string) $this->getParam('related_files', ''))))));
+            $tags         = json_encode(array_values(array_filter(array_map('trim', explode(',', (string) $this->getParam('tags', ''))))));
+            // What this save changed — choices only (app\ToolUse), so the parts nobody edits can go.
+            $changed = [
+                'title'         => $title !== (string) $task->title,
+                'description'   => $description !== trim((string) $task->description),
+                'audience'      => $audience,
+                'acceptance'    => $acceptance !== '',
+                'type'          => (string) $this->getParam('task_type', 'feature') !== (string) $task->taskType,
+                'priority'      => (int) $this->getParam('priority', 3) !== (int) $task->priority,
+                'related_files' => $relatedFiles !== json_encode(array_values(json_decode((string) $task->relatedFiles, true) ?: [])),
+                'tags'          => $tags !== json_encode(array_values(json_decode((string) $task->tags, true) ?: [])),
+                'agent'         => $tenant ? $agent !== (string) ($task->agent ?? '') : false,
+                'more_opened'   => $this->getParam('more_opened', '') === '1',
+                'has_run'       => !empty($task->branchName) || (int) ($task->runCount ?? 0) > 0,
+            ];
+
             $task->title = $title;
-            $task->description = trim($this->getParam('description', ''));
+            $task->description = $description;
             $task->taskType = $this->getParam('task_type', 'feature');
             $task->priority = (int)$this->getParam('priority', 3);
-            $task->authcontrolLevel = $authcontrolLevel;
-            $task->acceptanceCriteria = trim($this->getParam('acceptance_criteria', ''));
-            $task->relatedFiles = json_encode(array_filter(explode("\n", $this->getParam('related_files', ''))));
-            $task->tags = json_encode(array_filter(array_map('trim', explode(',', $this->getParam('tags', '')))));
+            $task->authcontrolLevel = \app\GoalBrief::level($audience);
+            // The criteria are in the description now; a column of their own would show them twice.
+            $task->acceptanceCriteria = '';
+            $task->relatedFiles = $relatedFiles;
+            $task->tags = $tags;
+            if ($tenant) {
+                $task->agent = $agent;
+            } elseif ($pick = \app\EngineRegistry::parseRunChoice($this->getParam('run_with', ''))) {
+                $changed['agent'] = $pick['engine'] !== (string) $task->engine || $pick['model'] !== (string) $task->model;
+                $task->engine = $pick['engine'];
+                $task->model  = $pick['model'];
+            }
 
             // Only allow changing base branch if task hasn't been run yet
             if (empty($task->branchName)) {
@@ -1666,6 +1724,7 @@ class Workbench extends BuildControl {
             Bean::store($task);
 
             $this->logTaskEvent($taskId, 'info', 'user', 'Task updated');
+            \app\ToolUse::record('builder.edit', (int) $this->member->id, $changed, (int) $task->instanceId);
 
             $this->flash('success', 'Task updated');
             Flight::redirect('/workbench/view?id=' . $taskId);
@@ -3201,29 +3260,6 @@ class Workbench extends BuildControl {
             3 => ['label' => 'Medium', 'color' => 'info'],
             4 => ['label' => 'Low', 'color' => 'secondary']
         ];
-    }
-
-    /**
-     * Get authcontrol levels available to current member
-     * Members can only assign levels >= their own level (lower privilege or equal)
-     *
-     * @return array Levels the member can assign
-     */
-    private function getAuthcontrolLevels(): array {
-        $memberLevel = $this->member->level ?? LEVELS['PUBLIC'];
-
-        $availableLevels = [];
-        foreach (LEVELS as $name => $value) {
-            if ($value >= $memberLevel) {
-                $availableLevels[$value] = [
-                    'label' => ucfirst(strtolower($name)),
-                    'value' => $value
-                ];
-            }
-        }
-
-        ksort($availableLevels);
-        return $availableLevels;
     }
 
     /**

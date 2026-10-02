@@ -1,9 +1,10 @@
+<?php include __DIR__ . '/_form_css.php'; ?>
 <div class="container py-4">
     <div class="row justify-content-center">
         <div class="col-lg-8">
             <div class="mb-4">
                 <a href="/workbench/view?id=<?= $task->id ?>" class="text-decoration-none">
-                    <i class="bi bi-arrow-left"></i> Back to Task
+                    <i class="bi bi-arrow-left"></i> Back to the task
                 </a>
             </div>
 
@@ -19,135 +20,96 @@
 
             <div class="card">
                 <div class="card-header">
-                    <h4 class="mb-0">Edit Task</h4>
+                    <h4 class="mb-0">Change this task</h4>
                 </div>
                 <div class="card-body">
-                    <form method="POST" action="/workbench/update">
+                    <?php /* A task that has already run keeps what it built: an edit changes what the
+                             agent is told NEXT time, which is worth saying before someone rewrites
+                             a description expecting the code to follow. */ ?>
+                    <?php if (!empty($task->branchName) || (int) ($task->runCount ?? 0) > 0): ?>
+                        <div class="alert alert-secondary py-2 small">
+                            This task has already run. What you change here is what the agent is told the <strong>next</strong> time it runs — it doesn't undo what's built.
+                        </div>
+                    <?php endif; ?>
+
+                    <form method="POST" action="/workbench/update" id="wbForm">
                         <?php foreach ($csrf as $name => $value): ?>
                             <input type="hidden" name="<?= $name ?>" value="<?= $value ?>">
                         <?php endforeach; ?>
                         <input type="hidden" name="id" value="<?= $task->id ?>">
+                        <input type="hidden" name="more_opened" id="more_opened" value="">
 
                         <!-- Title -->
                         <div class="mb-3">
-                            <label for="title" class="form-label">Title <span class="text-danger">*</span></label>
+                            <label for="title" class="form-label">Its name <span class="text-danger">*</span></label>
                             <input type="text" class="form-control" id="title" name="title" required
                                    value="<?= htmlspecialchars(($task->title) ?? '') ?>">
                         </div>
 
                         <!-- Description -->
-                        <div class="mb-3">
-                            <label for="description" class="form-label">Description</label>
-                            <textarea class="form-control" id="description" name="description" rows="4"><?= htmlspecialchars($task->description ?? '') ?></textarea>
-                        </div>
-
-                        <div class="row">
-                            <!-- Task Type -->
-                            <div class="col-md-6 mb-3">
-                                <label for="task_type" class="form-label">Type</label>
-                                <select class="form-select" id="task_type" name="task_type">
-                                    <?php foreach ($taskTypes as $type => $info): ?>
-                                        <option value="<?= $type ?>" <?= $task->taskType === $type ? 'selected' : '' ?>>
-                                            <?= $info['label'] ?>
-                                        </option>
-                                    <?php endforeach; ?>
-                                </select>
-                            </div>
-
-                            <!-- Priority -->
-                            <div class="col-md-6 mb-3">
-                                <label for="priority" class="form-label">Priority</label>
-                                <select class="form-select" id="priority" name="priority">
-                                    <?php foreach ($priorities as $level => $info): ?>
-                                        <option value="<?= $level ?>" <?= (int)$task->priority === $level ? 'selected' : '' ?>>
-                                            <?= $info['label'] ?>
-                                        </option>
-                                    <?php endforeach; ?>
-                                </select>
-                            </div>
-                        </div>
-
-                        <?php if (!empty($runChoices)): ?>
-                        <div class="row">
-                            <!-- Engine + model, as ONE choice. Offered here because a task's
-                                 provider is decided at creation and could not be changed
-                                 afterwards: a task assigned to a provider that later ran out
-                                 of quota had to be moved by editing the database. -->
-                            <div class="col-md-6 mb-3">
-                                <label for="run_with" class="form-label">Run with</label>
-                                <select class="form-select" id="run_with" name="run_with">
-                                    <?php foreach ($runChoices as $c): ?>
-                                        <option value="<?= htmlspecialchars($c['value']) ?>"
-                                            <?= $c['value'] === ($currentRunChoice ?? '') ? 'selected' : '' ?>>
-                                            <?= htmlspecialchars($c['label']) ?>
-                                        </option>
-                                    <?php endforeach; ?>
-                                </select>
-                                <div class="form-text small">
-                                    Runs on YOUR credentials for the engine you pick. Changing this
-                                    takes effect the next time the task runs.
-                                </div>
-                            </div>
-                        </div>
-                        <?php endif; ?>
-
-                        <div class="row">
-                            <?php if (empty($task->branchName)): ?>
-                                <!-- Base Branch — always main for now; the picker is hidden. -->
-                                <input type="hidden" id="base_branch" name="base_branch" value="main">
-                            <?php else: ?>
-                                <!-- Base Branch (read-only once the task has run) -->
-                                <div class="col-md-6 mb-3">
-                                    <label class="form-label">Base Branch</label>
-                                    <input type="text" class="form-control" value="<?= htmlspecialchars($task->baseBranch ?? 'main') ?>" disabled>
-                                    <div class="form-text text-muted">Cannot change base branch after task has been run.</div>
-                                </div>
-                            <?php endif; ?>
-
-                            <!-- Authcontrol Level -->
-                            <div class="col-md-6 mb-3">
-                                <label for="authcontrol_level" class="form-label">Endpoint Access Level</label>
-                                <select class="form-select" id="authcontrol_level" name="authcontrol_level">
-                                    <?php foreach ($authcontrolLevels as $level => $info): ?>
-                                        <option value="<?= $level ?>" <?= (int)($task->authcontrolLevel ?? $memberLevel) == $level ? 'selected' : '' ?>>
-                                            <?= $info['label'] ?> (<?= $level ?>)
-                                        </option>
-                                    <?php endforeach; ?>
-                                </select>
-                                <div class="form-text">Access level for new endpoints created by this task.</div>
-                            </div>
-                        </div>
-
-                        <!-- Acceptance Criteria -->
-                        <div class="mb-3">
-                            <label for="acceptance_criteria" class="form-label">Acceptance Criteria</label>
-                            <textarea class="form-control" id="acceptance_criteria" name="acceptance_criteria" rows="3"><?= htmlspecialchars($task->acceptanceCriteria ?? '') ?></textarea>
-                        </div>
-
-                        <!-- Related Files -->
-                        <div class="mb-3">
-                            <label for="related_files" class="form-label">Related Files</label>
-                            <?php
-                            $relatedFiles = json_decode(($task->relatedFiles) ?? '', true) ?: [];
-                            ?>
-                            <textarea class="form-control font-monospace" id="related_files" name="related_files" rows="3"><?= htmlspecialchars((implode("\n", $relatedFiles)) ?? '') ?></textarea>
-                            <div class="form-text">One file path per line.</div>
-                        </div>
-
-                        <!-- Tags -->
                         <div class="mb-4">
-                            <label for="tags" class="form-label">Tags</label>
-                            <?php
-                            $tags = json_decode(($task->tags) ?? '', true) ?: [];
-                            ?>
-                            <input type="text" class="form-control" id="tags" name="tags"
-                                   value="<?= htmlspecialchars((implode(', ', $tags)) ?? '') ?>">
-                            <div class="form-text">Comma-separated tags.</div>
+                            <label for="description" class="form-label">What should it do?</label>
+                            <textarea class="form-control" id="description" name="description" rows="8"><?= htmlspecialchars($brief['goal']) ?></textarea>
+                            <div class="form-text">This is what the agent reads. Plain words are fine.</div>
                         </div>
+
+                        <?php
+                        /* The same two questions as the create form, read back out of the description
+                           they were written into (app\GoalBrief). A task the planner wrote says who
+                           each page is for in its own words, so nothing is pre-answered for it. */
+                        $briefAudience   = $brief['audience'];
+                        $briefAcceptance = $brief['acceptance'];
+                        $briefNoneLabel  = ['Leave it to the description', 'it already says, or this adds no new pages.'];
+                        include __DIR__ . '/_brief_fields.php';
+
+                        $builderAgent = (string) ($task->agent ?? '');
+                        $builderRun   = (string) ($currentRunChoice ?? '');
+                        include __DIR__ . '/_who_builds.php';
+                        ?>
+
+                        <?php /* The extras nobody needs for most tasks, folded away as on the create form;
+                                 whether they get opened is counted (app\ToolUse). Open already when one
+                                 of them is in use, so nothing set is hidden. */
+                        $relatedFiles = json_decode(($task->relatedFiles) ?? '', true) ?: [];
+                        $tags = json_decode(($task->tags) ?? '', true) ?: [];
+                        ?>
+                        <details class="mb-3" id="wbMore" <?= ($relatedFiles || $tags) ? 'open' : '' ?>>
+                            <summary class="small text-body-secondary">More options</summary>
+                            <div class="border rounded p-3 mt-2">
+                                <div class="row">
+                                    <div class="col-md-6 mb-3">
+                                        <label for="task_type" class="form-label">Kind of work</label>
+                                        <select class="form-select" id="task_type" name="task_type">
+                                            <?php foreach ($taskTypes as $type => $info): ?>
+                                                <option value="<?= $type ?>" <?= $task->taskType === $type ? 'selected' : '' ?>><?= $info['label'] ?></option>
+                                            <?php endforeach; ?>
+                                        </select>
+                                    </div>
+                                    <div class="col-md-6 mb-3">
+                                        <label for="priority" class="form-label">Priority</label>
+                                        <select class="form-select" id="priority" name="priority">
+                                            <?php foreach ($priorities as $level => $info): ?>
+                                                <option value="<?= $level ?>" <?= (int)$task->priority === $level ? 'selected' : '' ?>><?= $info['label'] ?></option>
+                                            <?php endforeach; ?>
+                                        </select>
+                                    </div>
+                                </div>
+                                <div class="mb-3">
+                                    <label for="related_files" class="form-label">Files to start from</label>
+                                    <textarea class="form-control font-monospace" id="related_files" name="related_files" rows="3"><?= htmlspecialchars(implode("\n", $relatedFiles)) ?></textarea>
+                                    <div class="form-text">Where the change likely goes, one path per line. The agent is pointed at these first.</div>
+                                </div>
+                                <div>
+                                    <label for="tags" class="form-label">Tags</label>
+                                    <input type="text" class="form-control" id="tags" name="tags" value="<?= htmlspecialchars(implode(', ', $tags)) ?>">
+                                    <div class="form-text">Comma-separated, for finding it on the board later.</div>
+                                </div>
+                            </div>
+                        </details>
 
                         <div class="d-flex gap-2">
                             <button type="submit" class="btn btn-primary">
-                                <i class="bi bi-check-lg"></i> Save Changes
+                                <i class="bi bi-check-lg"></i> Save changes
                             </button>
                             <a href="/workbench/view?id=<?= $task->id ?>" class="btn btn-outline-secondary">Cancel</a>
                         </div>
@@ -157,3 +119,12 @@
         </div>
     </div>
 </div>
+<script>
+/* Counted with the save (app\ToolUse): were the extras even opened? */
+(function () {
+  var more = document.getElementById('wbMore'), flag = document.getElementById('more_opened');
+  // The summary's click, not 'toggle': the section is rendered open when it is already in use,
+  // and that is not somebody opening it.
+  if (more && flag) more.querySelector('summary').addEventListener('click', function () { if (!more.open) flag.value = '1'; });
+})();
+</script>

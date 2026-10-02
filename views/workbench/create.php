@@ -1,27 +1,5 @@
+<?php include __DIR__ . '/_form_css.php'; ?>
 <style>
-/* A card that IS the control: a <label> wrapping its input, so every pixel of it toggles.
-   Colours come from Bootstrap 5.3's subtle/emphasis variables rather than fixed hex, so the
-   chosen state reads correctly in both the light and dark themes. :has() lets the card react
-   to its own input with no JS to fall out of sync with the input's real state.
-   NOTE deliberately NOT .form-check — that class pairs padding-left:1.5rem on the container
-   with margin-left:-1.5rem on the input, so padding the card floated the box outside its own
-   left border. Flex does the layout instead. */
-.wb-card {
-    cursor: pointer; --wb: var(--bs-primary); --wb-rgb: var(--bs-primary-rgb);
-    --wb-bg: var(--bs-primary-bg-subtle); --wb-border: var(--bs-primary-border-subtle); --wb-text: var(--bs-primary-text-emphasis);
-    transition: background-color .15s ease-in-out, border-color .15s ease-in-out;
-}
-.wb-card.wb-go { --wb: var(--bs-success); --wb-rgb: var(--bs-success-rgb);
-    --wb-bg: var(--bs-success-bg-subtle); --wb-border: var(--bs-success-border-subtle); --wb-text: var(--bs-success-text-emphasis); }
-.wb-card:hover { border-color: var(--bs-secondary-border-subtle); }
-.wb-card:has(input:checked) { background-color: var(--wb-bg) !important; border-color: var(--wb-border) !important; }
-.wb-card:has(input:checked) .wb-card-title { color: var(--wb-text); }
-.wb-card .form-check-input:checked { background-color: var(--wb); border-color: var(--wb); }
-/* Keyboard users get the focus ring on the CARD, since that is what reads as the control. */
-.wb-card:has(input:focus-visible) { box-shadow: 0 0 0 .25rem rgba(var(--wb-rgb), .25); border-color: var(--wb-border); }
-.wb-card .form-check-input:focus { box-shadow: none; }
-.wb-card-title { font-weight: 600; }
-
 /* What the form says follows the two cards, with no script: planning or one task, and
    whether it runs straight through. */
 #wbForm:has(#plan:checked) .wb-if-task, #wbForm:not(:has(#plan:checked)) .wb-if-plan { display: none !important; }
@@ -186,110 +164,16 @@
                             </div>
                         </div>
 
-                        <?php /* WHO IS IT FOR — asked in people, not in numbers, and never pre-answered:
-                                 the old select defaulted to the builder's own level, so an admin's
-                                 new pages were quietly admin-only (or root-only). The answer is
-                                 written into the goal (app\GoalBrief), where the planner reads it. */
-                        $__who = [
-                            'anyone'  => ['bi-globe2',      'Anyone',          'Visitors can see it without signing in — a landing page, a booking form, a menu.'],
-                            'members' => ['bi-person-check', 'Signed-in members', 'People with an account, once they are logged in — their orders, their profile.'],
-                            'admins'  => ['bi-shield-lock',  'Admins only',     'You and your staff. Customers never see it — reports, settings, the back office.'],
-                        ]; ?>
-                        <fieldset class="mb-4">
-                            <legend class="form-label fs-6 mb-1">Who is it for? <span class="text-danger">*</span></legend>
-                            <div class="form-text mt-0 mb-2">This decides who can open the new pages. If it's a mix (a public form with an admin list behind it), pick the main one and say the rest in your description.</div>
-                            <div class="row g-2">
-                                <?php foreach ($__who as $__k => [$__icon, $__name, $__blurb]): ?>
-                                <div class="col-md-4">
-                                    <label class="wb-card d-flex gap-2 p-3 border rounded bg-body-tertiary h-100">
-                                        <input class="form-check-input flex-shrink-0 mt-1" type="radio" name="audience" value="<?= $__k ?>" required <?= ($prefill['audience'] ?? '') === $__k ? 'checked' : '' ?>>
-                                        <span>
-                                            <span class="wb-card-title d-block"><i class="bi <?= $__icon ?> me-1"></i><?= $__name ?></span>
-                                            <span class="form-text d-block mb-0"><?= $__blurb ?></span>
-                                        </span>
-                                    </label>
-                                </div>
-                                <?php endforeach; ?>
-                            </div>
-                            <label class="wb-card d-flex gap-2 px-3 py-2 mt-2 border rounded bg-body-tertiary">
-                                <input class="form-check-input flex-shrink-0 mt-1" type="radio" name="audience" value="none" required <?= ($prefill['audience'] ?? '') === 'none' ? 'checked' : '' ?>>
-                                <span class="form-text mb-0 mt-0"><span class="wb-card-title text-body">No new pages</span> — it's a fix or a change to something that already exists.</span>
-                            </label>
-                        </fieldset>
+                        <?php
+                        $briefAudience   = (string) ($prefill['audience'] ?? '');
+                        $briefAcceptance = (string) ($prefill['acceptance'] ?? '');
+                        $briefNoneLabel  = ['No new pages', "it's a fix or a change to something that already exists."];
+                        include __DIR__ . '/_brief_fields.php'; ?>
 
-                        <!-- Acceptance Criteria -->
-                        <div class="mb-4">
-                            <label for="acceptance_criteria" class="form-label">How will you know it worked? <span class="text-body-secondary fw-normal">(optional, but worth a line)</span></label>
-                            <textarea class="form-control" id="acceptance_criteria" name="acceptance_criteria" rows="3"
-                                      placeholder="A member only sees their own invoices.&#10;The booking form won't take a date in the past."><?= htmlspecialchars($prefill['acceptance'] ?? '') ?></textarea>
-                            <div class="form-text">The things you'd check yourself. The plan has to cover every one of them.</div>
-                        </div>
-
-                        <?php /* Which agent builds this — ONE choice, not two.
-                                 An engine list plus a model list lets someone pick z.ai with
-                                 opus: syntactically fine, meaningless to the provider, and it
-                                 fails at run time as an unhelpful API error. The pair is the
-                                 unit, and EngineRegistry::runMenu() only offers pairs that
-                                 exist on an engine that is actually available. */ ?>
-                        <?php if (isset($appAgents) || isset($appAgentsError)): ?>
-                        <?php /* A project in its own container builds on ITS agents — the ones on
-                                 its AI agents page — not on an engine and your credentials. */ ?>
-                        <div class="mb-4">
-                            <label for="agent" class="form-label">Who does the building?</label>
-                            <?php if (isset($appAgentsError)): ?>
-                                <div class="alert alert-danger py-2 small mb-0">We couldn't reach the app to ask about its agents: <?= htmlspecialchars($appAgentsError) ?></div>
-                            <?php else:
-                                $__claude = (string) ($appAgents['claude']['in_use'] ?? '');
-                                $__def = null;
-                                foreach ($appAgents['agents'] as $__a) if (!empty($__a['is_default'])) $__def = $__a;
-                                $__why = function (array $a) use ($__claude): string {
-                                    if (empty($a['builder'])) return 'text only — cannot build';
-                                    if (!empty($a['problems'])) return implode('; ', $a['problems']);
-                                    if (($a['endpoint'] ?? '') === '' && ($a['key_status'] ?? '') !== 'set' && $__claude === '') return 'Claude account not set up';
-                                    return '';
-                                };
-                                $__where = fn(array $a) => ($a['endpoint'] ?? '') !== '' ? (parse_url($a['endpoint'], PHP_URL_HOST) ?: $a['endpoint']) : 'Claude account';
-                            ?>
-                            <select class="form-select" id="agent" name="agent">
-                                <?php $__dw = $__def ? $__why($__def) : ($__claude === '' ? 'Claude account not set up' : ''); ?>
-                                <option value="" <?= $__dw !== '' ? 'disabled' : 'selected' ?>>
-                                    App default — <?= htmlspecialchars($__def ? $__def['name'] . ' (' . $__where($__def) . ')' : 'Claude account' . ($__claude !== '' ? ' (' . $__claude . ')' : '')) ?><?= $__dw !== '' ? ' — ' . htmlspecialchars($__dw) : '' ?>
-                                </option>
-                                <?php foreach ($appAgents['agents'] as $__a): $__w = $__why($__a); ?>
-                                    <option value="<?= htmlspecialchars($__a['name']) ?>" <?= $__w !== '' ? 'disabled' : '' ?>>
-                                        <?= htmlspecialchars($__a['name'] . ' — ' . $__where($__a) . (($__a['model'] ?? '') !== '' ? ' / ' . $__a['model'] : '')) ?><?= $__w !== '' ? ' — ' . htmlspecialchars($__w) : '' ?>
-                                    </option>
-                                <?php endforeach; ?>
-                            </select>
-                            <?php endif; ?>
-                            <div class="form-text">
-                                The agent (and model) that plans and builds this, on the app's own keys. Leave it on the default unless you have a reason.
-                                <a href="<?= htmlspecialchars($tenantAgentsUrl) ?>" target="_blank" rel="noopener">Manage agents</a>
-                            </div>
-                        </div>
-                        <?php elseif (!empty($runChoices)): ?>
-                        <div class="mb-4">
-                            <label for="run_with" class="form-label">Who does the building?</label>
-                            <input type="hidden" name="run_with_default" value="<?= htmlspecialchars($defaultRunChoice ?? '') ?>">
-                            <select class="form-select" id="run_with" name="run_with">
-                                <?php foreach ($runChoices as $c):
-                                    /* Marked, not hidden. A member who has no credentials for an
-                                       engine still needs to see it exists — hiding it makes the
-                                       menu look like the engine was never offered. */
-                                    $usable = ($engineAuth[$c['engine']] ?? true); ?>
-                                    <option value="<?= htmlspecialchars($c['value']) ?>"
-                                        <?= ($c['value'] === ($defaultRunChoice ?? '')) ? 'selected' : '' ?>>
-                                        <?= htmlspecialchars($c['label']) ?><?= $usable ? '' : ' — no credentials' ?>
-                                    </option>
-                                <?php endforeach; ?>
-                            </select>
-                            <div class="form-text">
-                                Starts on this project's usual engine. It runs on YOUR sign-in for whichever
-                                you pick, so one marked <em>no credentials</em> can't run until you sign in
-                                to it (or add its API key in Settings).
-                            </div>
-                        </div>
-                        <?php endif; ?>
+                        <?php
+                        $builderAgent = '';
+                        $builderRun   = (string) ($defaultRunChoice ?? '');
+                        include __DIR__ . '/_who_builds.php'; ?>
 
                         <?php /* HOW TO BUILD IT — two cards of the same kind.
 
