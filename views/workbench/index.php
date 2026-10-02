@@ -62,6 +62,28 @@
             <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
         </div>
     <?php endforeach; ?>
+    <?php if (!empty($handoff)): $hp = $handoff['progress']; ?>
+    <?php /* The Get-started plan this project came from (Workbench::handoffState): where it stands. */ ?>
+    <div class="alert <?= $hp === 'failed' ? 'alert-danger' : 'alert-info' ?> d-flex align-items-start gap-3" id="wbHandoff" data-progress="<?= htmlspecialchars($hp) ?>">
+        <?php if ($hp !== 'failed' && $hp !== 'waiting-agent'): ?><span class="spinner-border spinner-border-sm mt-1" role="status" aria-hidden="true"></span><?php endif; ?>
+        <div class="flex-grow-1">
+            <?php if ($hp === 'setting-up'): ?>
+                <strong>Setting up your project from your Get-started plan</strong> &mdash; about two minutes. This board fills in once Phase 1 is planned.
+            <?php elseif ($hp === 'plan-committed'): ?>
+                <strong>Your <code>PLAN.md</code> is in the project.</strong> Phase 1 is about to be planned.
+            <?php elseif ($hp === 'waiting-agent'): ?>
+                <strong>Connect an AI agent and Phase 1 starts by itself.</strong> Your plan is in the project; it builds with the project&rsquo;s own agent. Sign one in on its AI agents page &mdash; within a minute the planner starts and Phase 1&rsquo;s tasks appear here.
+                <div class="mt-2"><a class="btn btn-sm btn-primary" href="<?= htmlspecialchars($handoff['core']) ?>/projects/open?to=<?= rawurlencode('/agents') ?>" target="_blank" rel="noopener">Connect an agent</a></div>
+            <?php elseif ($hp === 'planning'): ?>
+                <strong>Phase 1 is being planned from your <code>PLAN.md</code>.</strong> Its tasks appear here when the planner finishes &mdash; usually a few minutes.
+            <?php else: ?>
+                <strong>Setting up your plan stopped:</strong> <?= htmlspecialchars($handoff['note'] ?: 'see the project log') ?>.
+                <a href="<?= htmlspecialchars($handoff['core']) ?>/helpdesk">Ask support</a>
+            <?php endif; ?>
+        </div>
+    </div>
+    <?php if ($hp !== 'failed'): ?><script>setTimeout(function () { location.reload(); }, <?= $hp === 'waiting-agent' ? 20000 : 10000 ?>);</script><?php endif; ?>
+    <?php endif; ?>
 
     <?php
     // Preserve the "other" active filter when building links, so switching instance

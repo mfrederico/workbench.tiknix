@@ -165,6 +165,11 @@ class Workbench extends BuildControl {
         $this->viewData['liveTasks'] = $live;
         $this->viewData['statusTab'] = $statusParam === '' ? 'active' : $statusParam;
 
+        // A project made from a Get-started plan says, on its board, where that stands — setting
+        // up, PLAN.md in, waiting for the app's agent, being planned — instead of an empty board
+        // that looks like nothing is happening (core lib/PlanHandoff.php; read from core's db).
+        $this->viewData['handoff'] = $this->handoffState();
+
         // Get user's teams for filter dropdown
         $teams = $this->access->getMemberTeams($this->member->id);
 
@@ -3282,6 +3287,20 @@ class Workbench extends BuildControl {
     }
 
     /** The selected project's install directory, which owns its connections. */
+    /** The selected project's Get-started hand-off, while it still has something to say; else null. */
+    private function handoffState(): ?array {
+        if (!$this->selected) return null;
+        $iid = (int) $this->selected['id']; $mid = (int) $this->member->id;
+        $st = \app\CoreDb::with(function () use ($iid, $mid) {
+            $h = \app\Bean::findOne('planhandoff', 'instance_ref = ? AND member_ref = ? ORDER BY id DESC', [$iid, $mid]);
+            return ($h && $h->id) ? \app\PlanHandoff::state($h) + ['token' => (string) $h->token] : null;
+        });
+        if (!$st || !in_array($st['progress'], ['setting-up', 'plan-committed', 'waiting-agent', 'planning', 'failed'], true)) return null;
+        // Once Phase 1's tasks are on the board, the board says the rest itself.
+        if ($st['progress'] === 'planning' && Bean::count('workbenchtask') > 0) return null;
+        return $st + ['core' => rtrim((string) Flight::get('sidecar.core_url'), '/')];
+    }
+
     private function selectedInstanceDir(): string {
         if (!$this->selected) return '';
         return \app\WorkbenchDb::dirOf((string) $this->selected['slug'], (string) ($this->selected['app'] ?? ''));
