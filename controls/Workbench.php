@@ -879,13 +879,19 @@ class Workbench extends BuildControl {
         }
 
         $instanceDir = \app\WorkbenchDb::dirOf($slug, $app);
-        if (!is_file($instanceDir . '/public/index.php')) { Flight::jsonError('That instance is not available on disk.', 409); return; }
+        // A project in its own container has no directory here: the consolidation planner runs on
+        // its app's agent, checked with the app first — the same as decompose.
+        $tenant = \app\TenantBuilder::bySlug($slug);
+        if ($tenant) {
+            if ($why = $this->tenantAgentProblem($tenant, '')) { Flight::jsonError('The planner cannot run: ' . $why . '.', 409); return; }
+        } elseif (!is_file($instanceDir . '/public/index.php')) { Flight::jsonError('That instance is not available on disk.', 409); return; }
 
         try {
             $runner = new PlanRunner(
                 $slug, $instanceDir, (int)$this->member->id,
                 (int)$this->member->level, (string)($inst->engine ?? '')
             );
+            if ($tenant) $runner->useAgent('');
             $runner->start($this->buildConsolidationGoal($tasks), $ids);
         } catch (\Throwable $e) {
             $this->logger->error('Consolidate failed to start', ['error' => $e->getMessage(), 'instance' => $slug]);
@@ -2660,16 +2666,23 @@ class Workbench extends BuildControl {
         }
 
         $dir = \app\WorkbenchDb::dirOf($slug, $app);
-        if (!is_file($dir . '/public/index.php')) {
-            Flight::jsonError('That project is not on disk any more.', 409); return;
-        }
-        if (!$this->agentSignedIn($dir, (string) ($inst->engine ?? ''))) {
-            Flight::jsonError('This project has not signed in to Claude yet, so the planner cannot run.', 409); return;
+        // A project in its own container: its app's agent, checked with the app (as decompose does).
+        $tenant = \app\TenantBuilder::bySlug($slug);
+        if ($tenant) {
+            if ($why = $this->tenantAgentProblem($tenant, '')) { Flight::jsonError('The planner cannot run: ' . $why . '.', 409); return; }
+        } else {
+            if (!is_file($dir . '/public/index.php')) {
+                Flight::jsonError('That project is not on disk any more.', 409); return;
+            }
+            if (!$this->agentSignedIn($dir, (string) ($inst->engine ?? ''))) {
+                Flight::jsonError('This project has not signed in to Claude yet, so the planner cannot run.', 409); return;
+            }
         }
 
         try {
             $runner = new PlanRunner($slug, $dir, (int)$this->member->id,
                 (int)$this->member->level, (string)($inst->engine ?? ''));
+            if ($tenant) $runner->useAgent('');
             // The same refusal that stranded it in the first place. Say so plainly —
             // "try again when that finishes" is actionable; a generic failure is not.
             if ($runner->running()) {
