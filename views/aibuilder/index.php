@@ -8,7 +8,6 @@
 $csrfTok = csrf_token();
 $selId   = $selected ? (int)$selected->id : 0;
 $ab_isDefault = $ab_isDefault ?? false;
-$ab_needsInstall = $ab_needsInstall ?? false;
 $ab_isRoot    = $ab_isRoot ?? false;
 $ab_canCreate = $ab_canCreate ?? false;
 $ab_isOwner       = $ab_isOwner ?? false;
@@ -57,23 +56,6 @@ foreach ($instances as $__i) { if (!empty($__i->isDefault)) { $hasDefault = true
        This page is the builder; it says so above and does nothing else in this header. */
     ?>
   </div>
-
-  <?php if ($ab_needsInstall && $ab_hasInstance): ?>
-  <div class="alert alert-warning d-flex align-items-center gap-2 mb-3" role="alert">
-    <i class="bi bi-exclamation-triangle-fill fs-5"></i>
-    <div class="flex-grow-1 small">
-      <strong>This instance's app still needs setup.</strong>
-      Its site isn't usable yet — the admin password is still the default seed, so
-      <code><?= htmlspecialchars(($selected->slug) ?? '') ?>.tiknix.com</code> just shows the install screen.
-      Building here still works; finish setup when you're ready to log in and go live.
-    </div>
-    <?php if (!empty($ab_url)): ?>
-    <a href="<?= htmlspecialchars($ab_url) ?>/install" target="_blank" rel="noopener" class="btn btn-warning btn-sm text-nowrap">
-      <i class="bi bi-box-arrow-up-right me-1"></i>Complete install
-    </a>
-    <?php endif; ?>
-  </div>
-  <?php endif; ?>
 
   <div class="row g-3">
 

@@ -3473,6 +3473,13 @@ class Workbench extends BuildControl {
 
         if (!$this->selected) return $conn = null;
 
+        // A project in its own container keeps its connections THERE (its workspace here holds
+        // only the board), and a token never leaves the container for a sidecar to read — so
+        // the monday import is not offered for one. Said here, not as "no connections.db",
+        // which would read as "never connected".
+        $meta = $this->access->instanceMeta((int) $this->selected['id']);
+        if ($meta && (string) ($meta->ctKind ?? '') === 'tenant') return $conn = null;
+
         // Read from the PROJECT's own store, not core's table. Connections moved to
         // <install>/data/connections.db (CONNECTIONS_PER_INSTANCE.md) and core's table
         // was emptied, so this query returned nothing and the monday nav simply

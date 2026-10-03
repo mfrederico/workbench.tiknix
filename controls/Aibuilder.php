@@ -88,29 +88,6 @@ class Aibuilder extends BuildControl {
         return \app\WorkbenchDb::dirOf($sub, $this->appNamespace());
     }
 
-    /**
-     * Has this instance's own web app finished setup? Mirrors the instance's
-     * Install::isInstalled() — a level-1 admin whose password is no longer the seed hash.
-     * Read-only peek at the instance's own sqlite; on any uncertainty return true so we
-     * never nag. (A freshly provisioned instance is NOT installed until the operator sets
-     * the admin password at /install.)
-     */
-    private function instanceInstalled(string $instanceDir): bool {
-        $ini   = @parse_ini_file($instanceDir . '/conf/config.ini', true) ?: [];
-        $dbRel = (string) ($ini['database']['path'] ?? '');
-        if ($dbRel === '') return true;
-        $dbAbs = ($dbRel[0] ?? '') === '/' ? $dbRel : $instanceDir . '/' . $dbRel;
-        if (!is_file($dbAbs)) return true;
-        // The default admin hash is a stable constant in the app's controls/Install.php.
-        $seed = '$2y$10$jVz654DI7bX8e1Dh32O9suFcMW4x1V.0SrniJNpDyknwkzc6gM20a';
-        try {
-            $pdo = new \PDO('sqlite:' . $dbAbs);
-            $pdo->setAttribute(\PDO::ATTR_ERRMODE, \PDO::ERRMODE_SILENT);
-            $st = $pdo->prepare("SELECT COUNT(*) FROM member WHERE level = 1 AND password != ? AND password != ''");
-            $st->execute([$seed]);
-            return (int) $st->fetchColumn() > 0;
-        } catch (\Throwable $e) { return true; }
-    }
 
     /**
      * A project in its own container: its terminal is the APP's (runtime bin/terminal-bridge.php on
@@ -118,7 +95,7 @@ class Aibuilder extends BuildControl {
      * app's own agent with the app's own credential — not core's bridge, jail or engines.
      */
     private function inContainer(object $inst): bool {
-        return trim((string) ($inst->ctIp ?? '')) !== '';
+        return (string) ($inst->ctKind ?? '') === 'tenant';   // the registry's word, not whether an address happens to be set
     }
 
     private function mintAppToken(object $inst, int $memberId, bool $resume, string $agent): string {
@@ -151,11 +128,11 @@ class Aibuilder extends BuildControl {
     }
 
     /**
-     * The project's code is where this page can reach it: on this host, or — for a project in its
-     * own container — in the container (its workspace here holds only the board, data/workbench.db).
+     * The project's code is where this page can reach it: in its container (its workspace here
+     * holds only the board, data/workbench.db). Nothing else holds a project's code any more.
      */
     private function onDisk(object $inst): bool {
-        return $this->inContainer($inst) || is_file($this->instanceDir($inst->slug) . '/public/index.php');
+        return $this->inContainer($inst);
     }
 
     /** An instance the current member may USE: owned OR shared with one of their teams. */
@@ -186,24 +163,9 @@ class Aibuilder extends BuildControl {
             [$code, $out] = \app\TenantHost::ssh($inst, 'app', $cmd . ' 2>&1', null, 30);
             return ['ok' => $code === 0, 'out' => rtrim((string) $out, "\n"), 'code' => $code];
         }
-        $cmd = 'git -C ' . escapeshellarg($this->instanceDir($slug));
-        foreach ($args as $a) { $cmd .= ' ' . escapeshellarg((string)$a); }
-        $lines = []; $code = 0;
-        exec($cmd . ' 2>&1', $lines, $code);
-        return ['ok' => $code === 0, 'out' => implode("\n", $lines), 'code' => $code];
+        return ['ok' => false, 'out' => "{$slug} is not in a container, so it has no repository this page can reach", 'code' => 1];
     }
 
-    /** Run a capricorn instance script (args already validated). Returns ok/out/code. */
-    private function runScript(string $script, array $args): array {
-        $cfg    = $this->cfg();
-        $binDir = rtrim((string)($cfg['ops']['bin_dir'] ?? '/home/ubuntu/capricorn/bin'), '/');
-        $prefix = trim((string)($cfg['ops']['sudo_prefix'] ?? ''));
-        $cmd = ($prefix ? $prefix . ' ' : '') . escapeshellarg($binDir . '/' . $script);
-        foreach ($args as $a) { $cmd .= ' ' . escapeshellarg((string)$a); }
-        $lines = []; $code = 0;
-        exec($cmd . ' 2>&1', $lines, $code);
-        return ['ok' => $code === 0, 'out' => implode("\n", $lines), 'code' => $code];
-    }
 
     // --- routes ---------------------------------------------------------------
 
@@ -283,11 +245,6 @@ class Aibuilder extends BuildControl {
         $shareTeams       = [];   // TODO write-seam: teams the member can share INTO
         $instSharedIds    = [];   // TODO write-seam: which displayed instances have any share
 
-        // Flag a selected instance whose web app hasn't finished its own /install (admin
-        // password still the seed) so the view can nudge the operator to complete setup.
-        $needsInstall = ($selected && empty($selected->isDefault))
-            ? !$this->instanceInstalled($this->instanceDir($selected->slug)) : false;
-
         $cfg = $this->cfg();
         $this->render('aibuilder/index', [
             'title'            => 'Terminal',
@@ -300,7 +257,6 @@ class Aibuilder extends BuildControl {
             'ab_isOwner'       => $selected ? $this->isInstanceOwner($selected) : false,
             'ab_instSharedIds' => array_values($instSharedIds),
             'selected'       => $selected,
-            'ab_needsInstall' => $needsInstall,
             'ab_sub'         => $selected ? $selected->slug : '',
             'ab_termError'   => $termError,
             'ab_token'       => $ctToken,
@@ -425,10 +381,6 @@ class Aibuilder extends BuildControl {
         $inst = $this->accessibleInstance($this->getParam('id', 0));
         if (!$inst) { Flight::jsonError('No such instance', 404); return; }
 
-        $file = dirname(__DIR__) . '/mcptools/Introspector.php';
-        if (is_file($file)) require_once $file;
-        $cls = 'app\\mcptools\\Introspector';
-        if (!class_exists($cls)) { Flight::jsonError('Introspector unavailable', 500); return; }
         if ($this->inContainer($inst)) {
             // Read in the container, where the code is (the planner's own source, TenantBuilder::digest).
             $digest = \app\TenantBuilder::digest($inst);
@@ -436,12 +388,7 @@ class Aibuilder extends BuildControl {
             Flight::jsonSuccess(['slug' => $inst->slug, 'digest' => $digest]);
             return;
         }
-        try {
-            $digest = (new $cls($this->instanceDir($inst->slug)))->digest();
-        } catch (\Throwable $e) {
-            Flight::jsonError('Digest failed: ' . $e->getMessage(), 500); return;
-        }
-        Flight::jsonSuccess(['slug' => $inst->slug, 'digest' => $digest]);
+        Flight::jsonError("{$inst->slug} is not in a container, so there is no code to inventory", 409);
     }
 
     /**
