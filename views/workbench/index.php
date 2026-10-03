@@ -24,31 +24,6 @@
             }
             $createUrl = '/workbench/create' . (!empty($createParams) ? '?' . http_build_query($createParams) : '');
             ?>
-            <?php /* Only when the SELECTED project actually has a live monday
-                     connection. An import button on a project with nowhere to
-                     import from is an offer that fails after the click, and it
-                     invites people to go looking for a setting that is not
-                     missing — the connection belongs to a different project. */ ?>
-            <?php if (!empty($hasMonday)): ?>
-                <a href="/workbench/monday" class="btn btn-outline-primary" title="Import from monday.com">
-                    <i class="bi bi-box-arrow-in-down"></i><span class="d-none d-sm-inline"> Import from monday.com</span><span class="visually-hidden d-sm-none">Import from monday.com</span>
-                </a>
-                <?php /* The import gate only stops work that was ALREADY closed when
-                         you looked. Boards move on afterwards, which is the common
-                         case — this re-checks what is here and flags what has since
-                         been finished, cancelled or deleted. It never removes a task:
-                         a board changing is not permission to delete work somebody
-                         may have started. */ ?>
-                <form method="POST" action="/workbench/mondayrefresh" class="d-inline">
-                    <?php foreach (($csrf ?? []) as $cn => $cv): ?>
-                        <input type="hidden" name="<?= htmlspecialchars($cn) ?>" value="<?= htmlspecialchars($cv) ?>">
-                    <?php endforeach; ?>
-                    <button type="submit" class="btn btn-outline-secondary"
-                            title="Re-read imported items from monday: flags any that were finished, cancelled or deleted, and pulls in changed titles and briefs. Never deletes a task, and never touches its status, comments or branch.">
-                        <i class="bi bi-arrow-repeat"></i><span class="d-none d-sm-inline"> Sync with monday</span><span class="visually-hidden d-sm-none">Sync with monday</span>
-                    </button>
-                </form>
-            <?php endif; ?>
             <a href="<?= $createUrl ?>" class="btn btn-primary">
                 <i class="bi bi-plus-lg"></i> New Task
             </a>
@@ -472,19 +447,6 @@
                                             </a>
                                             <?php if (($task->source ?? '') === 'detected_error'): ?>
                                                 <span class="badge bg-danger-subtle text-danger-emphasis border border-danger-subtle ms-1" title="Auto-created from a detected runtime error"><i class="bi bi-fire"></i> detected</span>
-                                            <?php endif; ?>
-                                            <?php /* Set by "Re-check monday". The task is left exactly as it
-                                                     is — this only says the source item stopped being open, so
-                                                     whoever owns the work decides what that means. Says WHICH
-                                                     status, because cancelled and done are different news. */ ?>
-                                            <?php if (!empty($task->mondayClosed) || !empty($task->mondayMissing)): ?>
-                                                <span class="badge bg-warning-subtle text-warning-emphasis border border-warning-subtle ms-1"
-                                                      title="Checked against monday<?= !empty($task->mondayCheckedAt) ? ' on ' . htmlspecialchars((string) $task->mondayCheckedAt) : '' ?>. Nothing was changed here.">
-                                                    <i class="bi bi-exclamation-triangle"></i>
-                                                    <?= !empty($task->mondayMissing)
-                                                        ? 'gone from monday'
-                                                        : htmlspecialchars(($task->mondayStatus ?: 'closed') . ' in monday') ?>
-                                                </span>
                                             <?php endif; ?>
                                             <?php if ($task->teamId): ?>
                                                 <br><small class="text-muted"><i class="bi bi-people"></i> Team task</small>
