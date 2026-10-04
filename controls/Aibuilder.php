@@ -221,7 +221,7 @@ class Aibuilder extends BuildControl {
                     if (empty($ag['agents']) && $problem !== '') $ctAgentNote = ['problem' => $problem, 'url' => $core . '/projects/open?to=' . rawurlencode('/agents')];
                     foreach ((array) ($ag['agents'] ?? []) as $a) {
                         $n = (string) ($a['name'] ?? '');
-                        if ($n === '') continue;
+                        if ($n === '' || empty($a['builder'])) continue;   // only a Build agent runs a terminal: the others answer, they do not edit
                         $label = $n . (!empty($a['preset']) ? ' · ' . $a['preset'] : '') . (!empty($a['is_default']) ? ' (default)' : '');
                         $ctAgents[!empty($a['is_default']) ? '' : $n] = $label;   // '' = the default agent
                     }
