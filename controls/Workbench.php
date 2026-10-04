@@ -2064,33 +2064,6 @@ class Workbench extends BuildControl {
     }
 
     /**
-     * Resolve a merge conflict WITH the agent. Brings the instance's current base onto
-     * the task branch (in its existing workspace), leaving conflict markers, then spawns
-     * the agent with a resolution prompt so it fixes + commits. The task's own work is
-     * preserved; once the agent commits, Approve & Merge lands cleanly.
-     */
-    public function resolveconflict($params = []) {
-        if (!$this->requireLogin()) return;
-        Flight::jsonError('Resolving a conflict by hand is not available — projects build in their own containers: run, review (Diff) and approve the task instead.', 409);
-    }
-
-    /**
-     * Force reset a stuck queued/running task
-     */
-    public function forcereset($params = []) {
-        if (!$this->requireLogin()) return;
-        Flight::jsonError('Force reset is not available — projects build in their own containers: run, review (Diff) and approve the task instead.', 409);
-    }
-
-    /**
-     * Mark task as complete (user action)
-     */
-    public function complete($params = []) {
-        if (!$this->requireLogin()) return;
-        Flight::jsonError('Marking a task complete by hand is not available — projects build in their own containers: run, review (Diff) and approve the task instead.', 409);
-    }
-
-    /**
      * Approve task - merge PR and mark complete
      * Only admins can approve non-admin member tasks
      */

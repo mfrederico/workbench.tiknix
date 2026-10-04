@@ -154,47 +154,22 @@ $baseDomain = $baseUrl === '' ? '' : preg_replace('#^https?://#', '', rtrim($bas
                             <button class="btn btn-outline-success" onclick="rerunTask(<?= $task->id ?>)">
                                 <i class="bi bi-arrow-repeat"></i> Re-run
                             </button>
-                            <?php if (!empty($task->branchName) && !empty($task->projectPath)): ?>
-                                <button class="btn btn-outline-warning" onclick="resolveConflict(<?= $task->id ?>)"
-                                        title="Update this task's branch from the current base and let the agent resolve any merge conflicts, keeping this task's work">
-                                    <i class="bi bi-sign-merge-left"></i> Resolve conflict
-                                </button>
-                            <?php endif; ?>
                         <?php endif; ?>
 
-                        <?php if ($canRun && in_array($task->status, ['queued', 'running'])): ?>
-                            <button class="btn btn-outline-warning" onclick="forceResetTask(<?= $task->id ?>)">
-                                <i class="bi bi-arrow-counterclockwise"></i> Force Reset
-                            </button>
-                        <?php endif; ?>
 
                         <?php if ($canRun && $task->status === 'running'): ?>
                             <button class="btn btn-warning" onclick="pauseTask(<?= $task->id ?>)">
                                 <i class="bi bi-pause-fill"></i> Pause
                             </button>
+                        <?php endif; ?>
+                        <?php /* Stop is the one way out of running AND queued (a brief that never reached its
+                                 agent): the task goes back to pending and can be run again. */ ?>
+                        <?php if ($canRun && in_array($task->status, ['running', 'queued'], true)): ?>
                             <button class="btn btn-danger" onclick="stopTask(<?= $task->id ?>)">
                                 <i class="bi bi-stop-fill"></i> Stop
                             </button>
                         <?php endif; ?>
 
-                        <?php /* A finish path while active: a worker can finish (or wedge) without
-                                 the status flipping to 'awaiting', and completing stops the session
-                                 first, so this is safe either way.
-                                 MERGE is offered only for `running`. A queued task's brief never
-                                 reached its agent, so there is no work on its branch — "Mark
-                                 Complete & merge" there invites merging nothing, or worse, whatever
-                                 a previous attempt left behind. Finishing without a merge stays
-                                 available: deciding you no longer need a task is legitimate. */ ?>
-                        <?php if ($canRun && in_array($task->status, ['running', 'queued'])): ?>
-                            <button class="btn btn-outline-success" onclick="markComplete(<?= $task->id ?>)">
-                                <i class="bi bi-check-circle"></i> Mark Complete <span class="small">(no merge)</span>
-                            </button>
-                            <?php if ($task->status === 'running'): ?>
-                            <button class="btn btn-success" onclick="markCompleteMerge(<?= $task->id ?>)">
-                                <i class="bi bi-check2-circle"></i> Mark Complete <span class="small">(&amp; merge)</span>
-                            </button>
-                            <?php endif; ?>
-                        <?php endif; ?>
 
                         <?php if ($canRun && $task->status === 'paused'): ?>
                             <button class="btn btn-success" onclick="resumeTask(<?= $task->id ?>)">
@@ -240,11 +215,7 @@ $baseDomain = $baseUrl === '' ? '' : preg_replace('#^https?://#', '', rtrim($bas
                                     <i class="bi bi-x-circle"></i> Decline
                                 </button>
                             <?php else: ?>
-                                <?php if ($task->status !== 'completed'): ?>
-                                <button class="btn btn-success" onclick="markComplete(<?= $task->id ?>)">
-                                    <i class="bi bi-check-circle"></i> Mark Complete
-                                </button>
-                                <?php endif; ?>
+                                <span class="text-body-secondary small align-self-center"><i class="bi bi-hourglass-split me-1"></i>An admin reviews the diff and approves (merges) this task.</span>
                             <?php endif; ?>
                             <?php if ($task->status === 'awaiting'): ?>
                             <button class="btn btn-outline-primary" onclick="document.getElementById('commentContent').focus()">
@@ -604,12 +575,14 @@ $baseDomain = $baseUrl === '' ? '' : preg_replace('#^https?://#', '', rtrim($bas
                             <button class="btn btn-primary" onclick="document.getElementById('commentContent').focus()">
                                 <i class="bi bi-chat-dots me-1"></i> Reply in Conversation
                             </button>
-                            <button class="btn btn-outline-success" onclick="markComplete(<?= $task->id ?>)">
-                                <i class="bi bi-check-circle me-1"></i> Mark Complete <span class="small">(no merge)</span>
+                            <?php if (isset($member) && $member->level <= LEVELS['ADMIN']): ?>
+                            <button class="btn btn-success" data-bs-toggle="modal" data-bs-target="#approveModal">
+                                <i class="bi bi-check-circle-fill me-1"></i> Approve &amp; Merge
                             </button>
-                            <button class="btn btn-success" onclick="markCompleteMerge(<?= $task->id ?>)">
-                                <i class="bi bi-check2-circle me-1"></i> Mark Complete <span class="small">(&amp; merge)</span>
+                            <button class="btn btn-outline-danger" data-bs-toggle="modal" data-bs-target="#declineModal">
+                                <i class="bi bi-x-circle me-1"></i> Decline
                             </button>
+                            <?php endif; ?>
                         </div>
                     </div>
                 </div>
@@ -1042,62 +1015,7 @@ async function runTask(id, btnEl) {
     }
 }
 
-async function forceResetTask(id) {
-    const btn = event.target;   // window.event is gone after the await below
-    if (!await tkConfirm('Force reset this task? This will kill any running session and reset to pending.', {okText: 'Force reset', danger: true})) return;
 
-    btn.disabled = true;
-    btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Resetting...';
-
-    try {
-        const formData = new FormData();
-        formData.append('id', id);
-        formData.append('_csrf_token', csrfToken);
-
-        const response = await fetch('/workbench/forcereset', {
-            method: 'POST',
-            body: formData
-        });
-
-        const data = await response.json();
-
-        if (data.success) {
-            location.reload();
-        } else {
-            tkAlert('Error: ' + data.message, {type: 'error'});
-            btn.disabled = false;
-            btn.innerHTML = '<i class="bi bi-arrow-counterclockwise"></i> Force Reset';
-        }
-    } catch (e) {
-        tkAlert('Error: ' + e.message, {type: 'error'});
-        btn.disabled = false;
-        btn.innerHTML = '<i class="bi bi-arrow-counterclockwise"></i> Force Reset';
-    }
-}
-
-async function resolveConflict(id) {
-    const btn = event.target.closest('button');   // window.event is gone after the await below
-    if (!await tkConfirm("Update this task's branch from the current base and have the agent resolve any merge conflicts? This keeps the task's work.", {okText: 'Resolve'})) return;
-    const orig = btn.innerHTML;
-    btn.disabled = true;
-    btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Resolving...';
-    try {
-        const formData = new FormData();
-        formData.append('id', id);
-        formData.append('_csrf_token', csrfToken);
-        const response = await fetch('/workbench/resolveconflict', { method: 'POST', body: formData });
-        const data = await response.json();
-        if (data.success) {
-            location.reload();
-            return;
-        }
-        tkAlert('Error: ' + (data.message || data.error || 'Could not resolve'), {type: 'error'});
-    } catch (e) {
-        tkAlert('Error: ' + e.message, {type: 'error'});
-    }
-    btn.disabled = false;
-    btn.innerHTML = orig;
-}
 
 async function rerunTask(id) {
     const btn = event.target;   // window.event is gone after the await below
@@ -1302,75 +1220,7 @@ if (taskStatus === 'running' || taskStatus === 'queued' || taskStatus === 'await
     pollInterval = setInterval(pollProgress, 3000);
 }
 
-// Mark task as complete
-async function markComplete(id) {
-    const btn = event.target;   // window.event is gone after the await below
-    if (!await tkConfirm('Mark this task as complete?', {okText: 'Mark complete'})) return;
 
-    btn.disabled = true;
-    btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Completing...';
-
-    try {
-        const formData = new FormData();
-        formData.append('id', id);
-        formData.append('_csrf_token', csrfToken);
-
-        const response = await fetch('/workbench/complete', {
-            method: 'POST',
-            body: formData
-        });
-
-        const data = await response.json();
-
-        if (data.success) {
-            location.reload();
-        } else {
-            tkAlert('Error: ' + data.message, {type: 'error'});
-            btn.disabled = false;
-            btn.innerHTML = '<i class="bi bi-check-circle"></i> Mark Complete';
-        }
-    } catch (e) {
-        tkAlert('Error: ' + e.message, {type: 'error'});
-        btn.disabled = false;
-        btn.innerHTML = '<i class="bi bi-check-circle"></i> Mark Complete';
-    }
-}
-
-// Mark complete AND merge the task branch back into its base (instance/<slug> for
-// instance tasks) — the same gh-free local merge as Approve & Merge.
-async function markCompleteMerge(id) {
-    const btn = event.target.closest('button');   // window.event is gone after the await below
-    if (!await tkConfirm('Merge this task\'s changes into the instance and mark it complete?', {okText: 'Merge'})) return;
-
-    const orig = btn.innerHTML;
-    btn.disabled = true;
-    btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Merging...';
-
-    try {
-        const formData = new FormData();
-        formData.append('id', id);
-        formData.append('merge', '1');
-        formData.append('_csrf_token', csrfToken);
-
-        const response = await fetch('/workbench/complete', { method: 'POST', body: formData });
-        const data = await response.json();
-
-        if (data.success) {
-            if (data.merged === false && data.merge_reason) {
-                await tkAlert('Marked complete, but NOT merged:\n\n' + data.merge_reason, {type: 'warning', title: 'Not merged'});
-            }
-            location.reload();
-        } else {
-            tkAlert('Error: ' + data.message, {type: 'error'});
-            btn.disabled = false;
-            btn.innerHTML = orig;
-        }
-    } catch (e) {
-        tkAlert('Error: ' + e.message, {type: 'error'});
-        btn.disabled = false;
-        btn.innerHTML = orig;
-    }
-}
 
 // Comment form - Ctrl+Enter to submit
 document.getElementById('commentContent').addEventListener('keydown', function(e) {
