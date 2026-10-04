@@ -89,12 +89,12 @@ if ($__mid > 0 && class_exists('\app\AgentLimit')) {
   </div>
 <?php endif; ?>
 <?php if (!empty($tiknixMcpOff)): ?>
-  <?php /* The project's own MCP server is switched off (MCP services → danger zone). Not a gate:
+  <?php /* The project's own MCP server is switched off (the app's AI agents page → MCP servers → danger zone). Not a gate:
            its owner chose it. Said on every page, with the way back. */ ?>
   <div class="alert alert-danger rounded-0 mb-0 py-2 d-flex flex-wrap align-items-center gap-2" role="alert" id="wbTiknixOff">
     <i class="bi bi-exclamation-octagon-fill"></i>
     <span class="me-auto"><strong>This project's own MCP server is removed from its agents.</strong> Plans cannot be made, and build agents work without the project's tools.</span>
-    <a class="btn btn-sm btn-danger" target="_top" href="<?= htmlspecialchars(rtrim((string) Flight::get('sidecar.core_url'), '/')) ?>/mcpsetup">Restore it on MCP services</a>
+    <a class="btn btn-sm btn-danger" target="_top" href="<?= htmlspecialchars(rtrim((string) Flight::get('sidecar.core_url'), '/')) ?>/projects/open?to=<?= rawurlencode('/agents?tab=mcp') ?>" rel="noopener">Restore it on the app's AI agents page</a>
   </div>
 <?php endif; ?>
 <?php if (!empty($agentGate)): $__g = $agentGate; ?>
