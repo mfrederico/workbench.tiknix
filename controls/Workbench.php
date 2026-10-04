@@ -2553,6 +2553,27 @@ class Workbench extends BuildControl {
         // executor that owns this task's status.
         $isPlanManaged = !empty($task->planRef) || !empty($task->worktreeBranch)
             || TmuxManager::isPlanSession((string)$task->agentSession);
+        // In a container the agent's "what now" is its live transcript (TenantRun::activity, the
+        // same source the Live Console reads): planAgentActivity reads a host log that no longer
+        // exists, so the card said "Starting up…" for the whole run.
+        if (in_array($task->status, ['running', 'queued'], true) && empty($progress['live']) && ($ct = $this->tenantInst()) && ($rid = $this->runIdOf($task))) {
+            try {
+                $a = \app\TenantRun::activity($ct, [$rid], 9)[$rid] ?? null;
+                if ($a && $a['found']) {
+                    $clean = fn(string $l) => trim(preg_replace('/^\[[0-9:]*\]\s*(→\s*)?/u', '', $l));
+                    $quiet = $a['at'] !== '' ? time() - strtotime($a['at']) : null;
+                    $progress['live'] = [
+                        'status'       => $quiet !== null && $quiet > 120 ? 'Quiet for ' . round($quiet / 60) . ' min' : 'Working',
+                        'current_task' => $a['lines'] ? $clean((string) end($a['lines'])) : 'Started — nothing said yet',
+                    ];
+                    $progress['recent_logs'] = array_map(fn($l) => ['level' => str_contains($l, '✗') ? 'error' : 'info', 'type' => 'activity', 'message' => $clean($l), 'timestamp' => ''],
+                        array_reverse(array_slice($a['lines'], 0, -1)));
+                }
+            } catch (\RuntimeException $e) {
+                $this->logger->error('Workbench: could not read the agent\'s activity', ['task' => (int) $task->id, 'err' => $e->getMessage()]);
+                $progress['live'] = ['status' => 'Unknown', 'current_task' => 'The container did not answer: ' . $e->getMessage()];
+            }
+        }
         if (in_array($task->status, ['running', 'queued'], true) && $isPlanManaged && empty($progress['live'])) {
             $act = $this->planAgentActivity($task);
             if ($act['current'] !== null || $act['running']) {
