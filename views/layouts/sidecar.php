@@ -103,14 +103,10 @@ if ($__mid > 0 && class_exists('\app\AgentLimit')) {
     <i class="bi bi-cpu fs-3 lh-1"></i>
     <div>
       <div class="fw-bold fs-5"><?= htmlspecialchars($__g['name']) ?> needs an AI model before it can build anything.</div>
-      <div class="mt-2">The Builder works by running an AI agent inside your project. That agent needs a model to think with, and you choose which one on the project's <strong>AI agents</strong> page. Any of these works:</div>
-      <ul class="mt-2 mb-2">
-        <li><strong>The default model</strong> &mdash; sign in with a Claude subscription, or paste an Anthropic API key.</li>
-        <li><strong>Another provider</strong> &mdash; add an agent on GLM (z.ai), Kimi, DeepSeek, OpenRouter or Ollama Cloud, with that provider's API key.</li>
-      </ul>
+      <div class="mt-2">The Builder works by running an AI agent inside your project. That agent needs a model to think with, and you choose which one on the project's <strong>AI agents</strong> page: connect the provider you use &mdash; DeepSeek, GLM (z.ai), Kimi, OpenRouter, Ollama Cloud, your own endpoint, or Anthropic &mdash; by pasting its API key (Anthropic can also sign in). One is enough.</div>
       <div>Until then the task board, the terminal and the prompt log stay closed &mdash; a task typed now could not run.</div>
       <div class="mt-3 d-flex flex-wrap gap-2">
-        <a class="btn btn-warning" href="<?= htmlspecialchars($__g['url']) ?>" target="_blank" rel="noopener"><i class="bi bi-box-arrow-up-right me-1"></i>Set up a model on <?= htmlspecialchars($__g['name']) ?>'s AI agents page</a>
+        <a class="btn btn-warning" href="<?= htmlspecialchars($__g['url']) ?>" target="_blank" rel="noopener"><i class="bi bi-box-arrow-up-right me-1"></i>Connect a provider on <?= htmlspecialchars($__g['name']) ?>'s AI agents page</a>
         <a class="btn btn-outline-secondary" href="<?= htmlspecialchars($_SERVER['REQUEST_URI'] ?? '/workbench') ?>"><i class="bi bi-arrow-clockwise me-1"></i>Done &mdash; open the Builder</a>
       </div>
       <details class="mt-3 small text-body-secondary"><summary>What the project reported</summary><code><?= htmlspecialchars($__g['problem']) ?></code></details>
