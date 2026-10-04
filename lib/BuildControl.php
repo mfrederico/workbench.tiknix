@@ -61,6 +61,9 @@ abstract class BuildControl extends Control {
             // Why the selected project cannot build, or null. The layout shows THIS instead of
             // any page while it is set, and the write routes refuse with it (requireAgent).
             'agentGate'  => $this->selected ? $this->agentGate() : null,
+            // The project switched its own MCP server off (its last report says so): the Builder
+            // says what that breaks, on every page, with the way back.
+            'tiknixMcpOff' => $this->selected ? $this->tiknixMcpOff() : false,
         ];
     }
 
@@ -102,6 +105,13 @@ abstract class BuildControl extends Control {
             'name'    => (string) ($meta->displayName ?: $meta->slug),
             'url'     => rtrim((string) Flight::get('sidecar.core_url'), '/') . '/projects/open?to=' . rawurlencode('/agents'),
         ];
+    }
+
+    /** True only when the app itself reported its own MCP server off (an older app says nothing: not "off"). */
+    protected function tiknixMcpOff(): bool {
+        $meta = $this->access->instanceMeta((int) $this->selected['id']);
+        $h = $meta ? json_decode((string) ($meta->reportJson ?? ''), true) : null;
+        return is_array($h) && array_key_exists('tiknix_mcp', $h) && $h['tiknix_mcp'] === false;
     }
 
     /**

@@ -88,6 +88,15 @@ if ($__mid > 0 && class_exists('\app\AgentLimit')) {
     </div>
   </div>
 <?php endif; ?>
+<?php if (!empty($tiknixMcpOff)): ?>
+  <?php /* The project's own MCP server is switched off (MCP services → danger zone). Not a gate:
+           its owner chose it. Said on every page, with the way back. */ ?>
+  <div class="alert alert-danger rounded-0 mb-0 py-2 d-flex flex-wrap align-items-center gap-2" role="alert" id="wbTiknixOff">
+    <i class="bi bi-exclamation-octagon-fill"></i>
+    <span class="me-auto"><strong>This project's own MCP server is removed from its agents.</strong> Plans cannot be made, and build agents work without the project's tools.</span>
+    <a class="btn btn-sm btn-danger" target="_top" href="<?= htmlspecialchars(rtrim((string) Flight::get('sidecar.core_url'), '/')) ?>/mcpsetup">Restore it on MCP services</a>
+  </div>
+<?php endif; ?>
 <?php if (!empty($agentGate)): $__g = $agentGate; ?>
 <?php /* THE GATE. The project has no agent, so nothing on any Builder page could run: no board,
          no terminal, no prompts — this card instead, on every surface, until the app's AI agents
