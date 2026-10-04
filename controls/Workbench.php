@@ -1556,6 +1556,13 @@ class Workbench extends BuildControl {
         $this->viewData['team'] = $team;
         $this->viewData['creator'] = $creator;
         $this->viewData['canEdit'] = $this->access->canEdit($this->member->id, $task);
+        // What the Run button names: the task's own agent, else the app's default as it last
+        // reported it (StatusReport → instance.report_json); nothing invented when unknown.
+        $runAgent = trim((string) ($task->agent ?? ''));
+        if ($runAgent === '' && $this->selected && ($im = $this->access->instanceMeta((int) $this->selected['id'])) && ($rj = json_decode((string) ($im->reportJson ?? ''), true)) && is_array($rj)) {
+            $runAgent = (string) ($rj['default_agent'] ?? '');
+        }
+        $this->viewData['runAgentLabel'] = $runAgent !== '' ? 'Run with ' . $runAgent : 'Run';
         $this->viewData['canRun'] = $this->access->canRun($this->member->id, $task);
         $this->viewData['canDelete'] = $this->access->canDelete($this->member->id, $task);
         $this->viewData['taskTypes'] = $this->getTaskTypes();

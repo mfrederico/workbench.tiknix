@@ -131,21 +131,17 @@ $baseDomain = $baseUrl === '' ? '' : preg_replace('#^https?://#', '', rtrim($bas
                         $isPlanParent = empty($task->parentTaskId) && !empty($task->planStatus);
                         ?>
                         <?php if ($canRun && !$isPlanParent && in_array($task->status, $runnable, true)): ?>
-                            <button class="btn btn-success" onclick="runTask(<?= $task->id ?>)">
+                            <button class="btn btn-success" onclick="runTask(<?= $task->id ?>)" data-label="<?= htmlspecialchars($runAgentLabel ?? 'Run') ?>">
                                 <i class="bi bi-play-fill"></i>
                                 <?php
                                 /* Name the engine this task will actually run on. "Run with
                                    Claude" was written when claude was the only option; the
                                    engine is now per task and editable, so the button was
                                    promising the wrong provider on anything else. */
-                                if ($task->status === 'conflict') {
-                                    echo 'Retry (resolve conflict)';
-                                } else {
-                                    $runEng = trim((string) ($task->engine ?? ''));
-                                    echo $runEng === ''
-                                        ? 'Run'      // engine not recorded — do not name a vendor
-                                        : 'Run with ' . htmlspecialchars(\app\EngineRegistry::label($runEng));
-                                }
+                                /* A project builds on ITS agent — the task's named one, else the
+                                   app's default (as the app last reported it): "Run with zai", never
+                                   a vendor the project may not even use. Workbench::view sets it. */
+                                echo $task->status === 'conflict' ? 'Retry (resolve conflict)' : htmlspecialchars($runAgentLabel ?? 'Run');
                                 ?>
                             </button>
                         <?php endif; ?>
@@ -1003,14 +999,14 @@ async function runTask(id, btnEl) {
             tkAlert('Error: ' + data.message, {type: 'error'});
             if (btn) {
                 btn.disabled = false;
-                btn.innerHTML = '<i class="bi bi-play-fill"></i> Run with Claude';
+                btn.innerHTML = '<i class="bi bi-play-fill"></i> ' + (btn.dataset.label || 'Run');
             }
         }
     } catch (e) {
         tkAlert('Error: ' + e.message, {type: 'error'});
         if (btn) {
             btn.disabled = false;
-            btn.innerHTML = '<i class="bi bi-play-fill"></i> Run with Claude';
+            btn.innerHTML = '<i class="bi bi-play-fill"></i> ' + (btn.dataset.label || 'Run');
         }
     }
 }

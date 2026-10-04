@@ -49,8 +49,18 @@
                         <!-- Description -->
                         <div class="mb-4">
                             <label for="description" class="form-label">What should it do?</label>
-                            <textarea class="form-control" id="description" name="description" rows="8"><?= htmlspecialchars($brief['goal']) ?></textarea>
-                            <div class="form-text">This is what the agent reads. Plain words are fine.</div>
+                            <?php /* Markdown, edited as markdown: a planner's task is a structured document
+                                     (headings, lists, code) and a bare textarea invited breaking it. EasyMDE
+                                     keeps the text exactly as typed and shows a rendered preview beside it;
+                                     the textarea underneath is what the form posts, so nothing changes in
+                                     how it is saved or read. A task that already ran keeps its record; the
+                                     note says so, since the agent read the old words. */ ?>
+                            <?php $ranAlready = !in_array((string) $task->status, ['pending', 'queued', 'conflict'], true); ?>
+                            <?php if ($ranAlready): ?>
+                            <div class="alert alert-warning py-2 small mb-2"><i class="bi bi-info-circle me-1"></i>This task has already run (<?= htmlspecialchars((string) $task->status) ?>): the agent read the words as they were. Edit for the record, or for a re-run.</div>
+                            <?php endif; ?>
+                            <textarea class="form-control" id="description" name="description" rows="14"><?= htmlspecialchars($brief['goal']) ?></textarea>
+                            <div class="form-text">This is what the agent reads — Markdown. Headings, lists and code blocks are kept as you write them; <kbd>Ctrl</kbd>+<kbd>P</kbd> toggles a preview, the eye icon too. Add what you need the agent to do — e.g. "Provide screenshots as you go in validation" — anywhere it reads naturally.</div>
                         </div>
 
                         <?php
@@ -119,7 +129,23 @@
         </div>
     </div>
 </div>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/easymde@2.20.0/dist/easymde.min.css">
+<script src="https://cdn.jsdelivr.net/npm/easymde@2.20.0/dist/easymde.min.js"></script>
 <script>
+/* The description as a Markdown editor (EasyMDE over the real textarea, which is what posts).
+   No autosave, no spellcheck rewriting, no HTML rendering of raw input beyond the preview. */
+(function () {
+  var ta = document.getElementById('description');
+  if (!ta || typeof EasyMDE === 'undefined') return;   // the CDN unreachable: the plain textarea still works
+  var mde = new EasyMDE({
+    element: ta, spellChecker: false, autosave: {enabled: false}, status: ['lines', 'words'],
+    minHeight: '320px', lineWrapping: true, forceSync: true,
+    toolbar: ['bold', 'italic', 'heading-2', 'heading-3', '|', 'unordered-list', 'ordered-list', 'code', 'quote', '|', 'link', '|', 'preview', 'side-by-side', 'fullscreen', '|', 'guide'],
+    renderingConfig: {singleLineBreaks: false, codeSyntaxHighlighting: false},
+  });
+  // Before the form posts, the textarea carries exactly the editor's text (forceSync does, this is belt and braces).
+  ta.form && ta.form.addEventListener('submit', function () { ta.value = mde.value(); });
+})();
 /* Counted with the save (app\ToolUse): were the extras even opened? */
 (function () {
   var more = document.getElementById('wbMore'), flag = document.getElementById('more_opened');
