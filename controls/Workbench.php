@@ -1108,9 +1108,13 @@ class Workbench extends BuildControl {
             $why = $check['roots']
                 ? implode('; ', $check['roots'])
                 : 'no subtask is ready and none is running';
-            Flight::jsonError('This plan cannot start: ' . $why
-                . '. Reset or re-run those subtasks first — a subtask left in "awaiting" '
-                . 'is never picked up by a build.', 409);
+            // Say what to do about the state the blockers are actually in.
+            $all  = implode(' ', $check['roots']);
+            $todo = [];
+            if (preg_match('/^#\d+ (failed|conflict)\b/m', implode("\n", $check['roots']))) $todo[] = 'open each failed task and press Retry (the build restarts with it; one that ran out of time gets 60 minutes)';
+            if (str_contains($all, ' awaiting')) $todo[] = 'a task left in "awaiting" is never picked up by a build — answer it in its console, or stop its session and retry it';
+            Flight::jsonError('This plan cannot start: ' . $why . '.'
+                . ($todo ? ' To move it: ' . implode('; ', $todo) . '.' : ''), 409);
             return;
         }
 
@@ -2120,9 +2124,26 @@ class Workbench extends BuildControl {
             return;
         }
 
+        if ($this->refusePlanSubtask($task)) return;
+
         // A project in its own container builds there (runInContainer), never on core.
         if ($ct = $this->tenantInst()) { $this->runInContainer($task, $ct); return; }
         Flight::jsonError('This project is not running in its own container — tasks build only in a project\'s container.', 409);
+    }
+
+    /**
+     * A PLAN SUBTASK IS RUN BY ITS PLAN'S BUILD, and by nothing else. The build launches it in
+     * dependency order on its own run (plan-<p>-task-<n>), collects the result and merges it. Run
+     * here started a SECOND, board run (board-<n>) of the same task: on holistica the board run
+     * finished and committed 1,400 lines that nothing collected, while the build looked for its
+     * own run's result, found none and marked the task failed. True = refused (answered).
+     */
+    private function refusePlanSubtask($task): bool {
+        if (empty($task->parentTaskId)) return false;
+        Flight::jsonError('This task is part of a plan, and the plan\'s build runs it — in order, and merging it when it is done. '
+            . ($task->status === 'pending' ? 'Press Build on the plan (if it is already building, this task starts when its turn comes).'
+                                            : 'Use Retry on this task: it puts the task back in the plan\'s build.'), 409);
+        return true;
     }
 
     /**
@@ -2137,6 +2158,7 @@ class Workbench extends BuildControl {
         if (!$this->access->canRun($this->member->id, $task)) { Flight::jsonError('Access denied', 403); return; }
         if (empty($task->parentTaskId) && !empty($task->planStatus)) { Flight::jsonError('This is a plan, not a task — build it from the plan view.', 409); return; }
         if (in_array($task->status, ['running', 'queued'], true)) { Flight::jsonError('The task is already running.', 409); return; }
+        if ($this->refusePlanSubtask($task)) return;
         if (!($ct = $this->tenantInst())) { Flight::jsonError('This project is not running in its own container — tasks build only in a project\'s container.', 409); return; }
         // Again, from the app as it is now: runInContainer discards the previous attempt's branch.
         $this->runInContainer($task, $ct);

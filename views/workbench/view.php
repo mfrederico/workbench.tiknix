@@ -121,6 +121,9 @@ $baseDomain = $baseUrl === '' ? '' : preg_replace('#^https?://#', '', rtrim($bas
                            simply try again. */
                         $runnable = ['pending', 'failed', 'queued'];
                         if (empty($task->parentTaskId)) $runnable[] = 'conflict';
+                        // A plan subtask has no Run of its own: its plan's build runs it (and a
+                        // failed one has Retry, below). Workbench::refusePlanSubtask says why.
+                        $isPlanSubtask = !empty($task->parentTaskId);
 
                         // A PLAN PARENT is never runnable as a task — it is a header, and
                         // its subtasks carry the work. Offering Run here starts an agent
@@ -130,7 +133,10 @@ $baseDomain = $baseUrl === '' ? '' : preg_replace('#^https?://#', '', rtrim($bas
                         // agree rather than one inviting what the other rejects.
                         $isPlanParent = empty($task->parentTaskId) && !empty($task->planStatus);
                         ?>
-                        <?php if ($canRun && !$isPlanParent && in_array($task->status, $runnable, true)): ?>
+                        <?php if ($isPlanSubtask && in_array($task->status, ['pending', 'queued'], true)): ?>
+                            <a class="btn btn-outline-secondary" href="/workbench/view?id=<?= (int) $task->parentTaskId ?>" title="A plan's tasks are run by its build, in order, and merged when done"><i class="bi bi-diagram-3"></i> Runs with its plan &mdash; open the plan</a>
+                        <?php endif; ?>
+                        <?php if ($canRun && !$isPlanParent && !$isPlanSubtask && in_array($task->status, $runnable, true)): ?>
                             <button class="btn btn-success" onclick="runTask(<?= $task->id ?>)" data-label="<?= htmlspecialchars($runAgentLabel ?? 'Run') ?>">
                                 <i class="bi bi-play-fill"></i>
                                 <?php
@@ -146,7 +152,7 @@ $baseDomain = $baseUrl === '' ? '' : preg_replace('#^https?://#', '', rtrim($bas
                             </button>
                         <?php endif; ?>
 
-                        <?php if ($canRun && $task->status === 'completed'): ?>
+                        <?php if ($canRun && !$isPlanSubtask && $task->status === 'completed'): ?>
                             <button class="btn btn-outline-success" onclick="rerunTask(<?= $task->id ?>)">
                                 <i class="bi bi-arrow-repeat"></i> Re-run
                             </button>
