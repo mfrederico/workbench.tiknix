@@ -197,6 +197,14 @@
                                     moment to say "no, not like that". Small tasks also build side by side and are
                                     each checked on their own, so one wrong turn doesn't sink the whole thing.
                                 </span>
+                                <span class="d-block mt-2 wb-if-plan">
+                                    <label for="planning_depth" class="form-label small mb-1">How deep should the planning go?</label>
+                                    <select class="form-select form-select-sm" id="planning_depth" name="planning_depth" style="max-width:34rem">
+                                        <option value="flagged" selected>Deepen what needs it — tasks the planner finds are really several get split, then the order is re-checked (recommended)</option>
+                                        <option value="always">Always go deeper — every task is re-examined and the order re-checked (about three times the planning time)</option>
+                                        <option value="off">One pass — the first plan, as written (fastest)</option>
+                                    </select>
+                                </span>
                                 <span class="form-text d-block mb-0 wb-if-task">
                                     Off: this goes to one agent as a single task, no plan. Good for a quick,
                                     obvious change (fix a typo, change a colour). For anything with more than

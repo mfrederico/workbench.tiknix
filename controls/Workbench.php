@@ -600,6 +600,16 @@ class Workbench extends BuildControl {
         }
     }
 
+    /**
+     * The planning depth chosen on the create form (PlanRunner::DEEPEN_MODES). Absent — a
+     * continue-phase, a re-run — is the default, "flagged": deepen only what the planner marks
+     * complex. Anything else posted is refused by PlanRunner::deepen, not coerced.
+     */
+    private function planningDepth(): string {
+        $d = trim((string) $this->getParam('planning_depth', ''));
+        return $d === '' ? 'flagged' : $d;
+    }
+
     /** Did the member leave "Plan it first" ticked on the create form? */
     private function wantsPlan(): bool {
         return in_array((string) $this->getParam('plan', ''), ['1', 'on', 'true', 'yes'], true);
@@ -729,6 +739,7 @@ class Workbench extends BuildControl {
         try {
             $runner = new PlanRunner($slug, $instanceDir, (int) $this->member->id, (int) $this->member->level, $runEngine);
             if ($tenant) $runner->useAgent($agent);
+            $runner->deepen($this->planningDepth());
             $runner->start($goal, [], $autoBuild, $promptId);
         } catch (\Throwable $e) {
             $this->flash('error', 'Could not start the planner: ' . $e->getMessage());
@@ -888,6 +899,7 @@ class Workbench extends BuildControl {
                 (int)$this->member->level, $runEngine
             );
             if ($tenant) $runner->useAgent($agent);
+            $runner->deepen($this->planningDepth());
             // $promptId travels with it so ingest can link the plan back to this goal.
             $runner->start($goal, [], $autoBuild, $promptId);
         } catch (\Throwable $e) {

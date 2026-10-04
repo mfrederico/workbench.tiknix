@@ -482,6 +482,9 @@
                                             <?php if (($task->source ?? '') === 'detected_error'): ?>
                                                 <span class="badge bg-danger-subtle text-danger-emphasis border border-danger-subtle ms-1" title="Auto-created from a detected runtime error"><i class="bi bi-fire"></i> detected</span>
                                             <?php endif; ?>
+                                            <?php if (!empty($task->needsPlanning)): ?>
+                                                <span class="badge bg-warning-subtle text-warning-emphasis border border-warning-subtle ms-1" title="The planner marked this as more than one task<?= !empty($task->planningNote) ? ': ' . htmlspecialchars((string) $task->planningNote) : '' ?>. Plan it more deeply before running it."><i class="bi bi-diagram-3"></i> needs its own plan</span>
+                                            <?php endif; ?>
                                             <?php if ($task->teamId): ?>
                                                 <br><small class="text-muted"><i class="bi bi-people"></i> Team task</small>
                                             <?php endif; ?>

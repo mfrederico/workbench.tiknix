@@ -282,6 +282,23 @@ $baseDomain = $baseUrl === '' ? '' : preg_replace('#^https?://#', '', rtrim($bas
                  per-instance and the next decompose overwrites them. -->
             <?php if (empty($task->parentTaskId) && !empty($task->planGoal)): ?>
                 <?php $__briefFile = '.aibuilder/plans/' . (int)$task->id . '/plan-request.md'; ?>
+                <?php /* How deep the planning went (PlanRunner::refine → PlanIngestor): shown so a plan
+                         that was split further, or could not be, says so. */
+                $__pl = !empty($task->planning) ? json_decode((string) $task->planning, true) : null; ?>
+                <?php if (is_array($__pl)): ?>
+                <div class="alert <?= ($__pl['error'] ?? '') !== '' ? 'alert-warning' : 'alert-light border' ?> small py-2 mb-3">
+                    <i class="bi bi-layers me-1"></i>
+                    <strong>Planned in <?= (int) ($__pl['passes'] ?? 1) ?> pass<?= (int) ($__pl['passes'] ?? 1) === 1 ? '' : 'es' ?>.</strong>
+                    <?php if ((int) ($__pl['passes'] ?? 1) > 1): ?>
+                        <?= $__pl['mode'] === 'always' ? 'Every task was re-examined' : count((array) ($__pl['flagged'] ?? [])) . ' task(s) were marked complex and planned more deeply' ?>:
+                        <?= (int) ($__pl['before'] ?? 0) ?> task(s) became <?= (int) ($__pl['after'] ?? 0) ?>, then dependencies and priorities were re-checked.
+                    <?php elseif (($__pl['mode'] ?? '') === 'flagged'): ?>
+                        The planner marked no task as complex, so the first plan stands.
+                    <?php endif; ?>
+                    <?php if (($__pl['error'] ?? '') !== ''): ?><div class="mt-1"><strong>Deeper planning did not finish:</strong> <?= htmlspecialchars((string) $__pl['error']) ?>. This is the plan as it stood before that pass.</div><?php endif; ?>
+                    <?php if (!empty($__pl['still_complex'])): ?><div class="mt-1"><?= count($__pl['still_complex']) ?> task(s) are still marked as needing their own plan.</div><?php endif; ?>
+                </div>
+                <?php endif; ?>
                 <div class="card mb-4">
                     <div class="card-header d-flex align-items-center justify-content-between">
                         <h5 class="mb-0"><i class="bi bi-chat-left-quote"></i> Decomposed from this prompt</h5>
@@ -399,6 +416,9 @@ $baseDomain = $baseUrl === '' ? '' : preg_replace('#^https?://#', '', rtrim($bas
             <?php /* The Edit on the description goes to the edit page (one editor, where people
                      expect it; it returns here on save and cancel), offered while the task has
                      not run — the same rule the edit page and the conversation use. */ ?>
+            <?php if (!empty($task->needsPlanning)): ?>
+            <div class="alert alert-warning small py-2 mb-3"><i class="bi bi-diagram-3 me-1"></i><strong>The planner marked this as more than one task.</strong> <?= htmlspecialchars((string) ($task->planningNote ?? '')) ?> Running it as it is sends one agent at all of it; plan it as a goal of its own for a better result.</div>
+            <?php endif; ?>
             <?php $descEditable = !empty($canEdit) && in_array((string) $task->status, ['pending', 'queued', 'conflict'], true); ?>
             <?php if (!empty($task->description) || $descEditable): ?>
                 <div class="card mb-4" id="descCard">
