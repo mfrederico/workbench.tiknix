@@ -40,6 +40,22 @@
             <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
         </div>
     <?php endforeach; ?>
+    <?php if (!empty($containerSetup)): $cs = $containerSetup; ?>
+    <?php /* The project's container is not up yet (Workbench::index): the one thing on the board. */ ?>
+    <div class="alert <?= $cs['state'] === 'failed' ? 'alert-danger' : 'alert-info' ?> d-flex align-items-start gap-3" id="wbContainerSetup" data-state="<?= htmlspecialchars($cs['state']) ?>">
+        <?php if ($cs['state'] !== 'failed'): ?><span class="spinner-border spinner-border-sm mt-1" role="status" aria-hidden="true"></span><?php endif; ?>
+        <div class="flex-grow-1">
+            <?php if ($cs['state'] === 'failed'): ?>
+                <strong>Setting up this project's container stopped:</strong> <?= htmlspecialchars($cs['error'] ?: 'see the project log') ?>.
+                <a href="<?= htmlspecialchars($cs['core']) ?>/helpdesk">Ask support</a>
+            <?php else: ?>
+                <strong>Setting up this project's container</strong> &mdash; about two minutes. The board opens by itself when it answers.
+                <?php if ($cs['last'] !== ''): ?><div class="small text-body-secondary mt-1 font-monospace"><?= htmlspecialchars(mb_substr($cs['last'], 0, 160)) ?></div><?php endif; ?>
+            <?php endif; ?>
+        </div>
+    </div>
+    <?php if ($cs['state'] !== 'failed'): ?><script>setTimeout(function () { location.reload(); }, 10000);</script><?php endif; ?>
+    </div><?php return; endif; ?>
     <?php if (!empty($handoff)): $hp = $handoff['progress']; ?>
     <?php /* The Get-started plan this project came from (Workbench::handoffState): where it stands. */ ?>
     <div class="alert <?= $hp === 'failed' ? 'alert-danger' : 'alert-info' ?> d-flex align-items-start gap-3" id="wbHandoff" data-progress="<?= htmlspecialchars($hp) ?>">

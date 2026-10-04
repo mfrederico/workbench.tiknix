@@ -270,6 +270,24 @@ class Workbench extends BuildControl {
         // WHAT is being planned — so "Stop" is a decision about a named thing, not about "your goal".
         $this->viewData['decomposingGoal'] = $this->viewData['decomposing'] ? $this->decomposingGoal() : null;
 
+        // A project whose container is still being set up (a tenant row with no address yet): the
+        // board says so and refreshes itself until the container answers — nothing on it could run.
+        // Model_Instance::setupStateFor reads the workspace's provision.log: '' (no record), 'pending',
+        // 'failed' (an ERROR line), 'active' (container + domain). Core's class, through core's lib.
+        $this->viewData['containerSetup'] = null;
+        if ($this->selected) {
+            $meta = $this->access->instanceMeta((int) $this->selected['id']);
+            if ($meta && (string) ($meta->ctKind ?? '') === 'tenant' && trim((string) ($meta->ctIp ?? '')) === '') {
+                $state = \Model_Instance::setupStateFor($meta);
+                $log = \Model_Instance::workspaceFrom((string) $this->selected['slug']) . '/.aibuilder/provision.log';
+                $lines = is_file($log) ? array_values(array_filter(array_map('trim', file($log)))) : [];
+                $error = '';
+                foreach ($lines as $l) if (str_starts_with($l, 'ERROR ')) $error = substr($l, 6);
+                $this->viewData['containerSetup'] = ['state' => $state, 'last' => $lines ? end($lines) : '', 'error' => $error,
+                    'core' => rtrim((string) Flight::get('sidecar.core_url'), '/')];
+            }
+        }
+
         $this->render('workbench/index', $this->viewData);
     }
 
