@@ -125,6 +125,19 @@
                         <div class="text-body-secondary small text-uppercase" style="letter-spacing:.06em">Working on</div>
                         <div class="fw-semibold fs-6 mt-1"><?= htmlspecialchars(($selected['name'] ?? $selected['slug']) ?? '') ?></div>
                         <div class="text-body-secondary small"><code><?= htmlspecialchars(($selected['slug']) ?? '') ?></code></div>
+                        <?php /* What the app last reported about itself (core's Projectreport): when, agent,
+                                 runtime, use. Nothing when it has not reported yet — not invented. */ ?>
+                        <?php if (!empty($projectStatus)): $ps = $projectStatus; ?>
+                        <div class="mt-3 small" id="wbProjectStatus">
+                            <div class="d-flex justify-content-between"><span class="text-body-secondary">Reported</span><span class="<?= $ps['age'] > 5400 ? 'text-warning' : '' ?>" title="<?= htmlspecialchars($ps['at']) ?>"><?= htmlspecialchars($ps['ago']) ?></span></div>
+                            <div class="d-flex justify-content-between"><span class="text-body-secondary">Agent</span><span><?= !empty($ps['agent_ready']) ? '<span class="text-success">' . htmlspecialchars(implode(', ', $ps['providers'] ?: ['ready'])) . '</span>' : '<span class="text-danger">none</span>' ?></span></div>
+                            <div class="d-flex justify-content-between"><span class="text-body-secondary">Runtime</span><code><?= htmlspecialchars($ps['runtime'] ?: '?') ?></code></div>
+                            <div class="d-flex justify-content-between"><span class="text-body-secondary">Memory</span><span><?= $ps['mem_mb'] === null ? '—' : htmlspecialchars((string) $ps['mem_mb']) . ' / ' . (int) $ps['mem_total_mb'] . ' MB' ?></span></div>
+                            <div class="d-flex justify-content-between"><span class="text-body-secondary">Disk</span><span title="of which the agent's binary and state: <?= htmlspecialchars((string) ($ps['disk_agent_mb'] ?? '?')) ?> MB"><?= $ps['disk_mb'] === null ? '—' : htmlspecialchars((string) $ps['disk_mb']) . ' MB' ?></span></div>
+                            <div class="d-flex justify-content-between"><span class="text-body-secondary">Last hour</span><span><?= $ps['requests_h'] === null ? '—' : (int) $ps['requests_h'] . ' req' ?><?= !empty($ps['errors_h']) ? ', <span class="text-danger">' . (int) $ps['errors_h'] . ' errors</span>' : '' ?></span></div>
+                            <?php if (!empty($ps['uncommitted'])): ?><div class="text-warning mt-1"><i class="bi bi-exclamation-triangle"></i> <?= (int) $ps['uncommitted'] ?> uncommitted file(s) in the live tree</div><?php endif; ?>
+                        </div>
+                        <?php endif; ?>
                     <?php elseif (!empty($projectUnavailable)): ?>
                         <div class="text-body-secondary small">
                             Your selected project can't be built here — the control plane

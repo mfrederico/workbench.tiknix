@@ -279,8 +279,15 @@ class Workbench extends BuildControl {
         // lib. A stalled setup is removed by core's provision sweep within the hour, with a Note
         // to the owner; until then the board shows where it stopped.
         $this->viewData['containerSetup'] = null;
+        $this->viewData['projectStatus'] = null;
         if ($this->selected) {
             $meta = $this->access->instanceMeta((int) $this->selected['id']);
+            // The app's own last report (core's Projectreport), for the project card.
+            if ($meta && !empty($meta->lastReportedAt) && ($h = json_decode((string) ($meta->reportJson ?? ''), true)) && is_array($h)) {
+                $age = time() - strtotime((string) $meta->lastReportedAt);
+                $this->viewData['projectStatus'] = $h + ['at' => (string) $meta->lastReportedAt, 'age' => $age,
+                    'ago' => $age < 90 ? 'just now' : ($age < 5400 ? round($age / 60) . ' min ago' : ($age < 172800 ? round($age / 3600) . ' h ago' : round($age / 86400) . ' d ago'))];
+            }
             if ($meta && (string) ($meta->ctKind ?? '') === 'tenant' && trim((string) ($meta->ctDomain ?? '')) === '') {
                 $rep = \Model_Instance::setupReport($meta);
                 $this->viewData['containerSetup'] = ['state' => $rep['state'], 'last' => $rep['last'], 'error' => $rep['error'],
