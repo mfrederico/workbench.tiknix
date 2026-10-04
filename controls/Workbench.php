@@ -1563,6 +1563,7 @@ class Workbench extends BuildControl {
             $runAgent = (string) ($rj['default_agent'] ?? '');
         }
         $this->viewData['runAgentLabel'] = $runAgent !== '' ? 'Run with ' . $runAgent : 'Run';
+        $this->viewData['runAgentName'] = $runAgent;   // '' = unknown: the page says "Agent", never a vendor
         $this->viewData['canRun'] = $this->access->canRun($this->member->id, $task);
         $this->viewData['canDelete'] = $this->access->canDelete($this->member->id, $task);
         $this->viewData['taskTypes'] = $this->getTaskTypes();

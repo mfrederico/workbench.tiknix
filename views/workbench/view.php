@@ -332,7 +332,7 @@ $baseDomain = $baseUrl === '' ? '' : preg_replace('#^https?://#', '', rtrim($bas
                 </div>
             <?php endif; ?>
 
-            <!-- Dependencies — what Claude is waiting on before it can start this task -->
+            <!-- Dependencies — what the agent is waiting on before it can start this task -->
             <?php if (!empty($deps) || !empty($blocks)): ?>
                 <?php
                 $depBadge = function($s) {
@@ -446,7 +446,7 @@ $baseDomain = $baseUrl === '' ? '' : preg_replace('#^https?://#', '', rtrim($bas
                         <div class="rounded-circle bg-primary text-white d-flex align-items-center justify-content-center me-2" style="width: 32px; height: 32px;">
                             <i class="bi bi-robot"></i>
                         </div>
-                        <h5 class="mb-0"><?= htmlspecialchars(trim((string)($task->engine ?? '')) !== '' ? \app\EngineRegistry::label((string)$task->engine) : 'Agent') ?>'s Last Message</h5>
+                        <h5 class="mb-0"><?= htmlspecialchars(($runAgentName ?? '') !== '' ? $runAgentName : 'Agent') ?>'s Last Message</h5>
                         <small class="text-muted ms-auto"><?= date('M j, g:i A', strtotime($lastClaudeMessage['created_at'])) ?></small>
                     </div>
                     <div class="card-body">
@@ -536,13 +536,13 @@ $baseDomain = $baseUrl === '' ? '' : preg_replace('#^https?://#', '', rtrim($bas
                         <small class="text-muted" id="lastUpdate"></small>
                     </div>
                     <div class="card-body">
-                        <p class="mb-2"><strong>Claude paused and handed control back to you.</strong> It has either finished the work and wants your review, or it asked a question. Here's what to do:</p>
+                        <p class="mb-2"><strong><?= htmlspecialchars(($runAgentName ?? '') !== '' ? $runAgentName : 'The agent') ?> paused and handed control back to you.</strong> It has either finished the work and wants your review, or it asked a question. Here's what to do:</p>
                         <ol class="small text-muted mb-3">
-                            <li>Read <strong>Claude's message</strong> (the card just above) for what it did or is asking.</li>
+                            <li>Read <strong>its message</strong> (the card just above) for what it did or is asking.</li>
                             <?php if (!empty($reviewChanges)): ?>
                                 <li>Review the <strong>changes below</strong>, then use <strong>Approve &amp; Merge</strong> (top of the page) to accept them into <code><?= htmlspecialchars(($reviewChanges['base']) ?? '') ?></code>.</li>
                             <?php endif; ?>
-                            <li>Or type an answer / follow-up instructions and <strong>Send</strong> to keep Claude going.</li>
+                            <li>Or type an answer / follow-up instructions and <strong>Send</strong> to keep it going.</li>
                         </ol>
 
                         <?php if (!empty($reviewChanges)): ?>
@@ -598,20 +598,14 @@ $baseDomain = $baseUrl === '' ? '' : preg_replace('#^https?://#', '', rtrim($bas
                         <h5 class="mb-0">
                             <span class="spinner-border spinner-border-sm me-2" id="progressSpinner"></span>
                             <?php
-                            /* Name the engine and model actually running this task. "Claude is
-                               Working" was written when claude was the only option; a task can
-                               now be moved between providers per task, and this page is where
-                               someone checks WHICH one is doing the work — reading the wrong
-                               vendor here is how you debug the wrong provider for ten minutes. */
-                            $runEngine = trim((string) ($task->engine ?? ''));
-                            $runModel  = trim((string) ($task->model ?? ''));
-                            if ($runEngine === '') {
-                                echo 'Agent is working';        // engine not recorded — do not guess a vendor
-                            } else {
-                                echo htmlspecialchars(\app\EngineRegistry::label($runEngine));
-                                if ($runModel !== '') echo ' <small class="text-muted">(' . htmlspecialchars($runModel) . ')</small>';
-                                echo ' is working';
-                            }
+                            /* Name the AGENT doing the work — the task's own, else the app's
+                               default as it last reported it (Workbench::view) — with the model
+                               when the task records one. Never an engine's vendor name: a project
+                               on zai read "Claude Code is working". Unknown = "Agent". */
+                            $runModel = trim((string) ($task->model ?? ''));
+                            echo htmlspecialchars(($runAgentName ?? '') !== '' ? $runAgentName : 'Agent');
+                            if ($runModel !== '') echo ' <small class="text-muted">(' . htmlspecialchars($runModel) . ')</small>';
+                            echo ' is working';
                             ?>
                         </h5>
                         <small class="text-muted" id="lastUpdate">Updating...</small>
@@ -674,7 +668,7 @@ $baseDomain = $baseUrl === '' ? '' : preg_replace('#^https?://#', '', rtrim($bas
                             <?php foreach (array_reverse($comments) as $comment): ?>
                                 <?php
                                 $isFromClaude = !empty($comment['is_from_claude']);
-                                $authorName = $isFromClaude ? 'Claude' : trim(($comment['first_name'] ?? '') . ' ' . ($comment['last_name'] ?? ''));
+                                $authorName = $isFromClaude ? (($runAgentName ?? '') !== '' ? $runAgentName : 'Agent') : trim(($comment['first_name'] ?? '') . ' ' . ($comment['last_name'] ?? ''));
                                 if (empty($authorName)) $authorName = $comment['username'] ?? $comment['email'] ?? 'Unknown';
                                 ?>
                                 <div class="d-flex mb-3 <?= $isFromClaude ? 'flex-row-reverse' : '' ?>" data-comment-id="<?= $comment['id'] ?>">
@@ -1032,7 +1026,7 @@ async function runTask(id, btnEl) {
 
 async function rerunTask(id) {
     const btn = event.target;   // window.event is gone after the await below
-    if (!await tkConfirm('Re-run this task with Claude?', {okText: 'Re-run'})) return;
+    if (!await tkConfirm('Re-run this task?', {okText: 'Re-run'})) return;
 
     btn.disabled = true;
     btn.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Starting...';
@@ -1756,7 +1750,7 @@ async function declineTask(id) {
                            <?= empty($task->tmuxSession) ? 'disabled' : '' ?>>
                     <label class="form-check-label" for="approveStopSession">
                         <i class="bi bi-terminal me-1"></i>
-                        Stop Claude session
+                        Stop the agent's session
                         <?= empty($task->tmuxSession) ? '<span class="text-muted">(not running)</span>' : '' ?>
                     </label>
                 </div>
