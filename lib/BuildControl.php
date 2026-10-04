@@ -83,7 +83,15 @@ abstract class BuildControl extends Control {
         $id = (int) $meta->id;
         $okAt = (int) ($_SESSION['workbench_agent_ok'][$id] ?? 0);
         if ($okAt > 0 && time() - $okAt < self::AGENT_OK_SECONDS) return null;
-        $problem = \app\TenantBuilder::agentProblem($meta);
+        // First source: what the app itself reported (core's Projectreport — hourly, and at once
+        // when a provider changes), when fresh. Only then the ssh question.
+        $fresh = \app\Projectreport::freshReadiness($meta);
+        if ($fresh !== null) {
+            if ($fresh['agent_ready']) { $_SESSION['workbench_agent_ok'][$id] = time(); return null; }
+            $problem = $fresh['agent_problem'] !== '' ? $fresh['agent_problem'] : 'the app reported no agent';
+        } else {
+            $problem = \app\TenantBuilder::agentProblem($meta);
+        }
         if ($problem === '') {
             $_SESSION['workbench_agent_ok'][$id] = time();
             return null;
