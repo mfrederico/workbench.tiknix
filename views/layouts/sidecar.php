@@ -30,7 +30,9 @@ $__facet = $__onBuilder ? 'builder' : (strpos($__p, '/workbench/prompts') === 0 
   <?php /* Below sm (phones) every item is its icon alone — labels stay for screen readers
            and as a tooltip — so the bar keeps one row instead of spilling off the side. */ ?>
   <span class="navbar-brand fw-semibold d-flex align-items-center gap-1 me-2" style="font-size:.95rem"><i class="bi bi-hammer"></i><span class="d-none d-sm-inline"> Build</span></span>
-  <ul class="nav nav-pills gap-1 flex-nowrap">
+  <?php /* No agent on the project: there is nothing to build with, so the three views are not
+           offered at all — the gate below is the page (BuildControl::agentGate). */ ?>
+  <ul class="nav nav-pills gap-1 flex-nowrap"<?= !empty($agentGate) ? ' style="display:none"' : '' ?>>
     <li class="nav-item"><a class="nav-link py-1 px-2 <?= $__facet === 'board' ? 'active' : '' ?>" href="/workbench" title="Task Board"><i class="bi bi-kanban me-sm-1"></i><span class="d-none d-sm-inline">Task Board</span><span class="visually-hidden d-sm-none">Task Board</span></a></li>
     <li class="nav-item"><a class="nav-link py-1 px-2 <?= $__onBuilder ? 'active' : '' ?>" href="/aibuilder" title="Terminal"><i class="bi bi-terminal me-sm-1"></i><span class="d-none d-sm-inline">Terminal</span><span class="visually-hidden d-sm-none">Terminal</span></a></li>
     <?php /* The prompt log belongs beside the two surfaces that produce it — the board's
@@ -86,7 +88,34 @@ if ($__mid > 0 && class_exists('\app\AgentLimit')) {
     </div>
   </div>
 <?php endif; ?>
+<?php if (!empty($agentGate)): $__g = $agentGate; ?>
+<?php /* THE GATE. The project has no agent, so nothing on any Builder page could run: no board,
+         no terminal, no prompts — this card instead, on every surface, until the app's AI agents
+         page has an agent. The page body is NOT rendered (a form you cannot submit is a trap). */ ?>
+<div class="container-fluid py-4" id="wbAgentGate">
+  <?php /* A refused write (requireAgent) flashes its reason; the page body that normally shows
+           flashes is not rendered here, so they are shown on the gate itself. */
+  $__fl = $_SESSION['flash'] ?? []; unset($_SESSION['flash']);
+  foreach ($__fl as $__m): ?>
+  <div class="alert alert-<?= ($__m['type'] ?? '') === 'error' ? 'danger' : htmlspecialchars((string) ($__m['type'] ?? 'info')) ?> alert-dismissible fade show"><?= htmlspecialchars((string) ($__m['message'] ?? '')) ?><button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>
+  <?php endforeach; ?>
+  <div class="alert alert-warning border-warning border-3 d-flex align-items-start gap-3 py-3 mb-3" role="alert">
+    <i class="bi bi-person-gear fs-3 lh-1"></i>
+    <div>
+      <div class="fw-bold fs-5">Connect an AI agent to <?= htmlspecialchars($__g['name']) ?> before building anything.</div>
+      <div class="mt-1">The Builder runs <em>your project's own</em> agent, with a credential you set on the project's AI agents page. There is none yet, so the task board, the terminal and the prompt log are not available.</div>
+      <div class="mt-2 small"><code><?= htmlspecialchars($__g['problem']) ?></code></div>
+      <div class="mt-3 d-flex flex-wrap gap-2">
+        <a class="btn btn-warning" href="<?= htmlspecialchars($__g['url']) ?>" target="_blank" rel="noopener"><i class="bi bi-box-arrow-up-right me-1"></i>Open <?= htmlspecialchars($__g['name']) ?>'s AI agents page</a>
+        <a class="btn btn-outline-secondary" href="<?= htmlspecialchars($_SERVER['REQUEST_URI'] ?? '/workbench') ?>"><i class="bi bi-arrow-clockwise me-1"></i>I've connected one — check again</a>
+      </div>
+      <div class="small text-body-secondary mt-2">Connect a model there &mdash; sign in, or paste a token or an API key &mdash; or add a named agent with its own model. This page checks again each time it opens.</div>
+    </div>
+  </div>
+</div>
+<?php else: ?>
 <?= $ws_body ?? '' ?>
+<?php endif; ?>
 <script src="https://cdn.jsdelivr.net/npm/jquery@3.7.1/dist/jquery.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
 <script><?php /* modal alert/confirm/prompt: core owns it; this host cannot serve core's /js. A core on the

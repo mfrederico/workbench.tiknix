@@ -437,6 +437,7 @@ class Workbench extends BuildControl {
             Flight::redirect('/workbench/create');
             return;
         }
+        if (!$this->requireAgent()) return;
 
         // Validate required fields
         $title = trim($this->getParam('title', ''));
@@ -663,6 +664,7 @@ class Workbench extends BuildControl {
         $request = Flight::request();
         if ($request->method !== 'POST') { Flight::redirect('/workbench'); return; }
         if (!Flight::csrf()->validateRequest()) { $this->flash('error', 'Invalid CSRF token'); Flight::redirect('/workbench'); return; }
+        if (!$this->requireAgent()) return;
 
         $instance = $this->selected ? $this->access->instanceMeta((int) $this->selected['id']) : null;
         if (!$instance || !$instance->id || !$this->access->canAccessInstance((int)$this->member->id, (int)$instance->id)) {
@@ -778,6 +780,7 @@ class Workbench extends BuildControl {
             Flight::redirect('/workbench/create');
             return;
         }
+        if (!$this->requireAgent()) return;
 
         // Same rule as store(): the plan is decomposed for the SELECTED project, not for
         // whatever a posted field names. Both submit paths hang off the one form, so
@@ -1057,6 +1060,7 @@ class Workbench extends BuildControl {
     /** POST /workbench/planbuild — launch the worktree orchestrator for an approved plan. JSON. */
     public function planbuild($params = []) {
         if (!$this->planActionGuard()) return;
+        if (!$this->requireAgent(true)) return;
         $pi = $this->accessiblePlan($this->getParam('plan_id', 0));
         if (!$pi) { $this->noSuchPlan((int) $this->getParam('plan_id', 0)); return; }
         [$plan, $inst] = $pi;
@@ -1120,6 +1124,7 @@ class Workbench extends BuildControl {
      */
     public function taskretry($params = []) {
         if (!$this->planActionGuard()) return;
+        if (!$this->requireAgent(true)) return;
 
         $task = Bean::load('workbenchtask', (int)$this->getParam('task_id', 0));
         if (!$task->id || !$this->access->canRun((int)$this->member->id, $task)) { Flight::jsonError('No such task', 404); return; }
@@ -2028,6 +2033,7 @@ class Workbench extends BuildControl {
             Flight::jsonError('CSRF validation failed', 403);
             return;
         }
+        if (!$this->requireAgent(true)) return;
 
         $taskId = (int)$this->getParam('id');
         if (!$taskId) {
@@ -2071,6 +2077,7 @@ class Workbench extends BuildControl {
     public function rerun($params = []) {
         if (!$this->requireLogin()) return;
         if (Flight::request()->method !== 'POST' || !SimpleCsrf::validate()) { Flight::jsonError('CSRF validation failed', 403); return; }
+        if (!$this->requireAgent(true)) return;
         $task = Bean::load('workbenchtask', (int) $this->getParam('id'));
         if (!$task->id) { Flight::jsonError('Task not found', 404); return; }
         if (!$this->access->canRun($this->member->id, $task)) { Flight::jsonError('Access denied', 403); return; }
@@ -2795,6 +2802,7 @@ class Workbench extends BuildControl {
      */
     public function promptrerun($params = []) {
         if (!$this->planActionGuard()) return;   // login + POST + CSRF
+        if (!$this->requireAgent(true)) return;
 
         $promptId = (int) $this->getParam('prompt_id', 0);
         $p = $promptId > 0 ? \app\PromptLog::find($promptId, (int) $this->member->id) : null;

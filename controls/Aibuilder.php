@@ -189,6 +189,9 @@ class Aibuilder extends BuildControl {
         // the URL — a link carrying one is a second way to say which project, and a stale
         // one moved you without the UI ever showing it.
         if (!$this->requireProject()) return;
+        // No agent on the project: the layout shows the gate and nothing else, so no terminal
+        // token is minted and the container is not asked a second time.
+        if (!empty($this->viewData['agentGate'])) { $this->render('aibuilder/index', ['title' => 'Terminal']); return; }
         $selId = (int) $this->selected['id'];
 
         // Accessible instances (owned ∪ team-shared) from CORE via WorkbenchAccess, as

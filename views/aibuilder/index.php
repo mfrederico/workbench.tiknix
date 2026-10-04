@@ -151,7 +151,7 @@ foreach ($instances as $__i) { if (!empty($__i->isDefault)) { $hasDefault = true
 
             <?php if (!$ab_isDefault): ?>
             <p class="text-body-secondary small mt-2 mb-1">
-              The agent starts on its own, in this project's container, signed in as the project's own Claude account.
+              The agent starts on its own, in this project's container, signed in with the project's own model credential.
               Hold <kbd>Shift</kbd> and drag to select/copy; right-click to paste.
             </p>
             <button id="ab-test" class="btn btn-outline-secondary btn-sm" type="button" title="Copy a browser-test prompt for the agent (uses the playwright MCP)"><i class="bi bi-bug me-1"></i>Copy browser-test prompt</button>

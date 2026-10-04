@@ -58,7 +58,56 @@ abstract class BuildControl extends Control {
             // from this sidecar). Distinct from "nothing chosen": telling someone to
             // select a project they have already selected is its own small madness.
             'projectUnavailable' => !$this->selected && \app\Sidecar\Sso::project() !== null,
+            // Why the selected project cannot build, or null. The layout shows THIS instead of
+            // any page while it is set, and the write routes refuse with it (requireAgent).
+            'agentGate'  => $this->selected ? $this->agentGate() : null,
         ];
+    }
+
+    /** A ready answer is remembered this long; a not-ready answer is asked again every time. */
+    private const AGENT_OK_SECONDS = 600;
+
+    /**
+     * The selected project's builder gate: null when its app can run an agent, else
+     * {problem, url} — the app's own words (TenantBuilder::agentProblem, one ssh into the
+     * container) and the link to its AI agents page through core's sign-in.
+     *
+     * Only a published project is asked (one still setting up has nothing to ask; the board's
+     * setting-up notice covers it). A "ready" answer is kept in the session for a while so the
+     * board does not pay an ssh per click; a "not ready" answer is never kept — the moment the
+     * agent is set up, the next page must open.
+     */
+    protected function agentGate(): ?array {
+        $meta = $this->access->instanceMeta((int) $this->selected['id']);
+        if (!$meta || (string) ($meta->ctKind ?? '') !== 'tenant' || trim((string) ($meta->ctDomain ?? '')) === '') return null;
+        $id = (int) $meta->id;
+        $okAt = (int) ($_SESSION['workbench_agent_ok'][$id] ?? 0);
+        if ($okAt > 0 && time() - $okAt < self::AGENT_OK_SECONDS) return null;
+        $problem = \app\TenantBuilder::agentProblem($meta);
+        if ($problem === '') {
+            $_SESSION['workbench_agent_ok'][$id] = time();
+            return null;
+        }
+        unset($_SESSION['workbench_agent_ok'][$id]);
+        return [
+            'problem' => $problem,
+            'name'    => (string) ($meta->displayName ?: $meta->slug),
+            'url'     => rtrim((string) Flight::get('sidecar.core_url'), '/') . '/projects/open?to=' . rawurlencode('/agents'),
+        ];
+    }
+
+    /**
+     * Refuse a write while the project has no agent. The layout already shows nothing else,
+     * so this is for a request that did not come through a page: a stale tab, a script.
+     * JSON callers get a 409 with the reason; a form post is sent back to the board.
+     */
+    protected function requireAgent(bool $json = false): bool {
+        $gate = $this->viewData['agentGate'] ?? null;
+        if ($gate === null) return true;
+        $msg = ($gate['name'] ?? 'This project') . " has no agent yet, so nothing can be built: " . $gate['problem'];
+        if ($json) Flight::jsonError($msg, 409);
+        else { $this->flash('error', $msg); Flight::redirect('/workbench'); }
+        return false;
     }
 
     /**
@@ -199,7 +248,9 @@ abstract class BuildControl extends Control {
     protected function render($template, $data = [], $layout = true) {
         $data = array_merge($this->viewData, $data);
         if ($layout) {
-            Flight::render($template, $data, 'ws_body');
+            // Gated (no agent on the project): the layout shows the gate and no page body at
+            // all, so the body is not even built — its forms and scripts must not exist.
+            if (empty($data['agentGate'])) Flight::render($template, $data, 'ws_body');
             Flight::render('layouts/sidecar', $data);
         } else {
             Flight::render($template, $data);

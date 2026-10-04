@@ -25,15 +25,15 @@
                                 $__why = function (array $a) use ($__claude): string {
                                     if (empty($a['builder'])) return 'text only — cannot build';
                                     if (!empty($a['problems'])) return implode('; ', $a['problems']);
-                                    if (($a['endpoint'] ?? '') === '' && ($a['key_status'] ?? '') !== 'set' && $__claude === '') return 'Claude account not set up';
+                                    if (($a['endpoint'] ?? '') === '' && ($a['key_status'] ?? '') !== 'set' && $__claude === '') return 'default model not set up';
                                     return '';
                                 };
-                                $__where = fn(array $a) => ($a['endpoint'] ?? '') !== '' ? (parse_url($a['endpoint'], PHP_URL_HOST) ?: $a['endpoint']) : 'Claude account';
+                                $__where = fn(array $a) => ($a['endpoint'] ?? '') !== '' ? (parse_url($a['endpoint'], PHP_URL_HOST) ?: $a['endpoint']) : 'default model';
                             ?>
                             <select class="form-select" id="agent" name="agent">
-                                <?php $__dw = $__def ? $__why($__def) : ($__claude === '' ? 'Claude account not set up' : ''); ?>
+                                <?php $__dw = $__def ? $__why($__def) : ($__claude === '' ? 'default model not set up' : ''); ?>
                                 <option value="" <?= $__dw !== '' ? 'disabled' : ($builderAgent === '' ? 'selected' : '') ?>>
-                                    App default — <?= htmlspecialchars($__def ? $__def['name'] . ' (' . $__where($__def) . ')' : 'Claude account' . ($__claude !== '' ? ' (' . $__claude . ')' : '')) ?><?= $__dw !== '' ? ' — ' . htmlspecialchars($__dw) : '' ?>
+                                    App default — <?= htmlspecialchars($__def ? $__def['name'] . ' (' . $__where($__def) . ')' : 'default model' . ($__claude !== '' ? ' (' . $__claude . ')' : '')) ?><?= $__dw !== '' ? ' — ' . htmlspecialchars($__dw) : '' ?>
                                 </option>
                                 <?php foreach ($appAgents['agents'] as $__a): $__w = $__why($__a); ?>
                                     <option value="<?= htmlspecialchars($__a['name']) ?>" <?= $__w !== '' ? 'disabled' : '' ?> <?= $builderAgent === $__a['name'] ? 'selected' : '' ?>>
