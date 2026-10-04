@@ -1176,11 +1176,11 @@ class Workbench extends BuildControl {
         if (!$plan->id) { Flight::jsonError('Parent plan not found', 404); return; }
         $inst = $plan->instanceId ? $this->access->instanceMeta((int)$plan->instanceId) : null;
         if (!$inst || !$inst->id) { Flight::jsonError('This plan has no linked instance.', 409); return; }
-        if (PlanOrchestrator::running((int)$plan->id, (string)$inst->slug)) {
-            Flight::jsonError('This plan is already building — the task will be picked up in that run.', 409);
-            return;
-        }
+        $building = PlanOrchestrator::running((int)$plan->id, (string)$inst->slug);
 
+        // Ran out of time last attempt: the retry gets the longer limit — the same 30 minutes
+        // would end the same way.
+        if (\app\PlanExecutor::ranOutOfTime((string) $task->errorMessage)) $task->timeLimit = \app\PlanExecutor::TIME_LIMIT_MAX;
         // Reset the task for a fresh attempt (fresh auto-retry budget).
         $task->status       = 'pending';
         $task->errorMessage = '';
@@ -1188,6 +1188,14 @@ class Workbench extends BuildControl {
         $task->updatedAt    = date('Y-m-d H:i:s');
         Bean::store($task);
 
+        // The plan is still building: the orchestrator reads its tasks afresh every tick and
+        // launches this one as soon as it has a slot. (This used to be refused with "will be
+        // picked up in that run" — but a FAILED task never was; only a pending one is.)
+        if ($building) {
+            $this->bustTaskCache();
+            Flight::jsonSuccess(['plan_status' => 'building'], 'Retrying — the build already running picks it up in a few seconds.');
+            return;
+        }
         if (!$this->startOrchestrator($plan, $inst)) {
             Flight::jsonError('Could not start the orchestrator.', 500);
             return;
@@ -1555,7 +1563,16 @@ class Workbench extends BuildControl {
                     $counts[$st] = ($counts[$st] ?? 0) + 1;
                     if (in_array($st, $doneStates, true)) $done++;
                 }
-                $planRollup = ['total' => count($subs), 'done' => $done, 'counts' => $counts];
+                // The subtasks that stopped and need a person: named, with why, so the plan
+                // page can ask for the retry instead of leaving a count to be decoded.
+                $stopped = [];
+                foreach ($subs as $s) {
+                    if (!in_array((string) $s->status, ['failed', 'conflict'], true)) continue;
+                    $stopped[] = ['id' => (int) $s->id, 'title' => (string) $s->title, 'status' => (string) $s->status,
+                                  'timed_out' => \app\PlanExecutor::ranOutOfTime((string) $s->errorMessage),
+                                  'error' => mb_substr((string) $s->errorMessage, 0, 300)];
+                }
+                $planRollup = ['total' => count($subs), 'done' => $done, 'counts' => $counts, 'stopped' => $stopped];
             }
         }
         $this->viewData['planRollup'] = $planRollup;

@@ -173,6 +173,19 @@ $baseDomain = $baseUrl === '' ? '' : preg_replace('#^https?://#', '', rtrim($bas
                             </button>
                         <?php endif; ?>
 
+                        <?php if (!empty($planRollup['stopped'])): ?>
+                            <?php /* Subtasks that stopped: said by name, with the retry right here. */ ?>
+                            <div class="alert alert-warning w-100 mb-2">
+                                <strong><?= count($planRollup['stopped']) ?> task<?= count($planRollup['stopped']) === 1 ? '' : 's' ?> stopped and need<?= count($planRollup['stopped']) === 1 ? 's' : '' ?> you.</strong> Tasks that depend on <?= count($planRollup['stopped']) === 1 ? 'it' : 'them' ?> are waiting.
+                                <?php foreach ($planRollup['stopped'] as $__s): ?>
+                                <div class="d-flex flex-wrap align-items-center gap-2 mt-2">
+                                    <a href="/workbench/view?id=<?= (int) $__s['id'] ?>">#<?= (int) $__s['id'] ?> <?= htmlspecialchars($__s['title']) ?></a>
+                                    <span class="small"><?= $__s['timed_out'] ? '<i class="bi bi-hourglass-bottom"></i> ran out of time — retry it with a longer limit?' : htmlspecialchars($__s['status'] === 'conflict' ? 'merge conflict' : $__s['error']) ?></span>
+                                    <button class="btn btn-sm btn-warning ms-auto" onclick="taskRetry(<?= (int) $__s['id'] ?>, this)"><i class="bi bi-arrow-clockwise me-1"></i>Retry</button>
+                                </div>
+                                <?php endforeach; ?>
+                            </div>
+                        <?php endif; ?>
                         <?php if (!empty($planRollup)): ?>
                             <?php
                             // Plan PARENT: no branch of its own — subtasks already merged into the
@@ -329,7 +342,19 @@ $baseDomain = $baseUrl === '' ? '' : preg_replace('#^https?://#', '', rtrim($bas
             // to act on it.
             $isFailureState = in_array($task->status, ['failed', 'conflict'], true);
             ?>
-            <?php if ($isFailureState && $task->errorMessage): ?>
+            <?php $timedOut = $isFailureState && \app\PlanExecutor::ranOutOfTime((string) $task->errorMessage); ?>
+            <?php if ($timedOut && !empty($task->parentTaskId)): ?>
+                <?php /* Not a crash: the agent was still working when its limit ended. Said in those
+                         words, with the one thing to do about it. */ ?>
+                <div class="card mb-4 border-warning">
+                    <div class="card-header bg-warning-subtle"><h5 class="mb-0"><i class="bi bi-hourglass-bottom"></i> Ran out of time</h5></div>
+                    <div class="card-body">
+                        <p class="mb-2">The agent was still working on this task when its <?= (int) round(\app\PlanExecutor::timeLimit($task) / 60) ?>-minute limit ended, so it was stopped and its unfinished work was not kept. Nothing is wrong with the project; tasks that depend on this one are waiting.</p>
+                        <p class="mb-3"><strong>Retry it?</strong> The retry gets <?= (int) round(\app\PlanExecutor::TIME_LIMIT_MAX / 60) ?> minutes. If it runs out again, the task is too big for one agent: edit it down, or plan it as a goal of its own.</p>
+                        <button class="btn btn-warning" onclick="taskRetry(<?= (int)$task->id ?>, this)"><i class="bi bi-arrow-clockwise me-1"></i> Retry with <?= (int) round(\app\PlanExecutor::TIME_LIMIT_MAX / 60) ?> minutes</button>
+                    </div>
+                </div>
+            <?php elseif ($isFailureState && $task->errorMessage): ?>
                 <div class="card mb-4 border-danger">
                     <div class="card-header bg-danger text-white">
                         <h5 class="mb-0">
