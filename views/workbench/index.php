@@ -47,7 +47,8 @@
         <div class="flex-grow-1">
             <?php if ($cs['state'] === 'failed'): ?>
                 <strong>Setting up this project's container stopped:</strong> <?= htmlspecialchars($cs['error'] ?: 'see the project log') ?>.
-                <a href="<?= htmlspecialchars($cs['core']) ?>/helpdesk">Ask support</a>
+                <div class="small mt-1">A project whose setup does not finish is removed within the hour, and you get a note saying where it stopped &mdash; then create it again.
+                <a href="<?= htmlspecialchars($cs['core']) ?>/helpdesk">Ask support</a> if it stops the same way twice.</div>
             <?php else: ?>
                 <strong>Setting up this project's container</strong> &mdash; about two minutes. The board opens by itself when it answers.
                 <?php if ($cs['last'] !== ''): ?><div class="small text-body-secondary mt-1 font-monospace"><?= htmlspecialchars(mb_substr($cs['last'], 0, 160)) ?></div><?php endif; ?>

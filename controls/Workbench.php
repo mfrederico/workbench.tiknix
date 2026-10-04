@@ -270,20 +270,20 @@ class Workbench extends BuildControl {
         // WHAT is being planned — so "Stop" is a decision about a named thing, not about "your goal".
         $this->viewData['decomposingGoal'] = $this->viewData['decomposing'] ? $this->decomposingGoal() : null;
 
-        // A project whose container is still being set up (a tenant row with no address yet): the
+        // A project whose container is still being set up (a tenant row not yet published at a
+        // domain — it may already have a container and an address, with app.sh still running): the
         // board says so and refreshes itself until the container answers — nothing on it could run.
-        // Model_Instance::setupStateFor reads the workspace's provision.log: '' (no record), 'pending',
-        // 'failed' (an ERROR line), 'active' (container + domain). Core's class, through core's lib.
+        // Model_Instance::setupReport reads the workspace's provision.log (+ .pid): state '' (no
+        // record), 'pending', 'failed' (an ERROR line, or no progress for SETUP_STALL_SECONDS —
+        // with the reason in 'error'), 'active' (container + domain). Core's class, through core's
+        // lib. A stalled setup is removed by core's provision sweep within the hour, with a Note
+        // to the owner; until then the board shows where it stopped.
         $this->viewData['containerSetup'] = null;
         if ($this->selected) {
             $meta = $this->access->instanceMeta((int) $this->selected['id']);
-            if ($meta && (string) ($meta->ctKind ?? '') === 'tenant' && trim((string) ($meta->ctIp ?? '')) === '') {
-                $state = \Model_Instance::setupStateFor($meta);
-                $log = \Model_Instance::workspaceFrom((string) $this->selected['slug']) . '/.aibuilder/provision.log';
-                $lines = is_file($log) ? array_values(array_filter(array_map('trim', file($log)))) : [];
-                $error = '';
-                foreach ($lines as $l) if (str_starts_with($l, 'ERROR ')) $error = substr($l, 6);
-                $this->viewData['containerSetup'] = ['state' => $state, 'last' => $lines ? end($lines) : '', 'error' => $error,
+            if ($meta && (string) ($meta->ctKind ?? '') === 'tenant' && trim((string) ($meta->ctDomain ?? '')) === '') {
+                $rep = \Model_Instance::setupReport($meta);
+                $this->viewData['containerSetup'] = ['state' => $rep['state'], 'last' => $rep['last'], 'error' => $rep['error'],
                     'core' => rtrim((string) Flight::get('sidecar.core_url'), '/')];
             }
         }
