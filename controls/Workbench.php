@@ -2593,31 +2593,6 @@ class Workbench extends BuildControl {
     /**
      * Add comment to task
      */
-    /**
-     * POST /workbench/description — the task's description, edited in place on its page while
-     * it has not run (pending, queued, conflict): the whole stored text, Markdown, verbatim. A
-     * task that has started is refused here: the agent has read it; the edit page keeps a
-     * record change possible, and says so. JSON.
-     */
-    public function description($params = []) {
-        if (!$this->requireLogin()) return;
-        if (Flight::request()->method !== 'POST' || !SimpleCsrf::validate()) { Flight::jsonError('CSRF validation failed', 403); return; }
-        $task = Bean::load('workbenchtask', (int) $this->getParam('id'));
-        if (!$task->id || !$this->access->canEdit((int) $this->member->id, $task)) { Flight::jsonError('Task not found or not yours.', 404); return; }
-        if (!in_array((string) $task->status, ['pending', 'queued', 'conflict'], true)) {
-            Flight::jsonError("This task is {$task->status}: the agent has read its description. Edit the task for the record, or re-run it.", 409); return;
-        }
-        $text = str_replace("\r\n", "\n", (string) $this->getParam('description', ''));
-        if (trim($text) === '') { Flight::jsonError('The description cannot be empty.', 400); return; }
-        if (strlen($text) > 200000) { Flight::jsonError('The description is over 200 KB.', 413); return; }
-        $task->description = $text;
-        $task->updatedAt = date('Y-m-d H:i:s');
-        Bean::store($task);
-        $this->bustTaskCache();
-        $this->logger->info('Task description edited in place', ['task' => (int) $task->id, 'member_id' => (int) $this->member->id, 'bytes' => strlen($text)]);
-        Flight::jsonSuccess(['id' => (int) $task->id, 'html' => \app\MarkdownParser::parseSafe($text)]);
-    }
-
     public function comment($params = []) {
         if (!$this->requireLogin()) return;
 
