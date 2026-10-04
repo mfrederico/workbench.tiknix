@@ -1841,6 +1841,12 @@ class Workbench extends BuildControl {
      */
     /** A board task's run in the container: its id (AgentTask) and its tmux session there. */
     private function boardRunId($task): string { return 'board-' . (int) $task->id; }
+
+    /** A task's run id in its container: its worktree branch without "task/" (plan-1-task-2, board-7); '' = never launched. */
+    private function runIdOf($task): string {
+        $b = (string) ($task->worktreeBranch ?? '');
+        return str_starts_with($b, 'task/') ? substr($b, 5) : '';
+    }
     private function boardSession(object $ct, $task): string { return 'tiknix-' . $ct->slug . '-board' . (int) $task->id; }
 
     /**
@@ -2447,15 +2453,37 @@ class Workbench extends BuildControl {
         $session = (string)($task->tmuxSession ?: $task->agentSession ?: '');
         $lines   = max(50, min(4000, (int)$this->getParam('lines', 1500)));
         if ($ct = $this->tenantInst()) {
-            // The task runs in the project's container (TenantRun), headless: there is no live
-            // screen to show — its output is recorded on the task when it finishes.
-            try { $alive = $session !== '' && \app\TenantRun::alive($ct, $session); }
+            // The task runs in the project's container, headless — no screen. What there IS, live,
+            // is the agent's transcript: TenantRun::activity reads its tail (what it said, each
+            // tool it called). A plan shows every subtask that is running; a task shows its own.
+            $isPlan = empty($task->parentTaskId) && !empty($task->planStatus);
+            $runs = [];   // run id => heading
+            if ($isPlan) {
+                foreach (Bean::find('workbenchtask', "parent_task_id = ? AND status IN ('running', 'queued') ORDER BY id", [(int) $task->id]) as $sub) {
+                    if ($rid = $this->runIdOf($sub)) $runs[$rid] = '#' . (int) $sub->id . ' ' . (string) $sub->title;
+                }
+            } elseif ($rid = $this->runIdOf($task)) {
+                $runs[$rid] = '';
+            }
+            try { $act = $runs ? \app\TenantRun::activity($ct, array_keys($runs), $isPlan ? 14 : 80) : []; }
             catch (\RuntimeException $e) { Flight::jsonError($e->getMessage(), 502); return; }
+            $content = ''; $newest = 0;
+            foreach ($runs as $rid => $heading) {
+                $a = $act[$rid] ?? ['lines' => [], 'at' => '', 'found' => false];
+                if ($heading !== '') $content .= "━━ {$heading} ━━\n";
+                $content .= $a['found'] ? ($a['lines'] ? implode("\n", $a['lines']) : '(the agent has started; nothing said yet)') : '(no transcript yet — the agent is starting)';
+                $content .= "\n\n";
+                if ($a['at'] !== '') $newest = max($newest, (int) strtotime($a['at']));
+            }
+            if (!$runs) $content = $isPlan ? "No subtask is running right now.\n" : '';
+            $running = in_array((string) $task->status, ['running', 'queued'], true);
             Flight::jsonSuccess([
                 'session' => $session,
-                'alive'   => $alive,
-                'content' => $alive ? "Running in {$ct->slug}'s container. The agent's output is added to this task when it finishes.\n" : '',
+                // "live" = the task is running and its transcript moved in the last two minutes
+                'alive'   => $running && $runs && $newest > 0 && time() - $newest < 120,
+                'content' => rtrim($content) . "\n",
                 'status'  => $task->status,
+                'quiet'   => $running && $newest > 0 ? time() - $newest : null,
             ]);
             return;
         }

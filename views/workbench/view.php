@@ -504,7 +504,10 @@ $baseDomain = $baseUrl === '' ? '' : preg_replace('#^https?://#', '', rtrim($bas
                                 var d = (j && j.data) ? j.data : {};
                                 if (d.alive) { dot.style.background = '#28a745'; state.textContent = 'live'; paint(d.content); }
                                 else {
-                                    dot.style.background = '#6c757d'; state.textContent = 'session ended';
+                                    // Still running but the transcript has not moved lately: say how long, not "ended".
+                                    var running = ['running','queued'].indexOf(d.status) >= 0;
+                                    dot.style.background = running ? '#ffc107' : '#6c757d';
+                                    state.textContent = running ? (d.quiet != null ? 'quiet for ' + Math.round(d.quiet / 60) + ' min' : 'starting…') : 'session ended';
                                     if (d.content) paint(d.content);
                                     // Only stop polling once the task is truly done — otherwise keep
                                     // reconnecting (a run may just be starting up).
@@ -516,10 +519,10 @@ $baseDomain = $baseUrl === '' ? '' : preg_replace('#^https?://#', '', rtrim($bas
                             .catch(function(){ busy = false; });
                     }
                     tick();
-                    timer = setInterval(tick, 1500);
+                    timer = setInterval(tick, 4000);
                     document.addEventListener('visibilitychange', function(){
                         if (document.hidden) { if (timer) { clearInterval(timer); timer = null; } }
-                        else if (!timer) { tick(); timer = setInterval(tick, 1500); }
+                        else if (!timer) { tick(); timer = setInterval(tick, 4000); }
                     });
                 })();
                 </script>
