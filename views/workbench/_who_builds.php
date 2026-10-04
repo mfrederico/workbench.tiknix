@@ -33,11 +33,11 @@
                             <select class="form-select" id="agent" name="agent">
                                 <?php $__dw = $__def ? $__why($__def) : ($__claude === '' ? 'default model not set up' : ''); ?>
                                 <option value="" <?= $__dw !== '' ? 'disabled' : ($builderAgent === '' ? 'selected' : '') ?>>
-                                    App default — <?= htmlspecialchars($__def ? $__def['name'] . ' (' . $__where($__def) . ')' : 'default model' . ($__claude !== '' ? ' (' . $__claude . ')' : '')) ?><?= $__dw !== '' ? ' — ' . htmlspecialchars($__dw) : '' ?>
+                                    App default — <?= htmlspecialchars($__def ? (($__def['display_name'] ?? '') !== '' ? $__def['display_name'] : $__def['name']) . ' (' . $__where($__def) . ')' : 'default model' . ($__claude !== '' ? ' (' . $__claude . ')' : '')) ?><?= $__dw !== '' ? ' — ' . htmlspecialchars($__dw) : '' ?>
                                 </option>
                                 <?php foreach ($appAgents['agents'] as $__a): $__w = $__why($__a); ?>
                                     <option value="<?= htmlspecialchars($__a['name']) ?>" <?= $__w !== '' ? 'disabled' : '' ?> <?= $builderAgent === $__a['name'] ? 'selected' : '' ?>>
-                                        <?= htmlspecialchars($__a['name'] . ' — ' . $__where($__a) . (($__a['model'] ?? '') !== '' ? ' / ' . $__a['model'] : '')) ?><?= $__w !== '' ? ' — ' . htmlspecialchars($__w) : '' ?>
+                                        <?= htmlspecialchars((($__a['display_name'] ?? '') !== '' ? $__a['display_name'] . ' (' . $__a['name'] . ')' : $__a['name']) . (($__a['description'] ?? '') !== '' ? ': ' . $__a['description'] : '') . ' — ' . $__where($__a) . (($__a['model'] ?? '') !== '' ? ' / ' . $__a['model'] : '')) ?><?= $__w !== '' ? ' — ' . htmlspecialchars($__w) : '' ?>
                                     </option>
                                 <?php endforeach; ?>
                             </select>

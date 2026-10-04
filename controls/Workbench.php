@@ -1571,9 +1571,10 @@ class Workbench extends BuildControl {
         // What the Run button names: the task's own agent, else the app's default as it last
         // reported it (StatusReport → instance.report_json); nothing invented when unknown.
         $runAgent = trim((string) ($task->agent ?? ''));
-        if ($runAgent === '' && $this->selected && ($im = $this->access->instanceMeta((int) $this->selected['id'])) && ($rj = json_decode((string) ($im->reportJson ?? ''), true)) && is_array($rj)) {
-            $runAgent = (string) ($rj['default_agent'] ?? '');
-        }
+        $rj = ($this->selected && ($im = $this->access->instanceMeta((int) $this->selected['id']))) ? json_decode((string) ($im->reportJson ?? ''), true) : null;
+        if ($runAgent === '' && is_array($rj)) $runAgent = (string) ($rj['default_agent'] ?? '');
+        // The name its owner gave it ("QA Quinn"), where it has one; the handle otherwise.
+        if ($runAgent !== '' && is_array($rj) && !empty($rj['agent_names'][$runAgent])) $runAgent = (string) $rj['agent_names'][$runAgent];
         $this->viewData['runAgentLabel'] = $runAgent !== '' ? 'Run with ' . $runAgent : 'Run';
         $this->viewData['runAgentName'] = $runAgent;   // '' = unknown: the page says "Agent", never a vendor
         $this->viewData['canRun'] = $this->access->canRun($this->member->id, $task);
