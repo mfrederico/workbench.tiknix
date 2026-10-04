@@ -396,13 +396,28 @@ $baseDomain = $baseUrl === '' ? '' : preg_replace('#^https?://#', '', rtrim($bas
             <?php endif; ?>
 
             <!-- Description -->
-            <?php if (!empty($task->description)): ?>
-                <div class="card mb-4">
-                    <div class="card-header">
+            <?php /* Editable in place while the task has not run (the same rule the edit page and the
+                     conversation use): the rendered Markdown becomes the editor, Save posts the text
+                     verbatim to /workbench/description, Cancel puts the rendering back. */ ?>
+            <?php $descEditable = !empty($canEdit) && in_array((string) $task->status, ['pending', 'queued', 'conflict'], true); ?>
+            <?php if (!empty($task->description) || $descEditable): ?>
+                <div class="card mb-4" id="descCard">
+                    <div class="card-header d-flex justify-content-between align-items-center">
                         <h5 class="mb-0">Description</h5>
+                        <?php if ($descEditable): ?>
+                        <div id="descActions">
+                            <button type="button" class="btn btn-sm btn-outline-secondary" id="descEditBtn" title="Edit the description here — the task has not run yet"><i class="bi bi-pencil"></i> Edit</button>
+                            <button type="button" class="btn btn-sm btn-primary d-none" id="descSaveBtn"><i class="bi bi-check-lg"></i> Save</button>
+                            <button type="button" class="btn btn-sm btn-outline-secondary d-none" id="descCancelBtn">Cancel</button>
+                        </div>
+                        <?php endif; ?>
                     </div>
                     <div class="card-body">
-                        <div class="prose"><?= \app\MarkdownParser::parseSafe($task->description ?? '') ?></div>
+                        <div class="prose" id="descRendered"><?= \app\MarkdownParser::parseSafe($task->description ?? '') ?></div>
+                        <?php if ($descEditable): ?>
+                        <div id="descEditor" class="d-none"><textarea id="descSource"><?= htmlspecialchars((string) $task->description) ?></textarea></div>
+                        <div id="descMsg" class="small mt-2"></div>
+                        <?php endif; ?>
                     </div>
                 </div>
             <?php endif; ?>
@@ -622,11 +637,19 @@ $baseDomain = $baseUrl === '' ? '' : preg_replace('#^https?://#', '', rtrim($bas
             <?php endif; ?>
 
             <!-- Comments -->
+            <?php /* The conversation is with a RUNNING agent: a message sent before the task has
+                     started is read by nobody (the first one was simply ignored). Until it starts,
+                     what you want the agent to know belongs in the task itself — the same rule the
+                     edit page uses for "not run yet" — so the form appears only once it has
+                     started; earlier messages, if any, stay readable. */ ?>
+            <?php $notStarted = in_array((string) $task->status, ['pending', 'queued', 'conflict'], true); ?>
+            <?php if (!($notStarted && empty($comments))): /* nothing at all before it runs — the description above is the place */ ?>
             <div class="card">
                 <div class="card-header">
                     <h5 class="mb-0"><i class="bi bi-chat-dots me-2"></i>Conversation</h5>
                 </div>
                 <div class="card-body">
+                    <?php if (!$notStarted): ?>
                     <!-- Add Message Form (at top) -->
                     <form id="commentForm" class="mb-4">
                         <div class="mb-2">
@@ -650,6 +673,7 @@ $baseDomain = $baseUrl === '' ? '' : preg_replace('#^https?://#', '', rtrim($bas
                             <input type="file" id="imageUpload" accept="image/png,image/jpeg,image/gif,image/webp" class="d-none">
                         </div>
                     </form>
+                    <?php endif; ?>
 
                     <div id="commentsList">
                         <?php if (empty($comments)): ?>
@@ -712,6 +736,7 @@ $baseDomain = $baseUrl === '' ? '' : preg_replace('#^https?://#', '', rtrim($bas
                     </div>
                 </div>
             </div>
+            <?php endif; ?>
         </div>
 
         <!-- Sidebar -->
@@ -954,6 +979,48 @@ $baseDomain = $baseUrl === '' ? '' : preg_replace('#^https?://#', '', rtrim($bas
 const taskId = <?= $task->id ?>;
 const taskStatus = '<?= $task->status ?>';
 const csrfToken = '<?= \app\SimpleCsrf::getToken() ?>';
+
+/* In-place description editing (pending tasks): EasyMDE over #descSource, loaded on first use. */
+(function () {
+    const editBtn = document.getElementById('descEditBtn'); if (!editBtn) return;
+    const saveBtn = document.getElementById('descSaveBtn'), cancelBtn = document.getElementById('descCancelBtn');
+    const rendered = document.getElementById('descRendered'), editor = document.getElementById('descEditor'), src = document.getElementById('descSource'), msg = document.getElementById('descMsg');
+    let mde = null, original = src.value;
+    const say = (t, cls) => { msg.className = 'small mt-2 ' + (cls || ''); msg.textContent = t; };
+    const load = () => new Promise((ok, bad) => {
+        if (typeof EasyMDE !== 'undefined') return ok();
+        const css = document.createElement('link'); css.rel = 'stylesheet'; css.href = 'https://cdn.jsdelivr.net/npm/easymde@2.20.0/dist/easymde.min.css'; document.head.appendChild(css);
+        const js = document.createElement('script'); js.src = 'https://cdn.jsdelivr.net/npm/easymde@2.20.0/dist/easymde.min.js'; js.onload = () => ok(); js.onerror = () => bad(new Error('the editor could not load (cdn.jsdelivr.net)')); document.head.appendChild(js);
+    });
+    const show = (editing) => {
+        rendered.classList.toggle('d-none', editing); editor.classList.toggle('d-none', !editing);
+        editBtn.classList.toggle('d-none', editing); saveBtn.classList.toggle('d-none', !editing); cancelBtn.classList.toggle('d-none', !editing);
+    };
+    editBtn.addEventListener('click', async () => {
+        say('');
+        try { await load(); } catch (e) { say(e.message + ' — use the Edit page instead.', 'text-danger'); return; }
+        show(true);
+        if (!mde) {
+            mde = new EasyMDE({element: src, spellChecker: false, autosave: {enabled: false}, status: ['lines', 'words'], minHeight: '320px', lineWrapping: true, forceSync: true,
+                toolbar: ['bold', 'italic', 'heading-2', 'heading-3', '|', 'unordered-list', 'ordered-list', 'code', 'quote', '|', 'link', '|', 'preview', 'side-by-side', 'fullscreen', '|', 'guide'],
+                renderingConfig: {singleLineBreaks: false, codeSyntaxHighlighting: false}});
+        } else { mde.value(original); }
+        mde.codemirror.refresh(); mde.codemirror.focus();
+    });
+    cancelBtn.addEventListener('click', () => { if (mde) mde.value(original); show(false); say(''); });
+    saveBtn.addEventListener('click', async () => {
+        const text = mde ? mde.value() : src.value;
+        saveBtn.disabled = true; say('Saving…', 'text-muted');
+        try {
+            const fd = new FormData(); fd.append('id', '<?= (int) $task->id ?>'); fd.append('description', text); fd.append('_csrf_token', csrfToken);
+            const r = await fetch('/workbench/description', {method: 'POST', body: fd, headers: {'X-Requested-With': 'XMLHttpRequest'}});
+            const d = await r.json();
+            if (!d.success) { say(d.message || 'Could not save.', 'text-danger'); saveBtn.disabled = false; return; }
+            original = text; src.value = text; rendered.innerHTML = d.data.html; show(false); say('Saved — this is what the agent will read.', 'text-success');
+        } catch (e) { say('Could not save: ' + e.message, 'text-danger'); }
+        saveBtn.disabled = false;
+    });
+})();
 let pollInterval = null;
 
 // Recover a failed plan subtask: reset + re-launch the orchestrator (which auto-retries).
@@ -1151,6 +1218,9 @@ async function pollProgress() {
 // Update comments list without full page reload
 function updateCommentsList(comments) {
     const list = document.getElementById('commentsList');
+    // No list on the page (the task has not started and has no messages): a message that arrives
+    // now — the task was started elsewhere — means the pane must appear, so reload.
+    if (!list) { if (comments && comments.length) location.reload(); return; }
     const noComments = document.getElementById('noComments');
     if (noComments) noComments.remove();
 
@@ -1219,7 +1289,7 @@ if (taskStatus === 'running' || taskStatus === 'queued' || taskStatus === 'await
 
 
 // Comment form - Ctrl+Enter to submit
-document.getElementById('commentContent').addEventListener('keydown', function(e) {
+document.getElementById('commentContent')?.addEventListener('keydown', function(e) {
     if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
         e.preventDefault();
         document.getElementById('commentForm').dispatchEvent(new Event('submit'));
@@ -1240,7 +1310,7 @@ if (inlineComment) {
 // Image upload handling
 let selectedImageFile = null;
 
-document.getElementById('imageUpload').addEventListener('change', function(e) {
+document.getElementById('imageUpload')?.addEventListener('change', function(e) {
     const file = e.target.files[0];
     if (!file) return;
 
@@ -1281,7 +1351,7 @@ function clearImagePreview() {
 // can be seconds. The button shows that for the whole round trip, and a second Send
 // (click or Ctrl+Enter) while one is in flight is ignored rather than posted twice.
 let commentSending = false;
-document.getElementById('commentForm').addEventListener('submit', async function(e) {
+document.getElementById('commentForm')?.addEventListener('submit', async function(e) {
     e.preventDefault();
     if (commentSending) return;
     const content = document.getElementById('commentContent').value.trim();
