@@ -286,7 +286,10 @@ class Workbench extends BuildControl {
             if ($meta && !empty($meta->lastReportedAt) && ($h = json_decode((string) ($meta->reportJson ?? ''), true)) && is_array($h)) {
                 $age = time() - strtotime((string) $meta->lastReportedAt);
                 $this->viewData['projectStatus'] = $h + ['at' => (string) $meta->lastReportedAt, 'age' => $age,
-                    'ago' => $age < 90 ? 'just now' : ($age < 5400 ? round($age / 60) . ' min ago' : ($age < 172800 ? round($age / 3600) . ' h ago' : round($age / 86400) . ' d ago'))];
+                    'ago' => $age < 90 ? 'just now' : ($age < 5400 ? round($age / 60) . ' min ago' : ($age < 172800 ? round($age / 3600) . ' h ago' : round($age / 86400) . ' d ago')),
+                    'core' => rtrim((string) Flight::get('sidecar.core_url'), '/'), 'id' => (int) $meta->id,
+                    // its domains and the TLS they are served with (core's DomainCerts, probed hourly)
+                    'domains' => !empty($meta->ctDomain) ? \app\DomainCerts::summary($meta, \app\Sidecar\Kernel::coreDb()) : null];
             }
             if ($meta && (string) ($meta->ctKind ?? '') === 'tenant' && trim((string) ($meta->ctDomain ?? '')) === '') {
                 $rep = \Model_Instance::setupReport($meta);
