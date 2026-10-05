@@ -751,6 +751,7 @@ class Workbench extends BuildControl {
             $runner = new PlanRunner($slug, $instanceDir, (int) $this->member->id, (int) $this->member->level, $runEngine);
             if ($tenant) $runner->useAgent($agent);
             $runner->deepen($this->planningDepth());
+            $this->notePlannerAgent($instanceDir, $tenant ? $agent : '');
             $runner->start($goal, [], $autoBuild, $promptId);
         } catch (\Throwable $e) {
             $this->flash('error', 'Could not start the planner: ' . $e->getMessage());
@@ -914,6 +915,7 @@ class Workbench extends BuildControl {
             );
             if ($tenant) $runner->useAgent($agent);
             $runner->deepen($this->planningDepth());
+            $this->notePlannerAgent($instanceDir, $tenant ? $agent : '');
             // $promptId travels with it so ingest can link the plan back to this goal.
             $runner->start($goal, [], $autoBuild, $promptId);
         } catch (\Throwable $e) {
@@ -1487,11 +1489,44 @@ class Workbench extends BuildControl {
                                        (int) $this->member->level, (string) ($inst->engine ?? ''));
             $activity = $runner->activity();
         }
+        // WHO is planning and WHAT it is doing right now, for the banner: the planner runs headless
+        // in the project's container, and its live transcript is the only thing that moves while it
+        // works (TenantRun::activity — what it said, each tool it called).
+        $who = ''; $doing = ''; $recent = []; $quiet = null;
+        if ($running && ($ct = $this->tenantInst())) {
+            $rj = json_decode((string) ($ct->reportJson ?? ''), true) ?: [];
+            $name = trim((string) @file_get_contents($dir . '/.aibuilder/planner-agent')) ?: (string) ($rj['default_agent'] ?? '');
+            $who = $name === '' || $name === 'anthropic' ? 'the Anthropic account' : (string) (($rj['agent_names'][$name] ?? '') ?: $name);
+            try {
+                $a = \app\TenantRun::activity($ct, ['planner-m' . (int) $this->member->id], 6)['planner-m' . (int) $this->member->id] ?? null;
+                if ($a && $a['found']) {
+                    $clean = fn(string $l) => trim(preg_replace('/^\[[0-9:]*\]\s*(→\s*)?/u', '', $l));
+                    $recent = array_values(array_filter(array_map($clean, $a['lines']), fn($l) => $l !== ''));
+                    $doing  = $recent ? (string) end($recent) : 'Started — nothing said yet';
+                    $quiet  = $a['at'] !== '' ? max(0, time() - (int) strtotime($a['at'])) : null;
+                } else {
+                    $doing = 'Starting up…';
+                }
+            } catch (\RuntimeException $e) {
+                $doing = '';   // the container did not answer this time: say nothing rather than guess
+            }
+        }
         Flight::jsonSuccess([
             'running'        => $running,
             'newest_plan_id' => $newest,
             'activity'       => $activity,
+            'agent'          => $who,
+            'doing'          => mb_substr($doing, 0, 220),
+            'recent'         => array_map(fn($l) => mb_substr($l, 0, 220), array_slice($recent, -5, 4)),
+            'quiet_seconds'  => $quiet,
         ]);
+    }
+
+    /** Which of the project's agents the planner about to start runs on ('' = its builder) — the planning banner names it. */
+    private function notePlannerAgent(string $instanceDir, string $agent): void {
+        $ab = rtrim($instanceDir, '/') . '/.aibuilder';
+        if (!is_dir($ab)) @mkdir($ab, 0775, true);
+        if (@file_put_contents($ab . '/planner-agent', $agent) === false) error_log("ERROR Workbench: could not record the planner's agent in {$ab}/planner-agent");
     }
 
     /**

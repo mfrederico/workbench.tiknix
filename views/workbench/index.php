@@ -329,6 +329,12 @@
                         <?php if (!empty($decomposingGoal['excerpt'])): ?>
                             <div class="small"><?= htmlspecialchars($decomposingGoal['excerpt']) ?></div>
                         <?php endif; ?>
+                        <?php /* Who is planning and what it is doing right now — filled by the status poll below. */ ?>
+                        <div class="small mt-1" id="wbPlanLive" style="display:none">
+                            <div><span class="text-body-secondary">Agent:</span> <strong id="wbPlanAgent"></strong> <span class="text-body-secondary" id="wbPlanQuiet"></span></div>
+                            <div><span class="text-body-secondary">Is doing:</span> <span id="wbPlanDoing"></span></div>
+                            <details class="mt-1"><summary class="text-body-secondary">Just before that</summary><div id="wbPlanRecent" class="ui-mono small text-body-secondary" style="white-space:pre-wrap"></div></details>
+                        </div>
                         <div class="small text-muted">The planner is reading the project and drafting the tasks. This page refreshes by itself when the plan is ready — you can browse away and it keeps working.</div>
                     </div>
                     <?php /* Cancelling used to mean killing a tmux session from a shell. The
@@ -365,6 +371,15 @@
                             .then(function(j){
                                 var d = (j && j.data) ? j.data : j;
                                 if (!d) { if (++tries < 240) setTimeout(poll, 3000); return; }
+                                // Who and what, as the planner works (decomposestatus reads its live transcript).
+                                if (d.agent || d.doing) {
+                                    document.getElementById('wbPlanLive').style.display = '';
+                                    document.getElementById('wbPlanAgent').textContent = d.agent || '';
+                                    if (d.doing) document.getElementById('wbPlanDoing').textContent = d.doing;
+                                    document.getElementById('wbPlanRecent').textContent = (d.recent || []).join('\n');
+                                    var q = d.quiet_seconds;
+                                    document.getElementById('wbPlanQuiet').textContent = (q !== null && q > 90) ? '— quiet for ' + Math.round(q / 60) + ' min (thinking, or waiting on the model)' : '';
+                                }
                                 var newest = d.newest_plan_id || 0;
                                 if (baseline === null) baseline = newest;
                                 if (newest > baseline) return done(true);    // a plan landed: show it
