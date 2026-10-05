@@ -429,17 +429,11 @@
                 }
                 $planMetaJs['solo'] = ['id' => 0, 'title' => 'Standalone tasks', 'tag' => null, 'status' => null, 'plan_status' => '', 'url' => null, 'taskIds' => $groupPendingIds['solo'] ?? []];
 
-                // Group ordering key: the most recent createdAt in each group, so the
-                // whole table defaults to newest-first BY GROUP (not by plan-id string).
-                // Must be one constant per group (incl. the parent header row) or the
-                // RowGroup rows won't stay contiguous.
-                $groupOrder = [];
-                foreach ($tasks as $t) {
-                    $gk = !empty($t->parentTaskId) ? ('plan:' . (int)$t->parentTaskId)
-                        : (isset($parentSet[(int)$t->id]) ? ('plan:' . (int)$t->id) : 'solo');
-                    $ts = $t->createdAt ? strtotime((string)$t->createdAt) : 0;
-                    if (!isset($groupOrder[$gk]) || $ts > $groupOrder[$gk]) $groupOrder[$gk] = $ts;
-                }
+                // Group ordering key: the plan's id, so phases read in the order they were planned —
+                // phase 1 first — with standalone tasks after them. One constant per group, or the
+                // RowGroup rows would not stay together. (It was "newest group first", which listed
+                // a project's phases backwards.)
+                $groupOrderKey = fn(string $gk): string => $gk === 'solo' ? '9999999999~solo' : sprintf('%010d', (int) substr($gk, 5)) . '~' . $gk;
                 ?>
                 <link rel="stylesheet" href="https://cdn.datatables.net/1.13.8/css/dataTables.bootstrap5.min.css">
                 <link rel="stylesheet" href="https://cdn.datatables.net/rowgroup/1.4.1/css/rowGroup.bootstrap5.min.css">
@@ -483,8 +477,8 @@
                                     $groupKey = $isSub ? ('plan:' . (int)$task->parentTaskId) : 'solo';
                                     ?>
                                     <tr>
-                                        <?php // Prefix an inverted-timestamp so string-sorting column 0 puts newest groups first, while the value still groups by key (parsed back out in startRender). ?>
-                                        <td class="wb-grp"><?= htmlspecialchars(sprintf('%010d', 9999999999 - (int)($groupOrder[$groupKey] ?? 0)) . '~' . $groupKey) ?></td>
+                                        <?php // The group's sort key (zero-padded plan id) in front of its key, so string-sorting column 0 orders the groups while the value still groups by key (parsed back out in startRender). ?>
+                                        <td class="wb-grp"><?= htmlspecialchars($groupOrderKey($groupKey)) ?></td>
                                         <?php /* Its own column, not glued to the title: a column sorts, aligns,
                                                  and can be scanned down. data-order carries the numeric value so
                                                  DataTables sorts 9 before 85 rather than lexically. */ ?>
@@ -629,16 +623,14 @@
                     }
                     function initTable(){
                         if (!$.fn || !$.fn.DataTable) return;   // graceful no-op if a CDN asset is unreachable
-                        $('#wbTasks').DataTable({
+                        var table = $('#wbTasks').DataTable({
                             pageLength: 25,
                             lengthMenu: [[10,25,50,-1],[10,25,50,'All']],
-                            orderFixed: { pre: [[0,'asc']] },    // group key carries an inverted-ts prefix, so asc = newest group first
-                            // Created, newest-first within each group. Index 7, not 6: the ID
-                            // column sits at 1 and pushed every later column along one. An index
-                            // here is a position, so adding a column silently re-points it —
-                            // this would have started ordering by Status with nothing to show
-                            // for it but a board in the wrong order.
-                            order: [[7,'desc']],
+                            orderFixed: { pre: [[0,'asc']] },    // groups by plan id: phase 1 first (and see the order.dt handler below)
+                            // Tasks in the order they were planned (ID) within each group. An index here is
+                            // a POSITION: adding a column silently re-points it (the ID column, added at 1,
+                            // once turned a "Created" default into ordering by Status).
+                            order: [[1,'asc']],
                             columnDefs: [
                                 { targets: 0, visible: false, searchable: false },
                                 { targets: -1, orderable: false, searchable: false }
@@ -666,6 +658,19 @@
                                 }
                             },
                             language: { search: 'Filter:', searchPlaceholder: 'title, instance, status…' }
+                        });
+                        // The groups follow the DIRECTION of the sort. They used to stay put whatever was
+                        // clicked: sorting a column descending reversed the tasks inside each group and left
+                        // the groups in ascending order, so the last task of the first phase led the table.
+                        // Descending now means the last phase first, with its tasks descending under it.
+                        table.on('order.dt', function(){
+                            var o = table.order(), dir = (o.length && o[0][1] === 'desc') ? 'desc' : 'asc';
+                            var fixed = table.order.fixed();
+                            if (fixed && fixed.pre && fixed.pre[0] && fixed.pre[0][1] === dir) return;
+                            table.order.fixed({ pre: [[0, dir]] });
+                            // After this draw, not inside it: a draw started from within the ordering
+                            // of another left every group header on the page twice.
+                            setTimeout(function(){ table.draw(false); }, 0);
                         });
                         bindPlanActions();
                     }
