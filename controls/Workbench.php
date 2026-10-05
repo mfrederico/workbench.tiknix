@@ -701,12 +701,19 @@ class Workbench extends BuildControl {
         $app  = $instance->app ?: 'tiknix';
         $instanceDir = \app\WorkbenchDb::dirOf($slug, $app);
         $tenant = \app\TenantBuilder::bySlug($slug);
-        // The next phase runs on the agent the last plan ran on; none recorded = the app's default.
-        $agent = '';
+        // The next phase runs on the agent picked on the card; none picked = the one the last plan
+        // ran on; none recorded = the app's builder.
+        $agent = trim((string) $this->getParam('agent', ''));
         if ($tenant) {
-            $last = \app\Bean::findOne('workbenchtask', "(parent_task_id IS NULL OR parent_task_id = 0) AND plan_uid IS NOT NULL AND plan_uid != '' ORDER BY id DESC");
-            $agent = (string) ($last->agent ?? '');
-            if ($why = $this->tenantAgentProblem($tenant, $agent)) { $this->flash('error', 'The planner cannot run: ' . $why . '.'); Flight::redirect('/workbench'); return; }
+            if ($agent === '') {
+                $last = \app\Bean::findOne('workbenchtask', "(parent_task_id IS NULL OR parent_task_id = 0) AND plan_uid IS NOT NULL AND plan_uid != '' ORDER BY id DESC");
+                $agent = (string) ($last->agent ?? '');
+            }
+            if ($why = $this->tenantAgentProblem($tenant, $agent)) {
+                $can = array_diff((array) (json_decode((string) ($tenant->reportJson ?? ''), true)['build_agents'] ?? []), [$agent]);
+                $this->flash('error', 'The planner cannot run: ' . $why . '.' . ($can ? ' This project has ' . (count($can) === 1 ? 'an agent that can: ' : 'agents that can: ') . implode(', ', $can) . ' — pick it beside “Plan the next phase”.' : ''));
+                Flight::redirect('/workbench'); return;
+            }
         } elseif (!is_file($instanceDir . '/public/index.php')) { $this->flash('error', 'That instance is not available on disk.'); Flight::redirect('/workbench'); return; }
 
         // The SAVED goal — the same document the earlier phase(s) came from.

@@ -252,6 +252,15 @@
                   <?php foreach (($csrf ?? []) as $__cn => $__cv): ?><input type="hidden" name="<?= htmlspecialchars($__cn) ?>" value="<?= htmlspecialchars($__cv) ?>"><?php endforeach; ?>
                   <?php $__building = (bool) array_filter($__phases, fn($__x) => $__x['plan_status'] === 'building'); /* the main action only when nothing is waiting or running */ ?>
                   <button type="submit" class="btn btn-<?= empty($nextPhase) && !$__building ? 'primary' : 'outline-secondary' ?> btn-sm" id="planNextPhaseBtn"><i class="bi bi-lightbulb me-1"></i>Plan the next phase</button>
+                  <?php /* Who plans it: the project's agents that can plan and build, as the app last reported
+                           them. Shown when there is a choice to make; the builder is the default. */
+                        $__ba = (array) ($projectStatus['build_agents'] ?? []); $__bn = (array) ($projectStatus['agent_names'] ?? []); $__bd = (string) ($projectStatus['default_agent'] ?? '');
+                        if (count($__ba) > 1): ?>
+                  <select name="agent" class="form-select form-select-sm w-auto" id="planAgent" aria-label="Which agent plans it" title="Which of this project's Build agents plans it">
+                    <option value="">on the builder<?= $__bd !== '' && $__bd !== 'anthropic' ? ' (' . htmlspecialchars($__bn[$__bd] ?? $__bd) . ')' : '' ?></option>
+                    <?php foreach ($__ba as $__n): if ($__n === $__bd) continue; ?><option value="<?= htmlspecialchars($__n) ?>">on <?= htmlspecialchars($__bn[$__n] ?? $__n) ?></option><?php endforeach; ?>
+                  </select>
+                  <?php endif; ?>
                   <div class="form-check form-switch mb-0 small">
                     <input class="form-check-input" type="checkbox" role="switch" id="cpAuto" name="auto_build" value="1">
                     <label class="form-check-label text-body-secondary" for="cpAuto">and build it straight through</label>
