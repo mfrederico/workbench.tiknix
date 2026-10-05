@@ -414,6 +414,9 @@
                     $gk = !empty($t->parentTaskId) ? ('plan:' . (int)$t->parentTaskId) : 'solo';
                     $groupPendingIds[$gk][] = (int)$t->id;
                 }
+                // Which plans are superseded re-plans (Workbench::phaseList) — said on their group too.
+                $__sup = [];
+                foreach (($phases ?? []) as $__ph) if ($__ph['superseded']) $__sup[(int) $__ph['id']] = (int) $__ph['replan_of'];
                 $planMetaJs = [];
                 foreach (($planMeta ?? []) as $pid => $m) {
                     $planMetaJs['plan:' . $pid] = [
@@ -423,6 +426,7 @@
                         'status'      => $m['planStatus'] ?: $m['status'],
                         'plan_status' => $m['planStatus'] ?: '',
                         'auto_build'  => !empty($m['autoBuild']),
+                        'superseded'  => $__sup[(int) $pid] ?? 0,   // the plan it re-planned, which then finished without it
                         'url'         => '/workbench/view?id=' . $pid,
                         'taskIds'     => $groupPendingIds['plan:' . $pid] ?? [],
                     ];
@@ -442,6 +446,8 @@
                     #wbTasks .wb-consol,#wbTasks .wb-consol-group{width:1.15em;height:1.15em;cursor:pointer;border:1px solid #6c757d;opacity:1;vertical-align:-.15em}
                     #wbTasks .wb-consol:checked,#wbTasks .wb-consol-group:checked{background-color:#ffc107;border-color:#ffc107}
                     #wbTasks .wb-consol-group{width:1.25em;height:1.25em}
+                    #wbTasks tr.wb-superseded > td{opacity:.5}
+                    #wbTasks tr.wb-superseded-head a.fw-semibold{color:var(--bs-secondary-color)!important;text-decoration:line-through!important}
                 </style>
 
                 <!-- Consolidate action bar: appears when 2+ pending tasks are checked -->
@@ -599,7 +605,9 @@
                         if (m.auto_build) out += '<span class="badge bg-warning-subtle text-warning-emphasis border border-warning-subtle ms-1"'
                                               + ' title="Approved and started automatically — &quot;Run it straight through&quot; was ticked when this was decomposed">'
                                               + '<i class="bi bi-lightning-charge-fill"></i> Auto</span>';
-                        if (ps === 'draft')                             out += btn('btn-outline-info',   'wb-plan-approve', 'check2-circle', 'Approve');
+                        // A superseded re-plan is not offered for building: its tasks are work already done.
+                        if (m.superseded)                               out += '';
+                        else if (ps === 'draft')                        out += btn('btn-outline-info',   'wb-plan-approve', 'check2-circle', 'Approve');
                         else if (ps === 'approved' || ps === 'stalled') out += btn('btn-info',           'wb-plan-build',   'play-fill',     'Build');
                         else if (ps === 'building')                     out += '<span class="badge bg-primary ms-1"><span class="spinner-border spinner-border-sm me-1" role="status"></span>Building</span>';
                         if (ps !== 'building')                          out += btn('btn-outline-danger',  'wb-plan-delete',  'trash',         '');
@@ -652,10 +660,16 @@
                                     var groupCb = (m.taskIds && m.taskIds.length)
                                         ? '<input type="checkbox" class="form-check-input wb-consol-group me-2 align-middle" data-ids="'+m.taskIds.join(',')+'" title="Select all '+m.taskIds.length+' pending task(s) in this plan to consolidate">'
                                         : '';
-                                    return $('<tr class="table-active">').append(
+                                    // A superseded re-plan: said on the header, and its tasks are dimmed.
+                                    var state = m.superseded
+                                        ? ' <span class="badge text-bg-light border ms-1" title="An automatic re-plan of plan #'+m.superseded+', which then finished without it: these tasks are already built. Safe to delete."><i class="bi bi-slash-circle me-1"></i>Superseded</span>'
+                                          + ' <span class="text-muted small ms-1">already built by plan #'+m.superseded+'</span>'
+                                        : statusBadge(m.status);
+                                    if (m.superseded) rows.nodes().to$().addClass('wb-superseded');
+                                    return $('<tr class="table-active'+(m.superseded ? ' wb-superseded-head' : '')+'">').append(
                                         // Across every VISIBLE column, counted: a literal 7 stopped being right when the ID
                                         // column was added, and the header ended one column short of the table's edge.
-                                        '<td colspan="'+$('#wbTasks thead tr:first th').length+'">'+groupCb+planActions(m)+icon+title+tag+statusBadge(m.status)+count+'</td>'
+                                        '<td colspan="'+$('#wbTasks thead tr:first th').length+'">'+groupCb+planActions(m)+icon+title+tag+state+count+'</td>'
                                     );
                                 }
                             },

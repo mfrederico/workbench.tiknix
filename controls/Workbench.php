@@ -1108,6 +1108,18 @@ class Workbench extends BuildControl {
     }
 
     /**
+     * Why a plan must not be approved or built: it is an automatic re-plan whose original then
+     * finished without it, so its tasks are work already merged. '' = it may be.
+     */
+    private function supersededWhy($plan): string {
+        $of = (int) ($plan->replanOf ?? 0);
+        if ($of <= 0) return '';
+        $origin = Bean::load('workbenchtask', $of);
+        if (!$origin->id || (string) $origin->planStatus !== 'done') return '';
+        return "This plan is superseded: it was an automatic re-plan of plan #{$of}, which then finished on its own, so these tasks are already built. Delete it — and use “Plan the next phase” for what the goal still needs.";
+    }
+
+    /**
      * POST /workbench/buildnextphase — approve (when it is still a draft) and build the next
      * phase that is already planned. What "continue" means to someone looking at a list of
      * phases with one waiting: run it. Planning a NEW phase is continuephase.
@@ -1155,6 +1167,7 @@ class Workbench extends BuildControl {
         $pi = $this->accessiblePlan($this->getParam('plan_id', 0));
         if (!$pi) { $this->noSuchPlan((int) $this->getParam('plan_id', 0)); return; }
         [$plan] = $pi;
+        if ($why = $this->supersededWhy($plan)) { Flight::jsonError($why, 409); return; }
         if ($plan->planStatus === 'building') { Flight::jsonError('This plan is already building.', 409); return; }
         $plan->planStatus = 'approved';
         $plan->updatedAt  = date('Y-m-d H:i:s');
@@ -1170,6 +1183,7 @@ class Workbench extends BuildControl {
         if (!$pi) { $this->noSuchPlan((int) $this->getParam('plan_id', 0)); return; }
         [$plan, $inst] = $pi;
         if (!$inst) { Flight::jsonError('This plan has no linked instance to build in.', 409); return; }
+        if ($why = $this->supersededWhy($plan)) { Flight::jsonError($why, 409); return; }
         if (!in_array($plan->planStatus, ['approved', 'stalled'], true)) {
             Flight::jsonError('Approve the plan before building it (or it is already building).', 409);
             return;
