@@ -770,11 +770,14 @@ class Workbench extends BuildControl {
         $manage = 'https://' . $tenant->ctDomain . '/agents';
         $pick = null;
         foreach ($d['agents'] as $a) {
-            if ($agent !== '' ? $a['name'] === $agent : !empty($a['is_default'])) { $pick = $a; break; }
+            // No agent named = the BUILDER: the default among the agents that can build. Each type
+            // has its own default since agents got types, and "the first default" was whichever
+            // sorted first — on holistica the default Chat agent, nvidia, which cannot build.
+            if ($agent !== '' ? $a['name'] === $agent : (!empty($a['is_default']) && !empty($a['builder']))) { $pick = $a; break; }
         }
         if ($agent !== '' && !$pick) return "the app has no agent named '{$agent}' ({$manage})";
         if ($pick) {
-            if (empty($pick['builder'])) return "agent '{$pick['name']}' answers text but cannot edit files, so it cannot build — pick a Claude-program agent ({$manage})";
+            if (empty($pick['builder'])) return "agent '{$pick['name']}' is not a Build agent — it answers, it does not edit files — so it cannot plan or build; pick a Build agent ({$manage})";
             if (!empty($pick['problems'])) return "agent '{$pick['name']}': " . implode('; ', $pick['problems']) . " ({$manage})";
             if (($pick['endpoint'] ?? '') === '' && ($pick['key_status'] ?? '') !== 'set' && (string) ($d['claude']['in_use'] ?? '') === '') {
                 return "agent '{$pick['name']}' runs on the app's Claude account, which is not set up: " . ($d['claude']['problem'] ?? '') . " ({$manage})";

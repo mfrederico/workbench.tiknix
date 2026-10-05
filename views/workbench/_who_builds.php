@@ -21,7 +21,7 @@
                             <?php else:
                                 $__claude = (string) ($appAgents['claude']['in_use'] ?? '');
                                 $__def = null;
-                                foreach ($appAgents['agents'] as $__a) if (!empty($__a['is_default'])) $__def = $__a;
+                                foreach ($appAgents['agents'] as $__a) if (!empty($__a['is_default']) && !empty($__a['builder'])) $__def = $__a;   // the builder: the default of the agents that can build
                                 $__why = function (array $a) use ($__claude): string {
                                     if (empty($a['builder'])) return 'text only — cannot build';
                                     if (!empty($a['problems'])) return implode('; ', $a['problems']);

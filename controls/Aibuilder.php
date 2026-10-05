@@ -222,7 +222,7 @@ class Aibuilder extends BuildControl {
                     foreach ((array) ($ag['agents'] ?? []) as $a) {
                         $n = (string) ($a['name'] ?? '');
                         if ($n === '' || empty($a['builder'])) continue;   // only a Build agent runs a terminal: the others answer, they do not edit
-                        $label = $n . (!empty($a['preset']) ? ' · ' . $a['preset'] : '') . (!empty($a['is_default']) ? ' (default)' : '');
+                        $label = $n . (!empty($a['preset']) ? ' · ' . $a['preset'] : '') . (!empty($a['is_default']) ? ' (builder)' : '');
                         $ctAgents[!empty($a['is_default']) ? '' : $n] = $label;   // '' = the default agent
                     }
                     if ($ctAgent !== '' && !array_key_exists($ctAgent, $ctAgents)) {
