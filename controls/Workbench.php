@@ -2087,6 +2087,10 @@ class Workbench extends BuildControl {
         // What the agent had to check its work with — a sandbox, or none and why (AgentTask::sandbox).
         if ($r !== null && !empty($r['sandbox'])) $this->logTaskEvent((int) $task->id, str_starts_with((string) $r['sandbox'], 'none') ? 'warning' : 'info', 'agent', 'Sandbox: ' . $r['sandbox']);
         if ($r !== null && !empty($r['output'])) $this->logTaskEvent((int) $task->id, 'info', 'agent', 'Agent output (tail): ' . mb_substr((string) $r['output'], -1500));
+        // What the agent proposed for the project's notebook (its `## Notebook` section): kept with
+        // the task and added when the work is approved and merged — not before, since work that is
+        // declined should leave no lesson behind.
+        if ($r !== null) $task->notebookJson = json_encode(\app\Notebook::parse((string) ($r['output'] ?? '')));
         // What the run cost, kept on the task (app\RunStats) — a board task is measured like a plan's.
         if ($r !== null && is_array($r['stats'] ?? null)) {
             $total = \app\RunStats::add(json_decode((string) ($task->statsJson ?? ''), true) ?: [], $r['stats']);
@@ -2384,6 +2388,15 @@ class Workbench extends BuildControl {
             $task->updatedAt = date('Y-m-d H:i:s');
             $task->progressMessage = 'Merged into the app as ' . ($m['merged'] ?? '?');
             Bean::store($task);
+            // The task's notebook entries go in with its work, as the member approving it.
+            $entries = json_decode((string) ($task->notebookJson ?? ''), true);
+            if (is_array($entries) && $entries) {
+                try { $nb = \app\TenantHost::notebookAdd($ct, $entries, 'task #' . (int) $task->id, \app\TenantHost::author((int) $this->member->id)); }
+                catch (\RuntimeException $e) { $nb = ['ok' => false, 'error' => $e->getMessage()]; }
+                $this->logTaskEvent((int) $task->id, empty($nb['ok']) ? 'warning' : 'info', 'system', empty($nb['ok'])
+                    ? 'Notebook: ' . count($entries) . ' entr' . (count($entries) === 1 ? 'y' : 'ies') . ' not added — ' . (string) ($nb['error'] ?? 'the app did not answer')
+                    : 'Notebook: ' . (int) ($nb['added'] ?? 0) . ' added' . (!empty($nb['skipped']) ? ', ' . (int) $nb['skipped'] . ' already there' : '') . ":\n" . implode("\n", array_map(fn($e) => "- {$e['kind']}: {$e['text']}", $entries)));
+            }
             $this->logTaskEvent((int) $task->id, 'success', 'system', 'Merged into the app in its container as ' . ($m['merged'] ?? '?'));
             Flight::json(['success' => true, 'message' => 'Merged into the app']);
             return;
