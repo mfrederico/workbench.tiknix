@@ -179,6 +179,15 @@ $baseDomain = $baseUrl === '' ? '' : preg_replace('#^https?://#', '', rtrim($bas
                             </button>
                         <?php endif; ?>
 
+                        <?php /* How this task is proven to work: the checks its plan wrote for it (the agent runs
+                                 them and answers under "Verified" in its summary; the audit repeats them). */
+                              $__checks = json_decode((string) ($task->acceptanceCriteria ?? ''), true);
+                              if (is_array($__checks) && $__checks): ?>
+                            <details class="small mb-2" id="taskChecks"<?= in_array($task->status, ['pending', 'failed'], true) ? ' open' : '' ?>>
+                                <summary class="text-body-secondary"><i class="bi bi-check2-square me-1"></i>Proven by <?= count($__checks) ?> check<?= count($__checks) === 1 ? '' : 's' ?></summary>
+                                <ol class="mb-0 mt-1 ps-3"><?php foreach ($__checks as $__c): ?><li><?= htmlspecialchars((string) $__c) ?></li><?php endforeach; ?></ol>
+                            </details>
+                        <?php endif; ?>
                         <?php if (!empty($runStatsLine)): /* what the agents' runs have cost — app\RunStats */ ?>
                             <div class="small text-body-secondary mb-2" id="runStats" title="Measured from the agent's own session: time it ran, tools it called, tokens its provider reported"><i class="bi bi-speedometer2 me-1"></i><?= htmlspecialchars($runStatsLine) ?></div>
                         <?php endif; ?>
