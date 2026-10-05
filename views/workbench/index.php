@@ -463,6 +463,19 @@
                         'taskIds'     => $groupPendingIds['plan:' . $pid] ?? [],
                     ];
                 }
+                // Which agent builds what: the project's Build agents, as the app last reported them. A
+                // choice exists with two or more; a task can move while it has not started (or failed).
+                $__agents = array_values((array) ($projectStatus['build_agents'] ?? []));
+                $__agNames = (array) ($projectStatus['agent_names'] ?? []);
+                $__agDefault = (string) ($projectStatus['default_agent'] ?? '');
+                $__agLabel = fn(string $n): string => (string) ($__agNames[$n] ?? $n);
+                $__agPick = count($__agents) > 1;
+                $__agMovable = ['pending', 'failed', 'conflict'];
+                foreach ($tasks as $t) {
+                    if (isset($parentSet[(int) $t->id]) || empty($t->parentTaskId) || !in_array((string) $t->status, $__agMovable, true)) continue;
+                    $k = 'plan:' . (int) $t->parentTaskId;
+                    if (isset($planMetaJs[$k])) $planMetaJs[$k]['movable'] = ($planMetaJs[$k]['movable'] ?? 0) + 1;
+                }
                 $planMetaJs['solo'] = ['id' => 0, 'title' => 'Standalone tasks', 'tag' => null, 'status' => null, 'plan_status' => '', 'url' => null, 'taskIds' => $groupPendingIds['solo'] ?? []];
 
                 // Group ordering key: the plan's id, so phases read in the order they were planned —
@@ -500,6 +513,7 @@
                                     <th>Instance</th>
                                     <th>Type</th>
                                     <th>Priority</th>
+                                    <th title="Which of the project's Build agents runs the task">Agent</th>
                                     <th>Status</th>
                                     <th>Created</th>
                                     <th></th>
@@ -573,6 +587,22 @@
                                                 <?= $priorityInfo['label'] ?>
                                             </span>
                                         </td>
+                                        <?php /* Who builds it. A dropdown while the task can still move (not started, or
+                                                 failed) and the project has more than one Build agent; otherwise what it ran on. */
+                                              $__ta = trim((string) ($task->agent ?? '')); $__taShown = $__ta !== '' ? $__ta : $__agDefault; ?>
+                                        <td data-order="<?= htmlspecialchars($__taShown) ?>" class="text-nowrap">
+                                            <?php if ($__agPick && in_array((string) $task->status, $__agMovable, true)): ?>
+                                                <select class="form-select form-select-sm wb-agent" style="max-width:9.5rem" data-task-id="<?= (int) $task->id ?>" data-was="<?= htmlspecialchars($__ta === $__agDefault ? '' : $__ta) ?>" aria-label="Agent for task #<?= (int) $task->id ?>" title="Which Build agent runs this task. Tasks on different agents run side by side.">
+                                                    <option value="" <?= $__ta === '' || $__ta === $__agDefault ? 'selected' : '' ?>><?= htmlspecialchars($__agDefault !== '' ? $__agLabel($__agDefault) : 'builder') ?> (builder)</option>
+                                                    <?php foreach ($__agents as $__n): if ($__n === $__agDefault) continue; ?><option value="<?= htmlspecialchars($__n) ?>" <?= $__ta === $__n ? 'selected' : '' ?>><?= htmlspecialchars($__agLabel($__n)) ?></option><?php endforeach; ?>
+                                                    <?php if ($__ta !== '' && !in_array($__ta, $__agents, true)): ?><option value="<?= htmlspecialchars($__ta) ?>" selected><?= htmlspecialchars($__agLabel($__ta)) ?> (not ready)</option><?php endif; ?>
+                                                </select>
+                                            <?php elseif ($__taShown !== ''): ?>
+                                                <small class="text-body-secondary"><i class="bi bi-robot me-1"></i><?= htmlspecialchars($__agLabel($__taShown)) ?></small>
+                                            <?php else: ?>
+                                                <span class="text-muted">—</span>
+                                            <?php endif; ?>
+                                        </td>
                                         <td data-order="<?= htmlspecialchars(((string)$task->status) ?? '') ?>">
                                             <?php
                                             $statusBadge = match($task->status) {
@@ -623,6 +653,41 @@
                         'https://cdn.datatables.net/rowgroup/1.4.1/js/dataTables.rowGroup.min.js'
                     ];
                     function esc(t){ return $('<div>').text(t == null ? '' : t).html(); }
+                    // The project's Build agents ({name, label, def}); the builder first.
+                    var WB_AGENTS = <?= json_encode(array_map(fn($n) => ['name' => (string) $n, 'label' => $__agLabel((string) $n), 'def' => (string) $n === $__agDefault], array_merge(array_values(array_filter($__agents, fn($n) => $n === $__agDefault)), array_values(array_filter($__agents, fn($n) => $n !== $__agDefault)))), JSON_UNESCAPED_SLASHES | JSON_HEX_TAG) ?>;
+                    // Which agent runs a task / a plan's waiting tasks (POST /workbench/taskagent).
+                    document.addEventListener('change', function(e){
+                        var sel = e.target && e.target.closest ? e.target.closest('.wb-agent, .wb-agent-group') : null;
+                        if (!sel) return;
+                        var group = sel.classList.contains('wb-agent-group');
+                        if (group && sel.value === '__') return;
+                        var body = new URLSearchParams({agent: sel.value, _csrf_token: window.WB_CSRF || ''});
+                        body.set(group ? 'plan_id' : 'task_id', sel.getAttribute(group ? 'data-plan-id' : 'data-task-id'));
+                        sel.disabled = true;
+                        fetch('/workbench/taskagent', {method: 'POST', headers: {'Content-Type': 'application/x-www-form-urlencoded', 'X-CSRF-TOKEN': window.WB_CSRF || '', 'X-Requested-With': 'XMLHttpRequest'}, body: body.toString()})
+                            .then(function(r){ return r.json(); })
+                            .then(function(j){
+                                sel.disabled = false;
+                                if (!j.success) throw new Error(j.message || 'The agent was not changed');
+                                // The rows are DataTables' own nodes: set each moved task's dropdown, on any page.
+                                var ids = (j.data && j.data.task_ids || []).map(String), to = (j.data && j.data.agent) || '';
+                                $('#wbTasks').DataTable().rows().nodes().to$().find('.wb-agent').each(function(){
+                                    if (ids.indexOf(this.getAttribute('data-task-id')) < 0) return;
+                                    this.value = to; this.setAttribute('data-was', to);
+                                    if (this.value !== to) this.value = '';   // the builder is listed as ''
+                                });
+                                if (group) sel.value = '__';
+                                // Said where it was done: a green tick on the dropdown for a moment (a phase's
+                                // picker goes back to "Run on…", so its rows' dropdowns are what shows the change).
+                                sel.classList.add('is-valid'); sel.title = j.message;
+                                setTimeout(function(){ sel.classList.remove('is-valid'); }, 2500);
+                            })
+                            .catch(function(err){
+                                sel.disabled = false;
+                                if (group) sel.value = '__'; else sel.value = sel.getAttribute('data-was') || '';
+                                (window.tkAlert || alert)(String(err.message || err), {type: 'error'});
+                            });
+                    });
                     // Lifecycle action buttons for a plan group header, keyed on plan_status.
                     function planActions(m){
                         if (!m.id) return '';   // solo group is not a plan
@@ -692,6 +757,13 @@
                                     var groupCb = (m.taskIds && m.taskIds.length)
                                         ? '<input type="checkbox" class="form-check-input wb-consol-group me-2 align-middle" data-ids="'+m.taskIds.join(',')+'" title="Select all '+m.taskIds.length+' pending task(s) in this plan to consolidate">'
                                         : '';
+                                    // Move every task of the plan that has not started to another Build agent, in one go.
+                                    var agentPick = (WB_AGENTS.length > 1 && m.id && m.movable && !m.superseded)
+                                        ? '<select class="form-select form-select-sm d-inline-block w-auto me-2 align-middle wb-agent-group" data-plan-id="'+m.id+'" aria-label="Agent for this plan\'s waiting tasks" title="Run the '+m.movable+' task(s) of this plan that have not started on one agent">'
+                                          + '<option value="__">Run on…</option>'
+                                          + WB_AGENTS.map(function(a){ return '<option value="'+esc(a.def ? '' : a.name)+'">'+esc(a.label)+(a.def ? ' (builder)' : '')+'</option>'; }).join('')
+                                          + '</select>'
+                                        : '';
                                     // A superseded re-plan: said on the header, and its tasks are dimmed.
                                     var state = m.superseded
                                         ? ' <span class="badge text-bg-light border ms-1" title="An automatic re-plan of plan #'+m.superseded+', which then finished without it: these tasks are already built. Safe to delete."><i class="bi bi-slash-circle me-1"></i>Superseded</span>'
@@ -701,7 +773,7 @@
                                     return $('<tr class="table-active'+(m.superseded ? ' wb-superseded-head' : '')+'">').append(
                                         // Across every VISIBLE column, counted: a literal 7 stopped being right when the ID
                                         // column was added, and the header ended one column short of the table's edge.
-                                        '<td colspan="'+$('#wbTasks thead tr:first th').length+'">'+groupCb+planActions(m)+icon+title+tag+state+count+'</td>'
+                                        '<td colspan="'+$('#wbTasks thead tr:first th').length+'">'+groupCb+agentPick+planActions(m)+icon+title+tag+state+count+'</td>'
                                     );
                                 }
                             },

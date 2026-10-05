@@ -1252,6 +1252,41 @@ class Workbench extends BuildControl {
         );
     }
 
+    /** The states in which a task has not started (or has stopped), so the agent it runs on can still be changed. */
+    private const AGENT_CHANGEABLE = ['pending', 'failed', 'conflict'];
+
+    /**
+     * POST /workbench/taskagent — which of the app's Build agents a task runs on, set from the
+     * board: one task (task_id), or every task of a plan that has not started (plan_id). agent ''
+     * = the app's builder. Tasks on different agents run side by side (PlanExecutor caps each
+     * agent by its own "Tasks at once"), which is what a second Build agent is for. JSON.
+     */
+    public function taskagent($params = []) {
+        if (!$this->planActionGuard()) return;
+        try { $agent = \app\PlanIngestor::agentName($this->getParam('agent', '')); }
+        catch (\RuntimeException $e) { Flight::jsonError($e->getMessage(), 422); return; }
+
+        $planId = (int) $this->getParam('plan_id', 0);
+        $first  = Bean::load('workbenchtask', $planId ?: (int) $this->getParam('task_id', 0));
+        if (!$first->id || !$this->access->canRun((int) $this->member->id, $first)) { Flight::jsonError('No such task', 404); return; }
+        $tasks = $planId
+            ? array_values(Bean::find('workbenchtask', 'parent_task_id = ? AND status IN (' . implode(',', array_fill(0, count(self::AGENT_CHANGEABLE), '?')) . ') ORDER BY id', array_merge([$planId], self::AGENT_CHANGEABLE)))
+            : [$first];
+        if (!$planId && !in_array((string) $first->status, self::AGENT_CHANGEABLE, true)) {
+            Flight::jsonError("Task #{$first->id} is {$first->status}: the agent can be changed only before a task starts, or after it failed.", 409); return;
+        }
+        if (!$tasks) { Flight::jsonError('No task of this plan is waiting to start, so there is nothing to move to another agent.', 409); return; }
+
+        $tenant = \app\TenantBuilder::bySlug(explode('.', (string) $first->instanceTag, 2)[0]);
+        if (!$tenant) { Flight::jsonError('This project does not run its own agents, so there is no agent to pick.', 409); return; }
+        if ($why = $this->tenantAgentProblem($tenant, $agent)) { Flight::jsonError('That agent cannot build: ' . $why . '.', 409); return; }
+
+        foreach ($tasks as $t) { $t->agent = $agent; Bean::store($t); }
+        $n = count($tasks);
+        Flight::jsonSuccess(['agent' => $agent, 'task_ids' => array_map(fn($t) => (int) $t->id, $tasks)],
+            ($planId ? "{$n} task" . ($n === 1 ? '' : 's') . ' of this plan' : "Task #{$first->id}") . ' will run on ' . ($agent !== '' ? $agent : 'the builder') . '.');
+    }
+
     /**
      * POST /workbench/taskretry — recover a failed plan subtask: reset it to pending
      * (fresh auto-retry budget), re-open the plan, and re-launch the orchestrator,
