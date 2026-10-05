@@ -2957,6 +2957,51 @@ class Workbench extends BuildControl {
      * View task logs
      */
     /**
+     * GET /workbench/notebook — the selected project's notebook (the app's app\Notebook): what its
+     * builders are handed before every task and add to after it. Read from the project's own
+     * repository in its container; ?doc= picks which document is open in the editor.
+     */
+    public function notebook($params = []) {
+        if (!$this->requireLogin()) return;
+        $ct = $this->tenantInst();
+        $this->viewData['title'] = 'Notebook';
+        $this->viewData['docs'] = null; $this->viewData['titles'] = []; $this->viewData['notebookError'] = '';
+        $this->viewData['doc'] = (string) $this->getParam('doc', 'lessons');
+        if (!$ct) {
+            $this->viewData['notebookError'] = $this->selected ? 'This project is not running in its own container, so it has no notebook to show.' : 'Choose a project first — a notebook belongs to one project.';
+        } else {
+            try { $r = \app\TenantHost::notebook($ct); } catch (\RuntimeException $e) { $r = ['ok' => false, 'error' => $e->getMessage()]; }
+            if (empty($r['ok'])) {
+                // An app on a runtime older than the notebook answers with no JSON: say that, not "empty".
+                $this->viewData['notebookError'] = 'The project did not answer about its notebook: ' . (string) ($r['error'] ?? 'no answer') . ' (it needs runtime alpha.135 or newer — it updates itself when no build is running).';
+            } else {
+                $this->viewData['docs'] = (array) $r['docs'];
+                $this->viewData['titles'] = (array) $r['titles'];
+                if (!isset($this->viewData['docs'][$this->viewData['doc']])) $this->viewData['doc'] = (string) array_key_first($this->viewData['docs']);
+            }
+        }
+        $this->viewData['projectName'] = (string) ($this->selected['name'] ?? $this->selected['slug'] ?? '');
+        $this->render('workbench/notebook', $this->viewData);
+    }
+
+    /** POST /workbench/notebooksave — save one notebook document as edited; committed in the project as you. */
+    public function notebooksave($params = []) {
+        if (!$this->requireLogin()) return;
+        if (Flight::request()->method !== 'POST') { Flight::redirect('/workbench/notebook'); return; }
+        $doc = (string) $this->getParam('doc', '');
+        $back = '/workbench/notebook?doc=' . rawurlencode($doc);
+        if (!Flight::csrf()->validateRequest()) { $this->flash('error', 'Invalid CSRF token'); Flight::redirect($back); return; }
+        $ct = $this->tenantInst();
+        if (!$ct || !$this->access->canAccessInstance((int) $this->member->id, (int) $ct->id)) { $this->flash('error', 'Choose a project you can work on first.'); Flight::redirect('/workbench/notebook'); return; }
+        try { $r = \app\TenantHost::notebookSet($ct, $doc, (string) $this->getParam('text', ''), \app\TenantHost::author((int) $this->member->id)); }
+        catch (\RuntimeException $e) { $r = ['ok' => false, 'error' => $e->getMessage()]; }
+        if (empty($r['ok'])) { $this->flash('error', 'Not saved: ' . (string) ($r['error'] ?? 'the project did not answer') . '.'); Flight::redirect($back); return; }
+        $this->logger->info('Notebook edited', ['slug' => (string) $ct->slug, 'doc' => $doc, 'member_id' => (int) $this->member->id]);
+        $this->flash('success', 'Saved. Every task and plan from now on is handed this version.');
+        Flight::redirect($back);
+    }
+
+    /**
      * GET /workbench/prompts — everything you have asked this system to build.
      *
      * Lives HERE rather than in core because all three things it records are build

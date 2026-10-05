@@ -14,7 +14,7 @@ $__p = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/';
 $__onBuilder = strpos($__p, '/aibuilder') === 0;
 // Prompts must be matched BEFORE the board: it lives under /workbench/… too, so a plain
 // prefix test would light up the Task Board tab while you are looking at prompts.
-$__facet = $__onBuilder ? 'builder' : (strpos($__p, '/workbench/prompts') === 0 ? 'prompts' : 'board');
+$__facet = $__onBuilder ? 'builder' : (strpos($__p, '/workbench/prompts') === 0 ? 'prompts' : (strpos($__p, '/workbench/notebook') === 0 ? 'notebook' : 'board'));
 ?><!doctype html>
 <html lang="en" data-bs-theme="light">
 <head>
@@ -39,6 +39,8 @@ $__facet = $__onBuilder ? 'builder' : (strpos($__p, '/workbench/prompts') === 0 
              forms and the Terminal — rather than in core's nav, which is where you pick a
              project rather than work on one. */ ?>
     <li class="nav-item"><a class="nav-link py-1 px-2 <?= (($__facet ?? '') === 'prompts') ? 'active' : '' ?>" href="/workbench/prompts" title="Prompts"><i class="bi bi-chat-left-quote me-sm-1"></i><span class="d-none d-sm-inline">Prompts</span><span class="visually-hidden d-sm-none">Prompts</span></a></li>
+    <?php /* What this project's builders know, written down: read into every task, added to by them, edited here. */ ?>
+    <li class="nav-item"><a class="nav-link py-1 px-2 <?= (($__facet ?? '') === 'notebook') ? 'active' : '' ?>" href="/workbench/notebook" title="Notebook"><i class="bi bi-journal-text me-sm-1"></i><span class="d-none d-sm-inline">Notebook</span><span class="visually-hidden d-sm-none">Notebook</span></a></li>
   </ul>
   <?php /* Stuck on something that looks like the platform rather than your app? Tiknix
            support, about THIS project: core's Support page with it filled in (Contact::index
