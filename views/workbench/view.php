@@ -179,6 +179,9 @@ $baseDomain = $baseUrl === '' ? '' : preg_replace('#^https?://#', '', rtrim($bas
                             </button>
                         <?php endif; ?>
 
+                        <?php if (!empty($runStatsLine)): /* what the agents' runs have cost — app\RunStats */ ?>
+                            <div class="small text-body-secondary mb-2" id="runStats" title="Measured from the agent's own session: time it ran, tools it called, tokens its provider reported"><i class="bi bi-speedometer2 me-1"></i><?= htmlspecialchars($runStatsLine) ?></div>
+                        <?php endif; ?>
                         <?php if (!empty($planRollup['stopped'])): ?>
                             <?php /* Subtasks that stopped: said by name, with the retry right here. */ ?>
                             <div class="alert alert-warning w-100 mb-2">

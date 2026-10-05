@@ -1719,8 +1719,13 @@ class Workbench extends BuildControl {
                                   'error' => mb_substr((string) $s->errorMessage, 0, 300)];
                 }
                 $planRollup = ['total' => count($subs), 'done' => $done, 'counts' => $counts, 'stopped' => $stopped];
+                // What the plan's agents have cost so far: every subtask's runs, summed (app\RunStats).
+                $planStats = \app\RunStats::sum(array_map(fn($s) => json_decode((string) ($s->statsJson ?? ''), true), array_values($subs)));
+                if (!empty($planStats['tasks'])) $this->viewData['runStatsLine'] = \app\RunStats::line($planStats) . ' — across ' . (int) $planStats['tasks'] . ' task' . ((int) $planStats['tasks'] === 1 ? '' : 's') . ' that ' . ((int) $planStats['tasks'] === 1 ? 'has' : 'have') . ' run';
             }
         }
+        // A task's own runs so far.
+        if (!isset($this->viewData['runStatsLine'])) $this->viewData['runStatsLine'] = \app\RunStats::line(json_decode((string) ($task->statsJson ?? ''), true) ?: []);
         $this->viewData['planRollup'] = $planRollup;
 
         $this->viewData['title'] = $task->title;
@@ -2082,6 +2087,12 @@ class Workbench extends BuildControl {
         // What the agent had to check its work with — a sandbox, or none and why (AgentTask::sandbox).
         if ($r !== null && !empty($r['sandbox'])) $this->logTaskEvent((int) $task->id, str_starts_with((string) $r['sandbox'], 'none') ? 'warning' : 'info', 'agent', 'Sandbox: ' . $r['sandbox']);
         if ($r !== null && !empty($r['output'])) $this->logTaskEvent((int) $task->id, 'info', 'agent', 'Agent output (tail): ' . mb_substr((string) $r['output'], -1500));
+        // What the run cost, kept on the task (app\RunStats) — a board task is measured like a plan's.
+        if ($r !== null && is_array($r['stats'] ?? null)) {
+            $total = \app\RunStats::add(json_decode((string) ($task->statsJson ?? ''), true) ?: [], $r['stats']);
+            $task->statsJson = json_encode($total);
+            $this->logTaskEvent((int) $task->id, 'info', 'agent', 'This run: ' . \app\RunStats::line(\app\RunStats::add([], $r['stats'])));
+        }
         $status = (string) ($r['status'] ?? '');
         if ($status === 'changed') {
             $task->status = 'awaiting';
