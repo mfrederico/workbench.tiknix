@@ -273,45 +273,11 @@
             </div>
             <?php endif; ?>
 
-            <!-- Status filter — moved above the task list -->
-            <ul class="nav nav-pills mb-3 gap-1 flex-wrap">
-                <?php foreach ($statusTabs as $sKey => $sInfo): [$sLabel, $sIcon, $sColor, $sCount] = $sInfo; $sActive = ($statusTab ?? 'active') === $sKey; ?>
-                <li class="nav-item">
-                    <a class="nav-link <?= $sActive ? 'active' : '' ?>" href="<?= htmlspecialchars($statusLink($sKey)) ?>">
-                        <i class="bi bi-<?= $sIcon ?>"></i> <?= $sLabel ?>
-                        <span class="badge bg-<?= $sActive ? 'light text-dark' : $sColor ?> rounded-pill ms-1"><?= $sCount ?></span>
-                    </a>
-                </li>
-                <?php endforeach; ?>
-            </ul>
-
-            <script>window.WB_CSRF = <?= json_encode(csrf_token(), JSON_UNESCAPED_SLASHES) ?>;</script>
-            <script>
-            // New-instance provisioning (mirrors /aibuilder): create, then jump into
-            // the new instance's builder to start working.
-            (function(){
-                var form = document.getElementById('wb-create-form');
-                if (!form) return;
-                form.addEventListener('submit', function(e){
-                    e.preventDefault();
-                    var btn = form.querySelector('button[type=submit]'), msg = document.getElementById('wb-create-msg');
-                    btn.disabled = true; msg.textContent = 'Provisioning… this can take a minute.';
-                    fetch('/aibuilder/create', {
-                        method: 'POST',
-                        headers: {'Content-Type':'application/x-www-form-urlencoded','X-CSRF-TOKEN':window.WB_CSRF||'','X-Requested-With':'XMLHttpRequest'},
-                        body: new URLSearchParams({slug: form.slug.value.trim(), engine: form.engine.value, csrf_token: window.WB_CSRF||''}).toString()
-                    }).then(function(r){ return r.json(); }).then(function(j){
-                        if (j && j.success && j.data && j.data.id) { window.location = '/aibuilder/open/' + j.data.id; }
-                        else { msg.textContent = (j && j.message) || 'Failed.'; btn.disabled = false; }
-                    }).catch(function(){ msg.textContent = 'Network error.'; btn.disabled = false; });
-                });
-            })();
-            </script>
-
             <?php /* Decomposing banner for THE SELECTED PROJECT — detected server-side
                      from a live planner session, so it survives navigating away, and
                      armed by ?decomposing=1 for the moment right after submitting, before
-                     tmux has the session. */ ?>
+                     tmux has the session. Directly under the Goal → phases card: it is that card's
+                     "Plan the next phase" at work, and belongs beside the phases it will add to. */ ?>
             <?php if (!empty($decomposing)): ?>
                 <div id="wbDecomposeBanner" class="alert alert-info d-flex align-items-center">
                     <span class="spinner-border spinner-border-sm me-2" role="status"></span>
@@ -411,6 +377,42 @@
                 })();
                 </script>
             <?php endif; ?>
+
+            <!-- Status filter — moved above the task list -->
+            <ul class="nav nav-pills mb-3 gap-1 flex-wrap">
+                <?php foreach ($statusTabs as $sKey => $sInfo): [$sLabel, $sIcon, $sColor, $sCount] = $sInfo; $sActive = ($statusTab ?? 'active') === $sKey; ?>
+                <li class="nav-item">
+                    <a class="nav-link <?= $sActive ? 'active' : '' ?>" href="<?= htmlspecialchars($statusLink($sKey)) ?>">
+                        <i class="bi bi-<?= $sIcon ?>"></i> <?= $sLabel ?>
+                        <span class="badge bg-<?= $sActive ? 'light text-dark' : $sColor ?> rounded-pill ms-1"><?= $sCount ?></span>
+                    </a>
+                </li>
+                <?php endforeach; ?>
+            </ul>
+
+            <script>window.WB_CSRF = <?= json_encode(csrf_token(), JSON_UNESCAPED_SLASHES) ?>;</script>
+            <script>
+            // New-instance provisioning (mirrors /aibuilder): create, then jump into
+            // the new instance's builder to start working.
+            (function(){
+                var form = document.getElementById('wb-create-form');
+                if (!form) return;
+                form.addEventListener('submit', function(e){
+                    e.preventDefault();
+                    var btn = form.querySelector('button[type=submit]'), msg = document.getElementById('wb-create-msg');
+                    btn.disabled = true; msg.textContent = 'Provisioning… this can take a minute.';
+                    fetch('/aibuilder/create', {
+                        method: 'POST',
+                        headers: {'Content-Type':'application/x-www-form-urlencoded','X-CSRF-TOKEN':window.WB_CSRF||'','X-Requested-With':'XMLHttpRequest'},
+                        body: new URLSearchParams({slug: form.slug.value.trim(), engine: form.engine.value, csrf_token: window.WB_CSRF||''}).toString()
+                    }).then(function(r){ return r.json(); }).then(function(j){
+                        if (j && j.success && j.data && j.data.id) { window.location = '/aibuilder/open/' + j.data.id; }
+                        else { msg.textContent = (j && j.message) || 'Failed.'; btn.disabled = false; }
+                    }).catch(function(){ msg.textContent = 'Network error.'; btn.disabled = false; });
+                });
+            })();
+            </script>
+
 
             <?php if (empty($tasks)): ?>
                 <div class="card">
