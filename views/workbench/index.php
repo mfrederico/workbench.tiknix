@@ -251,7 +251,13 @@
                 <form method="post" action="/workbench/continuephase" class="d-flex align-items-center gap-2 flex-wrap">
                   <?php foreach (($csrf ?? []) as $__cn => $__cv): ?><input type="hidden" name="<?= htmlspecialchars($__cn) ?>" value="<?= htmlspecialchars($__cv) ?>"><?php endforeach; ?>
                   <?php $__building = (bool) array_filter($__phases, fn($__x) => $__x['plan_status'] === 'building'); /* the main action only when nothing is waiting or running */ ?>
+                  <?php /* One planner per project at a time (PlanRunner::start refuses a second). While one is
+                           running the button says so instead of inviting a click that can only be refused. */ ?>
+                  <?php if (!empty($decomposing)): ?>
+                  <button type="button" class="btn btn-outline-secondary btn-sm" id="planNextPhaseBtn" disabled title="A planner is already running for this project — its progress is shown below. Stop it there to plan something else."><span class="spinner-border spinner-border-sm me-1" role="status"></span>Planning the next phase…</button>
+                  <?php else: ?>
                   <button type="submit" class="btn btn-<?= empty($nextPhase) && !$__building ? 'primary' : 'outline-secondary' ?> btn-sm" id="planNextPhaseBtn"><i class="bi bi-lightbulb me-1"></i>Plan the next phase</button>
+                  <?php endif; ?>
                   <?php /* Who plans it: the project's agents that can plan and build, as the app last reported
                            them. Shown when there is a choice to make; the builder is the default. */
                         $__ba = (array) ($projectStatus['build_agents'] ?? []); $__bn = (array) ($projectStatus['agent_names'] ?? []); $__bd = (string) ($projectStatus['default_agent'] ?? '');
