@@ -189,9 +189,7 @@
             /* Goal -> phases provenance + progress. Each phase is a plan parent (a task with
                subtasks); progress is its subtasks built (merged/completed) over total. Shown
                only when this project has a decomposed goal on disk. */
-            $__phases = [];
-            foreach (($planMeta ?? []) as $__pm) { if (isset($__pm['total'])) $__phases[] = $__pm; }
-            usort($__phases, fn($a, $b) => ((int)$a['id'] <=> (int)$b['id']));
+            $__phases = $phases ?? [];   // Workbench::phaseList(): every plan, whatever the filter shows
             if (!empty($hasSavedGoal) || $__phases):
             ?>
             <div class="card mb-3 border-primary-subtle">
@@ -210,14 +208,24 @@
                 <?php endif; ?>
                 <?php if ($__phases): ?>
                 <div class="d-flex flex-column gap-2">
-                  <?php foreach ($__phases as $__i => $__ph): $__t = (int)($__ph['total'] ?? 0); $__b = (int)($__ph['built'] ?? 0); $__p = $__t ? (int)round($__b * 100 / $__t) : 0; $__done = $__t > 0 && $__b === $__t; ?>
-                  <div class="d-flex align-items-center gap-2">
-                    <span class="badge text-bg-<?= $__done ? 'success' : 'secondary' ?> text-nowrap" style="min-width:4.5rem">Phase <?= $__i + 1 ?></span>
-                    <a href="/workbench/view?id=<?= (int)$__ph['id'] ?>" class="text-truncate small text-decoration-none" style="max-width:20rem" title="<?= htmlspecialchars((string)$__ph['title']) ?>"><?= htmlspecialchars((string)$__ph['title']) ?></a>
+                  <?php foreach ($__phases as $__ph): $__t = (int) $__ph['total']; $__b = (int) $__ph['built']; $__p = $__t ? (int) round($__b * 100 / $__t) : 0; $__done = $__t > 0 && $__b === $__t;
+                        $__isNext = !empty($nextPhase) && (int) $nextPhase['id'] === (int) $__ph['id'];
+                        $__st = ['draft' => 'planned', 'approved' => 'approved', 'building' => 'building', 'stalled' => 'stalled', 'done' => 'built'][$__ph['plan_status']] ?? $__ph['plan_status']; ?>
+                  <div class="d-flex align-items-center gap-2 <?= $__ph['superseded'] ? 'opacity-50' : '' ?>">
+                    <?php if ($__ph['replan_of']): ?>
+                    <span class="badge text-bg-light border text-nowrap" style="min-width:4.5rem" title="Made automatically when plan #<?= (int) $__ph['replan_of'] ?> stalled: a re-plan of what was left of it"><?= $__ph['superseded'] ? 'Superseded' : 'Re-plan' ?></span>
+                    <?php else: ?>
+                    <span class="badge text-bg-<?= $__done ? 'success' : ($__isNext ? 'primary' : 'secondary') ?> text-nowrap" style="min-width:4.5rem">Phase <?= (int) $__ph['phase'] ?></span>
+                    <?php endif; ?>
+                    <a href="/workbench/view?id=<?= (int) $__ph['id'] ?>" class="text-truncate small text-decoration-none" style="max-width:20rem" title="<?= htmlspecialchars($__ph['title']) ?>"><?= htmlspecialchars($__ph['title']) ?></a>
+                    <?php if ($__ph['superseded']): ?>
+                    <span class="small text-body-secondary flex-grow-1">a re-plan of #<?= (int) $__ph['replan_of'] ?>, which then finished without it &mdash; its tasks are already built. Safe to delete.</span>
+                    <?php else: ?>
                     <div class="progress flex-grow-1" style="height:8px; min-width:5rem" role="progressbar" aria-valuenow="<?= $__p ?>" aria-valuemin="0" aria-valuemax="100">
                       <div class="progress-bar bg-<?= $__done ? 'success' : 'primary' ?>" style="width:<?= $__p ?>%"></div>
                     </div>
-                    <span class="small text-body-secondary text-nowrap"><?= $__b ?>/<?= $__t ?> built</span>
+                    <span class="small text-body-secondary text-nowrap"><?= $__b ?>/<?= $__t ?> built &middot; <?= htmlspecialchars($__st) ?><?= $__isNext ? ' &middot; next' : '' ?></span>
+                    <?php endif; ?>
                   </div>
                   <?php endforeach; ?>
                 </div>
@@ -228,17 +236,30 @@
                   <div class="text-success-emphasis mt-1"><?= htmlspecialchars(mb_substr((string)$goalComplete, 0, 400)) ?></div>
                 </div>
                 <?php endif; ?>
-                <?php if (!empty($hasSavedGoal)): ?>
-                <form method="post" action="/workbench/continuephase" class="d-flex align-items-center gap-2 mt-3 flex-wrap">
+                <?php /* Two different things, two buttons: BUILD a phase that is already planned, and PLAN
+                         a new one from the goal. One button called "Continue to next phase" did only the
+                         second, while the list above it showed a planned phase waiting. */ ?>
+                <div class="d-flex align-items-center gap-2 mt-3 flex-wrap">
+                <?php if (!empty($nextPhase)): ?>
+                <form method="post" action="/workbench/buildnextphase" class="d-inline" data-confirm="<?= htmlspecialchars(($nextPhase['plan_status'] === 'draft' ? 'Approve and build' : 'Build') . ' “' . $nextPhase['title'] . '”? Its ' . (int) $nextPhase['total'] . ' task(s) run on this project’s builder, in order, and merge as they finish.') ?>">
                   <?php foreach (($csrf ?? []) as $__cn => $__cv): ?><input type="hidden" name="<?= htmlspecialchars($__cn) ?>" value="<?= htmlspecialchars($__cv) ?>"><?php endforeach; ?>
-                  <button type="submit" class="btn btn-primary btn-sm"><i class="bi bi-arrow-right-circle me-1"></i>Continue to next phase</button>
-                  <div class="form-check form-switch mb-0 small">
-                    <input class="form-check-input" type="checkbox" role="switch" id="cpAuto" name="auto_build" value="1">
-                    <label class="form-check-label text-body-secondary" for="cpAuto">Run it straight through</label>
-                  </div>
-                  <span class="small text-body-secondary">Grounds on what&rsquo;s built, plans the next phase.</span>
+                  <input type="hidden" name="plan_id" value="<?= (int) $nextPhase['id'] ?>">
+                  <button type="submit" class="btn btn-primary btn-sm" id="buildNextPhaseBtn"><i class="bi bi-play-fill me-1"></i><?= $nextPhase['plan_status'] === 'draft' ? 'Approve &amp; build' : ($nextPhase['plan_status'] === 'stalled' ? 'Resume' : 'Build') ?> <?= $nextPhase['replan_of'] ? 'the re-plan' : 'phase ' . (int) $nextPhase['phase'] ?></button>
                 </form>
                 <?php endif; ?>
+                <?php if (!empty($hasSavedGoal)): ?>
+                <form method="post" action="/workbench/continuephase" class="d-flex align-items-center gap-2 flex-wrap">
+                  <?php foreach (($csrf ?? []) as $__cn => $__cv): ?><input type="hidden" name="<?= htmlspecialchars($__cn) ?>" value="<?= htmlspecialchars($__cv) ?>"><?php endforeach; ?>
+                  <?php $__building = (bool) array_filter($__phases, fn($__x) => $__x['plan_status'] === 'building'); /* the main action only when nothing is waiting or running */ ?>
+                  <button type="submit" class="btn btn-<?= empty($nextPhase) && !$__building ? 'primary' : 'outline-secondary' ?> btn-sm" id="planNextPhaseBtn"><i class="bi bi-lightbulb me-1"></i>Plan the next phase</button>
+                  <div class="form-check form-switch mb-0 small">
+                    <input class="form-check-input" type="checkbox" role="switch" id="cpAuto" name="auto_build" value="1">
+                    <label class="form-check-label text-body-secondary" for="cpAuto">and build it straight through</label>
+                  </div>
+                  <span class="small text-body-secondary">Asks the planner what the goal still needs beyond what&rsquo;s built<?= !empty($nextPhase) ? ' &mdash; a phase is already planned and waiting, above' : '' ?>.</span>
+                </form>
+                <?php endif; ?>
+                </div>
               </div>
             </div>
             <?php endif; ?>

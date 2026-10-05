@@ -231,6 +231,10 @@ class Workbench extends BuildControl {
             // brief). Its presence = "no next phase"; cleared on the next decompose.
             if (is_file($ab . '/plan-complete.md')) $goalComplete = (string) file_get_contents($ab . '/plan-complete.md');
         }
+        // The phases of this project, whatever the status filter above is showing.
+        $phases = $this->phaseList();
+        $this->viewData['phases']       = $phases;
+        $this->viewData['nextPhase']    = \app\PlanPhases::next($phases);
         $this->viewData['planGoal']     = $goalDoc;
         $this->viewData['hasSavedGoal']  = $goalDoc !== '';
         $this->viewData['goalComplete']  = $goalComplete;
@@ -1064,6 +1068,85 @@ class Workbench extends BuildControl {
         if (Flight::request()->method !== 'POST') { Flight::jsonError('POST required', 405); return false; }
         if (!Flight::csrf()->validateRequest()) { Flight::jsonError('Invalid CSRF token', 403); return false; }
         return true;
+    }
+
+    /**
+     * Every plan of the selected project, oldest first, as the board's "Goal → phases" card shows
+     * them: {id, title, plan_status, total, built, replan_of, superseded, phase}.
+     *
+     * A plan is a PHASE unless it is an automatic re-plan (replan_of — PlanRemediator writes one
+     * when a build stalls, re-planning what was left). A re-plan stands in for the rest of its
+     * original, so it is that phase's way forward while the original is stuck — and SUPERSEDED the
+     * moment the original finishes without it: its tasks are then work already done. On holistica
+     * two such re-plans sat as "Phase 2" and "Phase 3" after phase 1 completed; building either
+     * would have built phase 1's second half again.
+     */
+    private function phaseList(): array {
+        $plans = Bean::find('workbenchtask', "(parent_task_id IS NULL OR parent_task_id = 0) AND plan_status IS NOT NULL AND plan_status != '' ORDER BY id ASC");
+        if (!$plans) return [];
+        $byId = [];
+        foreach ($plans as $p) $byId[(int) $p->id] = $p;
+        $counts = [];
+        $ids = array_keys($byId);
+        foreach (Bean::getAll('SELECT parent_task_id pid, COUNT(*) total, SUM(CASE WHEN status IN (\'merged\', \'completed\', \'resolved\') THEN 1 ELSE 0 END) built
+                                 FROM workbenchtask WHERE parent_task_id IN (' . implode(',', array_fill(0, count($ids), '?')) . ') GROUP BY parent_task_id', $ids) as $r) {
+            $counts[(int) $r['pid']] = [(int) $r['total'], (int) $r['built']];
+        }
+        $out = []; $n = 0;
+        foreach ($byId as $id => $p) {
+            $of = (int) ($p->replanOf ?? 0);
+            $origin = $of > 0 ? ($byId[$of] ?? null) : null;
+            $superseded = $origin !== null && (string) $origin->planStatus === 'done';
+            $out[] = [
+                'id' => $id, 'title' => (string) $p->title, 'plan_status' => (string) $p->planStatus,
+                'total' => $counts[$id][0] ?? 0, 'built' => $counts[$id][1] ?? 0,
+                'replan_of' => $of, 'superseded' => $superseded,
+                'phase' => $of > 0 ? 0 : ++$n,   // a re-plan has no number of its own
+            ];
+        }
+        return $out;
+    }
+
+    /**
+     * POST /workbench/buildnextphase — approve (when it is still a draft) and build the next
+     * phase that is already planned. What "continue" means to someone looking at a list of
+     * phases with one waiting: run it. Planning a NEW phase is continuephase.
+     */
+    public function buildnextphase($params = []) {
+        if (!$this->requireLogin()) return;
+        if (Flight::request()->method !== 'POST') { Flight::redirect('/workbench'); return; }
+        if (!Flight::csrf()->validateRequest()) { $this->flash('error', 'Invalid CSRF token'); Flight::redirect('/workbench'); return; }
+        if (!$this->requireAgent()) return;
+        $back = function (string $type, string $msg): void { $this->flash($type, $msg); Flight::redirect('/workbench'); };
+
+        $phases = $this->phaseList();
+        foreach ($phases as $ph) if ($ph['plan_status'] === 'building') { $back('info', "“{$ph['title']}” is already building — the next phase can start when it finishes."); return; }
+        $next = \app\PlanPhases::next($phases);
+        if (!$next) { $back('info', 'No phase is planned and waiting to be built. Use “Plan the next phase” to have one planned from the goal.'); return; }
+        // The one the page offered: a plan ingested since the page loaded must not be built unseen.
+        if ((int) $this->getParam('plan_id', 0) !== (int) $next['id']) { $back('error', 'The phases changed since this page loaded — check which one is next, then build it.'); return; }
+
+        $pi = $this->accessiblePlan((int) $next['id']);
+        if (!$pi) { $back('error', 'That phase is not one you can build.'); return; }
+        [$plan, $inst] = $pi;
+        if (!$inst) { $back('error', 'This phase has no linked project to build in.'); return; }
+        if (PlanOrchestrator::running((int) $plan->id, (string) $inst->slug)) { $back('info', 'That phase is already running.'); return; }
+
+        $dir   = \app\WorkbenchDb::dirOf((string) $inst->slug, (string) ($inst->app ?? ''));
+        $check = (new PlanExecutor((int) $plan->id, (string) $inst->slug, $dir, (int) $this->member->level))->progressCheck();
+        if ($check['ready'] === 0 && $check['running'] === 0) {
+            $back('error', 'This phase cannot start: ' . ($check['roots'] ? implode('; ', $check['roots']) : 'no task in it is ready') . '. Open it to retry or fix those tasks.');
+            return;
+        }
+        $wasDraft = (string) $plan->planStatus === 'draft';
+        if ($wasDraft) { $plan->planStatus = 'approved'; $plan->updatedAt = date('Y-m-d H:i:s'); Bean::store($plan); }
+        if (!$this->startOrchestrator($plan, $inst)) { $back('error', 'Could not start the build.'); return; }
+        $plan->planStatus = 'building';
+        $plan->status     = 'running';
+        $plan->updatedAt  = date('Y-m-d H:i:s');
+        Bean::store($plan);
+        $this->bustTaskCache();
+        $back('success', ($wasDraft ? 'Approved and building' : 'Building') . " “{$plan->title}” — {$next['total']} task(s), in dependency order.");
     }
 
     /** POST /workbench/planapprove — approve a plan (task-chain) so it can be built. JSON. */
