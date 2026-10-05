@@ -653,7 +653,9 @@
                                         ? '<input type="checkbox" class="form-check-input wb-consol-group me-2 align-middle" data-ids="'+m.taskIds.join(',')+'" title="Select all '+m.taskIds.length+' pending task(s) in this plan to consolidate">'
                                         : '';
                                     return $('<tr class="table-active">').append(
-                                        '<td colspan="7">'+groupCb+planActions(m)+icon+title+tag+statusBadge(m.status)+count+'</td>'
+                                        // Across every VISIBLE column, counted: a literal 7 stopped being right when the ID
+                                        // column was added, and the header ended one column short of the table's edge.
+                                        '<td colspan="'+$('#wbTasks thead tr:first th').length+'">'+groupCb+planActions(m)+icon+title+tag+statusBadge(m.status)+count+'</td>'
                                     );
                                 }
                             },
