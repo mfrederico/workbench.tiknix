@@ -552,6 +552,9 @@
                                             <?php if (!empty($task->needsPlanning)): ?>
                                                 <span class="badge bg-warning-subtle text-warning-emphasis border border-warning-subtle ms-1" title="The planner marked this as more than one task<?= !empty($task->planningNote) ? ': ' . htmlspecialchars((string) $task->planningNote) : '' ?>. Plan it more deeply before running it."><i class="bi bi-diagram-3"></i> needs its own plan</span>
                                             <?php endif; ?>
+                                            <?php if (!empty($task->splitOf)): // a piece of a task that split itself (PlanExecutor::applySplit) ?>
+                                                <a href="/workbench/view?id=<?= (int) $task->splitOf ?>" class="badge bg-info-subtle text-info-emphasis border border-info-subtle ms-1 text-decoration-none" title="Task #<?= (int) $task->splitOf ?> found it was several tasks and split itself; this is one of the pieces"><i class="bi bi-diagram-2"></i> from #<?= (int) $task->splitOf ?></a>
+                                            <?php endif; ?>
                                             <?php if ($task->teamId): ?>
                                                 <br><small class="text-muted"><i class="bi bi-people"></i> Team task</small>
                                             <?php endif; ?>
