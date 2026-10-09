@@ -460,7 +460,7 @@ $baseDomain = $baseUrl === '' ? '' : preg_replace('#^https?://#', '', rtrim($bas
                      expect it; it returns here on save and cancel), offered while the task has
                      not run — the same rule the edit page and the conversation use. */ ?>
             <?php if (!empty($task->needsPlanning)): ?>
-            <div class="alert alert-warning small py-2 mb-3"><i class="bi bi-diagram-3 me-1"></i><strong>The planner marked this as more than one task.</strong> <?= htmlspecialchars((string) ($task->planningNote ?? '')) ?> Running it as it is sends one agent at all of it; plan it as a goal of its own for a better result.</div>
+            <div class="alert alert-warning small py-2 mb-3"><i class="bi bi-diagram-3 me-1"></i><strong>The planner marked this as more than one task.</strong> <?= htmlspecialchars((string) ($task->planningNote ?? '')) ?> When it is built, its agent is told to find out first and then split it into pieces inside this plan (unless it turns out to be small) — the pieces follow this plan's own approve-or-build-on setting.</div>
             <?php endif; ?>
             <?php $descEditable = !empty($canEdit) && in_array((string) $task->status, ['pending', 'queued', 'conflict'], true); ?>
             <?php if (!empty($task->description) || $descEditable): ?>
