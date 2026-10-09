@@ -1105,11 +1105,13 @@ class Workbench extends BuildControl {
             $counts[(int) $r['pid']] = [(int) $r['total'], (int) $r['built']];
         }
         $out = []; $n = 0;
-        // A plan a re-plan took over: the newest re-plan of it (while the plan itself is unfinished).
+        // A plan a re-plan took over: an unfinished plan whose re-plan has STARTED building. While the
+        // re-plan is still only a draft, the original is what gets resumed (PlanPhases) — two half-built
+        // versions of one plan is the thing to avoid, not re-plans as such.
         $replacedBy = [];
         foreach ($byId as $id => $p) {
             $of = (int) ($p->replanOf ?? 0);
-            if ($of > 0 && isset($byId[$of]) && (string) $byId[$of]->planStatus !== 'done') $replacedBy[$of] = $id;
+            if ($of > 0 && isset($byId[$of]) && (string) $byId[$of]->planStatus !== 'done' && self::replanStarted($p, $counts[$id][1] ?? 0)) $replacedBy[$of] = $id;
         }
         foreach ($byId as $id => $p) {
             $of = (int) ($p->replanOf ?? 0);
@@ -1123,6 +1125,11 @@ class Workbench extends BuildControl {
             ];
         }
         return $out;
+    }
+
+    /** Has this re-plan begun building (so it, not its original, is the one to continue)? */
+    private static function replanStarted($replan, int $built): bool {
+        return $built > 0 || in_array((string) $replan->planStatus, ['building', 'stalled', 'done'], true);
     }
 
     /**
@@ -1331,7 +1338,7 @@ class Workbench extends BuildControl {
         // A plan a re-plan took over: its tasks were planned again there. Building one here too
         // builds the same thing twice (two seeds for one column, two versions of one page).
         $replan = (string) $plan->planStatus !== 'done' ? Bean::findOne('workbenchtask', 'replan_of = ? ORDER BY id DESC', [(int) $plan->id]) : null;
-        if ($replan && $replan->id) {
+        if ($replan && $replan->id && self::replanStarted($replan, (int) Bean::count('workbenchtask', "parent_task_id = ? AND status IN ('merged', 'completed', 'resolved')", [(int) $replan->id]))) {
             Flight::jsonError("Plan #{$plan->id} was re-planned as #{$replan->id} when it stalled, and that re-plan is what continues it — this task was planned again there. Open plan #{$replan->id} and retry or resume it; this one can be deleted.", 409);
             return;
         }
