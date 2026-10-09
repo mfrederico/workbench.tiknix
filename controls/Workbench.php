@@ -1105,6 +1105,12 @@ class Workbench extends BuildControl {
             $counts[(int) $r['pid']] = [(int) $r['total'], (int) $r['built']];
         }
         $out = []; $n = 0;
+        // A plan a re-plan took over: the newest re-plan of it (while the plan itself is unfinished).
+        $replacedBy = [];
+        foreach ($byId as $id => $p) {
+            $of = (int) ($p->replanOf ?? 0);
+            if ($of > 0 && isset($byId[$of]) && (string) $byId[$of]->planStatus !== 'done') $replacedBy[$of] = $id;
+        }
         foreach ($byId as $id => $p) {
             $of = (int) ($p->replanOf ?? 0);
             $origin = $of > 0 ? ($byId[$of] ?? null) : null;
@@ -1112,7 +1118,7 @@ class Workbench extends BuildControl {
             $out[] = [
                 'id' => $id, 'title' => (string) $p->title, 'plan_status' => (string) $p->planStatus,
                 'total' => $counts[$id][0] ?? 0, 'built' => $counts[$id][1] ?? 0,
-                'replan_of' => $of, 'superseded' => $superseded,
+                'replan_of' => $of, 'superseded' => $superseded, 'replaced_by' => $replacedBy[$id] ?? 0,
                 'phase' => $of > 0 ? 0 : ++$n,   // a re-plan has no number of its own
             ];
         }
@@ -1322,6 +1328,13 @@ class Workbench extends BuildControl {
 
         $plan = Bean::load('workbenchtask', (int)$task->parentTaskId);
         if (!$plan->id) { Flight::jsonError('Parent plan not found', 404); return; }
+        // A plan a re-plan took over: its tasks were planned again there. Building one here too
+        // builds the same thing twice (two seeds for one column, two versions of one page).
+        $replan = (string) $plan->planStatus !== 'done' ? Bean::findOne('workbenchtask', 'replan_of = ? ORDER BY id DESC', [(int) $plan->id]) : null;
+        if ($replan && $replan->id) {
+            Flight::jsonError("Plan #{$plan->id} was re-planned as #{$replan->id} when it stalled, and that re-plan is what continues it — this task was planned again there. Open plan #{$replan->id} and retry or resume it; this one can be deleted.", 409);
+            return;
+        }
         $inst = $plan->instanceId ? $this->access->instanceMeta((int)$plan->instanceId) : null;
         if (!$inst || !$inst->id) { Flight::jsonError('This plan has no linked instance.', 409); return; }
         $building = PlanOrchestrator::running((int)$plan->id, (string)$inst->slug);

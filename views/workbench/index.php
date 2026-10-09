@@ -211,7 +211,7 @@
                   <?php foreach ($__phases as $__ph): $__t = (int) $__ph['total']; $__b = (int) $__ph['built']; $__p = $__t ? (int) round($__b * 100 / $__t) : 0; $__done = $__t > 0 && $__b === $__t;
                         $__isNext = !empty($nextPhase) && (int) $nextPhase['id'] === (int) $__ph['id'];
                         $__st = ['draft' => 'planned', 'approved' => 'approved', 'building' => 'building', 'stalled' => 'stalled', 'done' => 'built'][$__ph['plan_status']] ?? $__ph['plan_status']; ?>
-                  <div class="d-flex align-items-center gap-2 <?= $__ph['superseded'] ? 'opacity-50' : '' ?>">
+                  <div class="d-flex align-items-center gap-2 <?= ($__ph['superseded'] || !empty($__ph['replaced_by'])) ? 'opacity-50' : '' ?>">
                     <?php if ($__ph['replan_of']): ?>
                     <span class="badge text-bg-light border text-nowrap" style="min-width:4.5rem" title="Made automatically when plan #<?= (int) $__ph['replan_of'] ?> stalled: a re-plan of what was left of it"><?= $__ph['superseded'] ? 'Superseded' : 'Re-plan' ?></span>
                     <?php else: ?>
@@ -220,6 +220,8 @@
                     <a href="/workbench/view?id=<?= (int) $__ph['id'] ?>" class="text-truncate small text-decoration-none" style="max-width:20rem" title="<?= htmlspecialchars($__ph['title']) ?>"><?= htmlspecialchars($__ph['title']) ?></a>
                     <?php if ($__ph['superseded']): ?>
                     <span class="small text-body-secondary flex-grow-1">a re-plan of #<?= (int) $__ph['replan_of'] ?>, which then finished without it &mdash; its tasks are already built. Safe to delete.</span>
+                    <?php elseif (!empty($__ph['replaced_by'])): ?>
+                    <span class="small text-body-secondary flex-grow-1">stalled, and re-planned as <a href="/workbench/view?id=<?= (int) $__ph['replaced_by'] ?>">#<?= (int) $__ph['replaced_by'] ?></a> &mdash; the re-plan below continues it. Nothing to do here; safe to delete.</span>
                     <?php else: ?>
                     <div class="progress flex-grow-1" style="height:8px; min-width:5rem" role="progressbar" aria-valuenow="<?= $__p ?>" aria-valuemin="0" aria-valuemax="100">
                       <div class="progress-bar bg-<?= $__done ? 'success' : 'primary' ?>" style="width:<?= $__p ?>%"></div>
