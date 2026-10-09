@@ -206,12 +206,24 @@
                   <div class="border rounded bg-body-tertiary p-2 small" style="max-height:220px; overflow:auto; white-space:pre-wrap"><?= htmlspecialchars(mb_substr((string)$planGoal, 0, 6000)) ?></div>
                 </div>
                 <?php endif; ?>
-                <?php if ($__phases): ?>
-                <div class="d-flex flex-column gap-2">
+                <?php if ($__phases):
+                  // Two lists, one shown at a time: what is waiting or running (the reason to be here), and what is
+                  // finished — built, or a re-plan/plan that something else took over. A long project has dozens of the second.
+                  $__isFinished = fn(array $ph) => $ph['plan_status'] === 'done' || !empty($ph['superseded']) || !empty($ph['replaced_by']);
+                  $__nFinished = count(array_filter($__phases, $__isFinished)); $__nOpen = count($__phases) - $__nFinished;
+                  $__show = $__nOpen > 0 ? 'open' : 'finished'; ?>
+                <ul class="nav nav-pills small gap-1 mb-2" id="phaseTabs" role="tablist" aria-label="Which phases to show">
+                  <li class="nav-item" role="presentation"><button type="button" class="nav-link py-1 px-2<?= $__show === 'open' ? ' active' : '' ?>" data-phase-tab="open" role="tab" aria-selected="<?= $__show === 'open' ? 'true' : 'false' ?>">Pending / running (<?= $__nOpen ?>)</button></li>
+                  <li class="nav-item" role="presentation"><button type="button" class="nav-link py-1 px-2<?= $__show === 'finished' ? ' active' : '' ?>" data-phase-tab="finished" role="tab" aria-selected="<?= $__show === 'finished' ? 'true' : 'false' ?>">Completed phases (<?= $__nFinished ?>)</button></li>
+                </ul>
+                <div class="d-flex flex-column gap-2" id="phaseList" style="max-height:22rem; overflow:auto">
+                  <p class="small text-body-secondary mb-0<?= $__nOpen === 0 && $__show === 'open' ? '' : ' d-none' ?>" data-phase-empty="open">Nothing is waiting or running.</p>
+                  <p class="small text-body-secondary mb-0 d-none" data-phase-empty="finished">No phase has finished yet.</p>
                   <?php foreach ($__phases as $__ph): $__t = (int) $__ph['total']; $__b = (int) $__ph['built']; $__p = $__t ? (int) round($__b * 100 / $__t) : 0; $__done = $__t > 0 && $__b === $__t;
                         $__isNext = !empty($nextPhase) && (int) $nextPhase['id'] === (int) $__ph['id'];
                         $__st = ['draft' => 'planned', 'approved' => 'approved', 'building' => 'building', 'stalled' => 'stalled', 'done' => 'built'][$__ph['plan_status']] ?? $__ph['plan_status']; ?>
-                  <div class="d-flex align-items-center gap-2 <?= ($__ph['superseded'] || !empty($__ph['replaced_by'])) ? 'opacity-50' : '' ?>">
+                  <?php $__bucket = $__isFinished($__ph) ? 'finished' : 'open'; ?>
+                  <div class="d-flex align-items-center gap-2 <?= ($__ph['superseded'] || !empty($__ph['replaced_by'])) ? 'opacity-50' : '' ?><?= $__bucket === $__show ? '' : ' d-none' ?>" data-phase-bucket="<?= $__bucket ?>">
                     <?php if ($__ph['replan_of']): ?>
                     <span class="badge text-bg-light border text-nowrap" style="min-width:4.5rem" title="Made automatically when plan #<?= (int) $__ph['replan_of'] ?> stalled: a re-plan of what was left of it"><?= $__ph['superseded'] ? 'Superseded' : 'Re-plan' ?></span>
                     <?php else: ?>
@@ -231,6 +243,21 @@
                   </div>
                   <?php endforeach; ?>
                 </div>
+                <script>
+                // Pending / running or Completed: one list at a time, and the choice is kept for this visit.
+                (function () {
+                  var tabs = document.querySelectorAll('#phaseTabs [data-phase-tab]'), list = document.getElementById('phaseList');
+                  function show(which) {
+                    var shown = 0;
+                    list.querySelectorAll('[data-phase-bucket]').forEach(function (row) { var on = row.dataset.phaseBucket === which; row.classList.toggle('d-none', !on); if (on) shown++; });
+                    list.querySelectorAll('[data-phase-empty]').forEach(function (p) { p.classList.toggle('d-none', !(p.dataset.phaseEmpty === which && shown === 0)); });
+                    tabs.forEach(function (t) { var on = t.dataset.phaseTab === which; t.classList.toggle('active', on); t.setAttribute('aria-selected', on ? 'true' : 'false'); });
+                  }
+                  tabs.forEach(function (t) { t.addEventListener('click', function () { show(t.dataset.phaseTab); try { sessionStorage.setItem('phaseTab', t.dataset.phaseTab); } catch (e) {} }); });
+                  var kept = null; try { kept = sessionStorage.getItem('phaseTab'); } catch (e) {}
+                  if (kept === 'open' || kept === 'finished') show(kept);
+                })();
+                </script>
                 <?php endif; ?>
                 <?php if (!empty($goalComplete)): ?>
                 <div class="alert alert-success py-2 px-3 small mt-2 mb-0">
