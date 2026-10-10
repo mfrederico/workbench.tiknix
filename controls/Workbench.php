@@ -2432,12 +2432,17 @@ class Workbench extends BuildControl {
             } catch (\RuntimeException $e) {
                 $m = ['ok' => false, 'error' => $e->getMessage()];
             }
-            if (empty($m['ok'])) {
+            // The work went in but something after it did not (a seed): the task IS merged — its
+            // branch is gone, and "awaiting" with a Merge failed line left the owner pressing
+            // Approve on something that could not be merged twice. Said loudly, once, below.
+            $after = (empty($m['ok']) && (string) ($m['merged'] ?? '') !== '') ? (string) ($m['error'] ?? 'a step after the merge failed') : '';
+            if (empty($m['ok']) && $after === '') {
                 $err = (string) ($m['error'] ?? 'the merge failed');
                 $this->logTaskEvent((int) $task->id, 'error', 'system', 'Merge failed: ' . $err);
                 Flight::jsonError('Merge failed: ' . $err, 409);
                 return;
             }
+            if ($after !== '') $this->logTaskEvent((int) $task->id, 'error', 'system', 'Merged into the app as ' . $m['merged'] . ', but a step after the merge failed — the code is live, and this needs looking at: ' . $after);
             $task->status = 'merged';
             $task->completedAt = date('Y-m-d H:i:s');
             $task->updatedAt = date('Y-m-d H:i:s');
@@ -2453,7 +2458,7 @@ class Workbench extends BuildControl {
                     : 'Notebook: ' . (int) ($nb['added'] ?? 0) . ' added' . (!empty($nb['skipped']) ? ', ' . (int) $nb['skipped'] . ' already there' : '') . ":\n" . implode("\n", array_map(fn($e) => "- {$e['kind']}: {$e['text']}", $entries)));
             }
             $this->logTaskEvent((int) $task->id, 'success', 'system', 'Merged into the app in its container as ' . ($m['merged'] ?? '?'));
-            Flight::json(['success' => true, 'message' => 'Merged into the app']);
+            Flight::json(['success' => true, 'message' => $after === '' ? 'Merged into the app' : 'Merged into the app — but a step after the merge failed: ' . $after]);
             return;
         }
         Flight::jsonError('This project is not running in its own container — tasks build only in a project\'s container.', 409);
