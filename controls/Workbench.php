@@ -1625,7 +1625,7 @@ class Workbench extends BuildControl {
     }
 
     private const ASK_FILES_MAX = 5;
-    private const ASK_FILES_HEAD = "\n\n## Attached files\n";
+    private const ASK_FILES_HEAD = "\n\n" . \app\PlanExecutor::ATTACHED_HEAD . "\n";   // PlanExecutor hands this section to every task of the plan
 
     /**
      * The files sent with a request (field `files[]`): each checked for what it IS (its content,
