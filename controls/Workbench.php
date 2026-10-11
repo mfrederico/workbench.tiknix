@@ -163,6 +163,9 @@ class Workbench extends BuildControl {
         $live = $this->access->getVisibleTasks($this->member->id, ['status' => 'live']);
         usort($live, fn($a, $b) => [(string) $a->status !== 'awaiting', -(int) $a->id] <=> [(string) $b->status !== 'awaiting', -(int) $b->id]);
         $this->viewData['liveTasks'] = $live;
+        // …and as a tree: a plan that is building is one entry with its tasks under it (what is
+        // running now, what is in trouble, what comes next), not a line of its own beside them.
+        $this->viewData['liveTree'] = $this->liveTree($live);
         $this->viewData['statusTab'] = $statusParam === '' ? 'active' : $statusParam;
 
         // A project made from a Get-started plan says, on its board, where that stands — setting
@@ -1417,6 +1420,41 @@ class Workbench extends BuildControl {
         $busy = false;
         foreach ($rows as $r) if (in_array((string) ($r['status'] ?? ''), ['running', 'queued'], true) || (string) ($r['plan_status'] ?? '') === 'building') { $busy = true; break; }
         Flight::jsonSuccess(['sig' => md5(json_encode($rows)), 'busy' => $busy, 'tasks' => count($rows)]);
+    }
+
+    /**
+     * The In progress card's entries: each building plan with its tasks beneath it, then the live
+     * tasks that belong to no plan. A plan's own row is its title and how far it is; under it:
+     * `now` (an agent has it, or it waits on its person), `trouble` (failed or stuck at a merge),
+     * and `next` (still to start).
+     * @return array<int, array{plan:?object, built:int, total:int, now:array, trouble:array, next:array, alone:?object}>
+     */
+    private function liveTree(array $live): array {
+        $plans = []; $alone = [];
+        foreach ($live as $t) {
+            $pid = (int) ($t->parentTaskId ?? 0);
+            if ($pid > 0) { $plans[$pid] = $plans[$pid] ?? null; continue; }
+            // a plan's own row (it has tasks under it) or a task on its own
+            if (Bean::count('workbenchtask', 'parent_task_id = ?', [(int) $t->id]) > 0) $plans[(int) $t->id] = $t;
+            else $alone[] = $t;
+        }
+        $out = [];
+        foreach ($plans as $pid => $plan) {
+            if ($plan === null) { $plan = Bean::load('workbenchtask', $pid); if (!$plan->id) continue; }
+            $row = ['plan' => $plan, 'built' => 0, 'total' => 0, 'now' => [], 'trouble' => [], 'next' => [], 'alone' => null];
+            foreach (Bean::find('workbenchtask', 'parent_task_id = ? ORDER BY id ASC', [$pid]) as $k) {
+                $row['total']++;
+                $st = (string) $k->status;
+                if (in_array($st, ['merged', 'completed', 'resolved'], true)) $row['built']++;
+                elseif (in_array($st, ['running', 'queued', 'awaiting', 'waiting'], true)) $row['now'][] = $k;
+                elseif (in_array($st, ['failed', 'conflict'], true)) $row['trouble'][] = $k;
+                else $row['next'][] = $k;
+            }
+            $out[] = $row;
+        }
+        usort($out, fn($a, $b) => (int) $b['plan']->id <=> (int) $a['plan']->id);
+        foreach ($alone as $t) $out[] = ['plan' => null, 'built' => 0, 'total' => 0, 'now' => [], 'trouble' => [], 'next' => [], 'alone' => $t];
+        return $out;
     }
 
     /** GET /workbench/planprogress — per-task status for a plan (for the build poller). JSON. */

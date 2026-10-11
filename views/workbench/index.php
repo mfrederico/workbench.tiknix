@@ -161,29 +161,63 @@
         <!-- Task List -->
         <div class="col-lg-9 col-md-8">
 
-            <?php /* What is live right now, whatever tab is showing: awaiting (waiting on its
-                     person — first) and running/queued (an agent has it). Each opens the task. */ ?>
-            <?php if (!empty($liveTasks)): ?>
+            <?php /* What is live right now, whatever tab is showing. A plan that is building is ONE
+                     entry with its tasks under it — what an agent has now, what is in trouble, what
+                     comes next — and a task that belongs to no plan stands alone. The wrapper is
+                     always there (data-wb-live): the page fills it in when something starts. */
+            $__tree = $liveTree ?? [];
+            $__liveCount = 0;
+            foreach ($__tree as $__g) $__liveCount += $__g['alone'] ? 1 : max(1, count($__g['now']));
+            $__badge = function ($t): string {
+                $st = (string) $t->status;
+                if (in_array($st, ['awaiting', 'waiting'], true)) return '<span class="badge text-bg-warning" title="Waiting on you"><i class="bi bi-hourglass-split me-1"></i>awaiting</span>';
+                if (in_array($st, ['failed', 'conflict'], true)) return '<span class="badge text-bg-danger"><i class="bi bi-exclamation-triangle me-1"></i>' . htmlspecialchars($st === 'conflict' ? 'merge conflict' : 'failed') . '</span>';
+                return '<span class="badge text-bg-primary"><span class="spinner-border spinner-border-sm me-1" style="width:.6rem;height:.6rem" role="status"></span>' . htmlspecialchars($st) . '</span>';
+            };
+            $__line = function ($t, bool $under) use ($__badge): string {
+                $note = trim((string) ($t->progressMessage ?: (in_array((string) $t->status, ['failed', 'conflict'], true) ? $t->errorMessage : '')));
+                return '<a class="list-group-item list-group-item-action d-flex align-items-center gap-2 py-2' . ($under ? ' ps-5' : '') . '" href="/workbench/view?id=' . (int) $t->id . '">'
+                     . ($under ? '<i class="bi bi-arrow-return-right text-body-secondary" aria-hidden="true"></i>' : '') . $__badge($t)
+                     . '<span class="text-truncate flex-grow-1"><span class="text-body-secondary">#' . (int) $t->id . '</span> ' . htmlspecialchars((string) $t->title) . '</span>'
+                     . ($note !== '' ? '<span class="small text-body-secondary text-truncate d-none d-md-inline" style="max-width:40%">' . htmlspecialchars($note) . '</span>' : '') . '</a>';
+            };
+            ?>
+            <div data-wb-live="progress">
+            <?php if ($__tree): ?>
             <div class="card shadow-sm mb-3 border-primary-subtle">
                 <div class="card-header d-flex align-items-center gap-2 py-2">
                     <i class="bi bi-activity text-primary"></i><span class="fw-semibold">In progress</span>
-                    <span class="badge bg-primary rounded-pill"><?= count($liveTasks) ?></span>
+                    <span class="badge bg-primary rounded-pill"><?= (int) $__liveCount ?></span>
                 </div>
                 <div class="list-group list-group-flush">
-                    <?php foreach ($liveTasks as $lt): $isAwaiting = (string) $lt->status === 'awaiting'; ?>
-                    <a class="list-group-item list-group-item-action d-flex align-items-center gap-2 py-2" href="/workbench/view?id=<?= (int) $lt->id ?>">
-                        <?php if ($isAwaiting): ?>
-                            <span class="badge text-bg-warning" title="Waiting on you"><i class="bi bi-hourglass-split me-1"></i>awaiting</span>
-                        <?php else: ?>
-                            <span class="badge text-bg-primary"><span class="spinner-border spinner-border-sm me-1" style="width:.6rem;height:.6rem" role="status"></span><?= htmlspecialchars((string) $lt->status) ?></span>
+                    <?php foreach ($__tree as $__g): ?>
+                    <?php if ($__g['alone']): ?>
+                        <?= $__line($__g['alone'], false) ?>
+                    <?php else: $__pl = $__g['plan']; $__pct = $__g['total'] ? (int) round($__g['built'] * 100 / $__g['total']) : 0;
+                        $__ps = (string) ($__pl->planStatus ?? ''); $__held = !$__g['now'] && $__ps !== 'building'; ?>
+                        <a class="list-group-item list-group-item-action py-2" href="/workbench/view?id=<?= (int) $__pl->id ?>">
+                            <div class="d-flex align-items-center gap-2">
+                                <i class="bi bi-diagram-3 text-primary" aria-hidden="true"></i>
+                                <span class="fw-semibold text-truncate flex-grow-1"><span class="text-body-secondary fw-normal">#<?= (int) $__pl->id ?></span> <?= htmlspecialchars((string) $__pl->title) ?></span>
+                                <span class="small text-body-secondary text-nowrap"><?= (int) $__g['built'] ?> of <?= (int) $__g['total'] ?> built<?= $__held ? ' &middot; ' . htmlspecialchars($__ps !== '' ? $__ps : (string) $__pl->status) : '' ?></span>
+                            </div>
+                            <div class="progress mt-1" style="height:4px" role="progressbar" aria-label="Built" aria-valuenow="<?= $__pct ?>" aria-valuemin="0" aria-valuemax="100"><div class="progress-bar" style="width:<?= $__pct ?>%"></div></div>
+                            <?php if (!empty($__pl->progressMessage)): ?><div class="small text-body-secondary mt-1"><?= htmlspecialchars((string) $__pl->progressMessage) ?></div><?php endif; ?>
+                        </a>
+                        <?php foreach ($__g['now'] as $__k) echo $__line($__k, true); ?>
+                        <?php foreach ($__g['trouble'] as $__k) echo $__line($__k, true); ?>
+                        <?php if ($__g['next']): $__first = array_slice($__g['next'], 0, 3); ?>
+                        <div class="list-group-item ps-5 py-2 small text-body-secondary d-flex gap-2">
+                            <i class="bi bi-hourglass" aria-hidden="true"></i>
+                            <span class="text-truncate">Next: <?= implode(' &middot; ', array_map(fn($k) => '#' . (int) $k->id . ' ' . htmlspecialchars(mb_strimwidth((string) $k->title, 0, 60, '…')), $__first)) ?><?= count($__g['next']) > 3 ? ' &middot; and ' . (count($__g['next']) - 3) . ' more' : '' ?></span>
+                        </div>
                         <?php endif; ?>
-                        <span class="text-truncate flex-grow-1"><span class="text-body-secondary">#<?= (int) $lt->id ?></span> <?= htmlspecialchars((string) $lt->title) ?></span>
-                        <?php if (!empty($lt->progressMessage)): ?><span class="small text-body-secondary text-truncate d-none d-md-inline" style="max-width:40%"><?= htmlspecialchars((string) $lt->progressMessage) ?></span><?php endif; ?>
-                    </a>
+                    <?php endif; ?>
                     <?php endforeach; ?>
                 </div>
             </div>
             <?php endif; ?>
+            </div>
 
             <?php
             /* Goal -> phases provenance + progress. Each phase is a plan parent (a task with
@@ -212,11 +246,11 @@
                   $__isFinished = fn(array $ph) => $ph['plan_status'] === 'done' || !empty($ph['superseded']) || !empty($ph['replaced_by']);
                   $__nFinished = count(array_filter($__phases, $__isFinished)); $__nOpen = count($__phases) - $__nFinished;
                   $__show = $__nOpen > 0 ? 'open' : 'finished'; ?>
-                <ul class="nav nav-pills small gap-1 mb-2" id="phaseTabs" role="tablist" aria-label="Which phases to show">
+                <ul class="nav nav-pills small gap-1 mb-2" id="phaseTabs" data-wb-live="phasetabs" role="tablist" aria-label="Which phases to show">
                   <li class="nav-item" role="presentation"><button type="button" class="nav-link py-1 px-2<?= $__show === 'open' ? ' active' : '' ?>" data-phase-tab="open" role="tab" aria-selected="<?= $__show === 'open' ? 'true' : 'false' ?>">Pending / running (<?= $__nOpen ?>)</button></li>
                   <li class="nav-item" role="presentation"><button type="button" class="nav-link py-1 px-2<?= $__show === 'finished' ? ' active' : '' ?>" data-phase-tab="finished" role="tab" aria-selected="<?= $__show === 'finished' ? 'true' : 'false' ?>">Completed phases (<?= $__nFinished ?>)</button></li>
                 </ul>
-                <div class="d-flex flex-column gap-2" id="phaseList" style="max-height:22rem; overflow:auto">
+                <div class="d-flex flex-column gap-2" id="phaseList" data-wb-live="phases" style="max-height:22rem; overflow:auto">
                   <p class="small text-body-secondary mb-0<?= $__nOpen === 0 && $__show === 'open' ? '' : ' d-none' ?>" data-phase-empty="open">Nothing is waiting or running.</p>
                   <p class="small text-body-secondary mb-0 d-none" data-phase-empty="finished">No phase has finished yet.</p>
                   <?php foreach ($__phases as $__ph): $__t = (int) $__ph['total']; $__b = (int) $__ph['built']; $__p = $__t ? (int) round($__b * 100 / $__t) : 0; $__done = $__t > 0 && $__b === $__t;
@@ -245,17 +279,22 @@
                 </div>
                 <script>
                 // Pending / running or Completed: one list at a time, and the choice is kept for this visit.
+                // Looked up afresh each time and clicked through the document: the keep-current
+                // poll replaces what is inside these two lists, and they must go on working after it.
                 (function () {
-                  var tabs = document.querySelectorAll('#phaseTabs [data-phase-tab]'), list = document.getElementById('phaseList');
                   function show(which) {
+                    var list = document.getElementById('phaseList'); if (!list) return;
                     var shown = 0;
                     list.querySelectorAll('[data-phase-bucket]').forEach(function (row) { var on = row.dataset.phaseBucket === which; row.classList.toggle('d-none', !on); if (on) shown++; });
                     list.querySelectorAll('[data-phase-empty]').forEach(function (p) { p.classList.toggle('d-none', !(p.dataset.phaseEmpty === which && shown === 0)); });
-                    tabs.forEach(function (t) { var on = t.dataset.phaseTab === which; t.classList.toggle('active', on); t.setAttribute('aria-selected', on ? 'true' : 'false'); });
+                    document.querySelectorAll('#phaseTabs [data-phase-tab]').forEach(function (t) { var on = t.dataset.phaseTab === which; t.classList.toggle('active', on); t.setAttribute('aria-selected', on ? 'true' : 'false'); });
                   }
-                  tabs.forEach(function (t) { t.addEventListener('click', function () { show(t.dataset.phaseTab); try { sessionStorage.setItem('phaseTab', t.dataset.phaseTab); } catch (e) {} }); });
-                  var kept = null; try { kept = sessionStorage.getItem('phaseTab'); } catch (e) {}
-                  if (kept === 'open' || kept === 'finished') show(kept);
+                  document.addEventListener('click', function (e) {
+                    var t = e.target.closest && e.target.closest('#phaseTabs [data-phase-tab]'); if (!t) return;
+                    show(t.dataset.phaseTab); try { sessionStorage.setItem('phaseTab', t.dataset.phaseTab); } catch (err) {}
+                  });
+                  window.wbPhaseShow = function () { var kept = null; try { kept = sessionStorage.getItem('phaseTab'); } catch (err) {} if (kept === 'open' || kept === 'finished') show(kept); };
+                  window.wbPhaseShow();
                 })();
                 </script>
                 <?php endif; ?>
@@ -414,7 +453,7 @@
             <?php endif; ?>
 
             <!-- Status filter — moved above the task list -->
-            <ul class="nav nav-pills mb-3 gap-1 flex-wrap">
+            <ul class="nav nav-pills mb-3 gap-1 flex-wrap" data-wb-live="statustabs">
                 <?php foreach ($statusTabs as $sKey => $sInfo): [$sLabel, $sIcon, $sColor, $sCount] = $sInfo; $sActive = ($statusTab ?? 'active') === $sKey; ?>
                 <li class="nav-item">
                     <a class="nav-link <?= $sActive ? 'active' : '' ?>" href="<?= htmlspecialchars($statusLink($sKey)) ?>">
@@ -900,6 +939,7 @@
                                     var fresh = doc.querySelector('[data-wb-live="' + el.getAttribute('data-wb-live') + '"]');
                                     if (fresh) el.innerHTML = fresh.innerHTML;
                                 });
+                                if (window.wbPhaseShow) window.wbPhaseShow();   // the phases list keeps the tab that was chosen
                             });
                     }
                     function livePoll(){
