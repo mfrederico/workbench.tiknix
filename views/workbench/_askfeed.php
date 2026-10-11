@@ -45,17 +45,28 @@ $proof = function (array $p) use ($h): string {
             . ($p['verdict'] !== '' ? ' <span class="text-body-secondary">' . $h($p['verdict']) . '</span>' : '') . '</div>';
     }
     if ($p['shots']) {
-        $o .= '<div class="ask-shots d-flex gap-2 mt-2 pb-1">';
+        $n = count($p['shots']);
+        $o .= '<div class="small text-body-secondary mt-2">' . $n . ' picture' . ($n === 1 ? '' : 's') . ' from the check — click one to see it large' . ($n > 1 ? ', then swipe or use the arrows' : '') . '.</div>'
+            . '<div class="ask-shots" style="display:flex;gap:.5rem;overflow-x:auto;padding:.25rem 0 .35rem;scroll-snap-type:x proximity">';
         foreach ($p['shots'] as $sh) {
-            $o .= '<a class="ask-shot flex-shrink-0 text-decoration-none" href="' . $h($sh['url']) . '" target="_blank" rel="noopener" title="' . $h($sh['label']) . '">'
-                . '<img src="' . $h($sh['url']) . '" alt="' . $h($sh['label'] !== '' ? $sh['label'] : 'A screenshot from the check') . '" loading="lazy">'
-                . '<span class="d-block small text-body-secondary mt-1"><i class="bi bi-' . ($sh['ok'] ? 'check-lg text-success' : 'x-lg text-danger') . ' me-1"></i>' . $h(mb_strimwidth($sh['label'], 0, 70, '…')) . '</span></a>';
+            $alt = $sh['label'] !== '' ? $sh['label'] : 'A screenshot from the check';
+            $o .= '<button type="button" class="ask-shot" data-full="' . $h($sh['url']) . '" data-label="' . $h($sh['label']) . '" data-ok="' . ($sh['ok'] ? 1 : 0) . '" title="' . $h($alt) . '"'
+                . ' style="flex:0 0 auto;width:7.5rem;padding:0;border:0;background:none;text-align:left;scroll-snap-align:start;cursor:zoom-in">'
+                . '<img src="' . $h($sh['url']) . '" alt="' . $h($alt) . '" loading="lazy" width="120" height="80"'
+                . ' style="display:block;width:7.5rem;height:5rem;object-fit:cover;object-position:top;border-radius:.4rem;border:1px solid var(--bs-border-color);background:var(--bs-tertiary-bg)">'
+                . '<span class="d-block text-body-secondary mt-1 text-truncate" style="font-size:.72rem"><i class="bi bi-' . ($sh['ok'] ? 'check-lg text-success' : 'x-lg text-danger') . ' me-1"></i>' . $h($sh['label']) . '</span></button>';
         }
         $o .= '</div>';
     }
     return $o;
 };
+// Answering a task from here: the words go on the task and it is tried again with them (data-kind says how).
+$answer = fn(int $taskId, string $kind, string $placeholder, string $button) =>
+    '<form class="ask-change d-flex gap-2 mt-2" data-task="' . $taskId . '" data-kind="' . $kind . '"><input class="form-control form-control-sm" name="change" maxlength="2000" placeholder="' . htmlspecialchars($placeholder) . '" aria-label="' . htmlspecialchars($placeholder) . '">'
+    . '<button class="btn btn-sm btn-outline-primary text-nowrap" type="submit">' . htmlspecialchars($button) . '</button></form>';
 $you = function (string $text, string $meta) use ($h): string {
+    // what was typed is kept with its special characters written as entities (&raquo;): shown as typed
+    $text = html_entity_decode($text, ENT_QUOTES | ENT_HTML5, 'UTF-8');
     $long = mb_strlen($text) > 420;
     return '<div class="d-flex justify-content-end mb-2"><div class="ask-you rounded-4 px-3 py-2">'
          . '<div class="ask-text">' . nl2br($h($long ? mb_substr($text, 0, 400) . '…' : $text)) . '</div>'
@@ -88,7 +99,10 @@ $reply = fn(string $body) => '<div class="d-flex mb-4"><div class="ask-reply rou
             $pct = $e['total'] ? (int) round($e['built'] * 100 / $e['total']) : 0;
             $b = '<div class="fw-semibold d-flex align-items-center gap-2"><span class="spinner-border spinner-border-sm text-primary" role="status"></span>Building — ' . $h($count) . '</div>'
                . '<div class="progress mt-2" style="height:4px" role="progressbar" aria-label="Built" aria-valuenow="' . $pct . '" aria-valuemin="0" aria-valuemax="100"><div class="progress-bar" style="width:' . $pct . '%"></div></div>'
-               . ($e['needs'] ? '<div class="alert alert-warning py-2 px-3 small mt-2 mb-0"><i class="bi bi-chat-dots-fill me-1"></i>It needs an answer from you on “' . $h($e['needs']['title']) . '”' . (($e['needs']['about'] ?? '') !== '' ? ': ' . $h($e['needs']['about']) : '.') . ' <a class="alert-link" href="/workbench/view?id=' . (int) $e['needs']['id'] . '">Answer it</a></div>' : '')
+               . ($e['needs'] ? '<div class="alert alert-warning py-2 px-3 small mt-2 mb-0"><i class="bi bi-chat-dots-fill me-1"></i>It needs an answer from you on “' . $h($e['needs']['title']) . '”' . (($e['needs']['about'] ?? '') !== '' ? ': ' . $h($e['needs']['about']) : '.')
+                    . $answer((int) $e['needs']['id'], 'plan', 'Your answer…', 'Answer') . '</div>' : '')
+               . ($e['trouble'] ? '<div class="alert alert-danger py-2 px-3 small mt-2 mb-0"><i class="bi bi-exclamation-triangle-fill me-1"></i>“' . $h($e['trouble']['title']) . '” stopped: ' . $h(mb_strimwidth($e['trouble']['why'], 0, 300, '…'))
+                    . $answer((int) $e['trouble']['id'], 'plan', 'Tell it what to do about that, or leave empty to just try again…', 'Try again') . '</div>' : '')
                . $steps($e['steps'], 7, empty($e['direct'])) . '<div class="mt-2">' . $details($id) . '</div>';
             break;
         case 'done':
@@ -104,8 +118,9 @@ $reply = fn(string $body) => '<div class="d-flex mb-4"><div class="ask-reply rou
             $b = '<div class="fw-semibold"><i class="bi bi-exclamation-triangle-fill text-danger me-1"></i>It stopped' . ($count !== '' ? ' — ' . $h($count) : '') . '.</div>'
                . ($why !== '' ? '<div class="small text-body-secondary mt-1">' . $h($why) . '</div>' : '') . $steps($e['steps'], 7, empty($e['direct'])) . $proof($e['proof'])
                . '<div class="mt-2 d-flex flex-wrap gap-1 align-items-center">'
-               . ($e['trouble'] ? $btn('btn-primary', 'retry', 'arrow-repeat', 'Try again', ['task' => (int) $e['trouble']['id']]) : $btn('btn-primary', 'build', 'play-fill', 'Go on', ['plan' => $id]))
-               . $details($id) . '</div>';
+               . ($e['trouble'] ? '' : $btn('btn-primary', 'build', 'play-fill', 'Go on', ['plan' => $id]))
+               . $details($id) . '</div>'
+               . ($e['trouble'] ? $answer((int) $e['trouble']['id'], 'plan', 'Tell it what to do about that, or leave empty to just try again…', 'Try again') : '');
             break;
         default:   // a task made on its own
             $st = substr($e['state'], 5);
@@ -121,8 +136,7 @@ $reply = fn(string $body) => '<div class="d-flex mb-4"><div class="ask-reply rou
                    . ($e['can_approve']
                         ? '<div class="mt-2 d-flex flex-wrap gap-1 align-items-center">' . $btn('btn-success', 'approve', 'check-lg', 'Put it in my app', ['task' => $id]) . $btn('btn-outline-secondary', 'decline', 'x-lg', 'Discard it', ['task' => $id]) . $details($id) . '</div>'
                         : '<div class="small text-body-secondary mt-2">An admin of this project approves it. ' . $details($id) . '</div>')
-                   . '<form class="ask-change d-flex gap-2 mt-2" data-task="' . $id . '"><input class="form-control form-control-sm" name="change" maxlength="2000" placeholder="Or say what to change, and it builds it again…" aria-label="What to change">'
-                   . '<button class="btn btn-sm btn-outline-primary text-nowrap" type="submit">Build again</button></form>';
+                   . $answer($id, 'solo', 'Or say what to change, and it builds it again…', 'Build again');
                 break;
             }
             $b = '<div class="fw-semibold">' . $h($say) . '</div>' . ($e['error'] !== '' && in_array($st, ['failed', 'conflict'], true) ? '<div class="small text-body-secondary mt-1">' . $h(mb_strimwidth($e['error'], 0, 260, '…')) . '</div>' : '')

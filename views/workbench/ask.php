@@ -10,9 +10,18 @@ $__inst = (int) ($selected['id'] ?? 0);
     .ask-you{max-width:85%;background:var(--bs-primary);color:#fff;overflow-wrap:anywhere}
     .ask-reply{max-width:92%;min-width:min(22rem,92%);overflow-wrap:anywhere}
     .ask-steps li{padding:.1rem 0}
-    .ask-shots{overflow-x:auto;scroll-snap-type:x proximity}
-    .ask-shot{width:11rem;scroll-snap-align:start}
-    .ask-shot img{width:11rem;height:7rem;object-fit:cover;object-position:top;border-radius:.5rem;border:1px solid var(--bs-border-color);background:var(--bs-tertiary-bg)}
+    .ask-shot img{transition:transform .12s ease, box-shadow .12s ease}
+    .ask-shot:hover img,.ask-shot:focus-visible img{transform:scale(1.04);box-shadow:0 .25rem .75rem rgba(0,0,0,.35)}
+    /* the large view of a picture: one at a time, arrows / swipe / keys to the next */
+    #ask-view{position:fixed;inset:0;z-index:1080;background:rgba(0,0,0,.88);display:none;flex-direction:column;align-items:center;justify-content:center;padding:3rem 3.5rem 1rem}
+    #ask-view.open{display:flex}
+    #ask-view img{max-width:100%;max-height:calc(100vh - 9rem);object-fit:contain;border-radius:.5rem;background:#111;touch-action:pan-y}
+    #ask-view .cap{color:#f1f1f1;font-size:.9rem;margin-top:.6rem;max-width:60rem;text-align:center}
+    #ask-view .nav{position:absolute;top:50%;transform:translateY(-50%);width:2.75rem;height:2.75rem;border-radius:50%;border:0;background:rgba(255,255,255,.14);color:#fff;font-size:1.2rem}
+    #ask-view .nav:hover{background:rgba(255,255,255,.28)}
+    #ask-view .prev{left:.5rem} #ask-view .next{right:.5rem}
+    #ask-view .x{position:absolute;top:.6rem;right:.6rem;width:2.5rem;height:2.5rem;border-radius:50%;border:0;background:rgba(255,255,255,.14);color:#fff}
+    @media (prefers-reduced-motion: reduce){.ask-shot img{transition:none}.ask-shot:hover img{transform:none}}
     .ask-said{max-height:14rem;overflow-y:auto}
     .ask-bar{position:fixed;left:0;right:0;bottom:0;background:var(--bs-body-bg);border-top:1px solid var(--bs-border-color);padding:.75rem 1rem;z-index:20}
     .ask-bar-in{max-width:46rem;margin:0 auto}
@@ -39,6 +48,13 @@ $__inst = (int) ($selected['id'] ?? 0);
         <?php endif; ?>
     </div>
     <div id="ask-feed"><?php include __DIR__ . '/_askfeed.php'; ?></div>
+</div>
+<div id="ask-view" role="dialog" aria-modal="true" aria-label="Picture from the check" tabindex="-1">
+    <button type="button" class="x" aria-label="Close"><i class="bi bi-x-lg"></i></button>
+    <button type="button" class="nav prev" aria-label="The picture before"><i class="bi bi-chevron-left"></i></button>
+    <img alt="">
+    <button type="button" class="nav next" aria-label="The next picture"><i class="bi bi-chevron-right"></i></button>
+    <div class="cap"></div>
 </div>
 <div class="ask-bar">
     <form class="ask-bar-in" id="ask-form" autocomplete="off">
@@ -203,13 +219,45 @@ $__inst = (int) ($selected['id'] ?? 0);
     feed.addEventListener('submit', function(e){
         var f = e.target.closest('.ask-change'); if (!f) return;
         e.preventDefault();
-        var text = f.elements.change.value.trim(), id = f.getAttribute('data-task'), btn = f.querySelector('button');
-        if (!text) return;
-        btn.disabled = true; say('Sending it back…');
-        post('/workbench/comment', {id: id, content: text})
-            .then(function(){ return post('/workbench/rerun', {id: id}); })
-            .then(function(j){ say((j && j.message) || 'Building it again with your change.'); return redraw(); })
+        var text = f.elements.change.value.trim(), id = f.getAttribute('data-task'), plan = f.getAttribute('data-kind') === 'plan', btn = f.querySelector('button');
+        // a task of a plan may simply be tried again; one built on its own is only sent back with words
+        if (!text && !plan) return;
+        btn.disabled = true; say(text ? 'Sending your answer…' : 'Trying it again…');
+        (text ? post('/workbench/comment', {id: id, content: text}) : Promise.resolve())
+            .then(function(){ return plan ? post('/workbench/taskretry', {task_id: id}) : post('/workbench/rerun', {id: id}); })
+            .then(function(j){ f.elements.change.value = ''; say((j && j.message) || 'Building it again with what you said.'); return redraw(true); })
             .catch(function(err){ say(err.message, true); btn.disabled = false; });
+    });
+
+    // ── a picture, large: the pictures of ONE reply, one at a time ──
+    var view = document.getElementById('ask-view'), vImg = view.querySelector('img'), vCap = view.querySelector('.cap'), set = [], at = 0, opener = null;
+    function show(i){
+        at = (i + set.length) % set.length;
+        var s = set[at];
+        vImg.src = s.getAttribute('data-full'); vImg.alt = s.getAttribute('data-label') || 'A screenshot from the check';
+        vCap.textContent = (set.length > 1 ? (at + 1) + ' of ' + set.length + ' — ' : '') + (s.getAttribute('data-ok') === '1' ? '✓ ' : '✗ ') + (s.getAttribute('data-label') || '');
+        Array.prototype.forEach.call(view.querySelectorAll('.nav'), function(b){ b.style.display = set.length > 1 ? '' : 'none'; });
+    }
+    function closeView(){ view.classList.remove('open'); vImg.removeAttribute('src'); if (opener && document.contains(opener)) opener.focus(); }
+    feed.addEventListener('click', function(e){
+        var b = e.target.closest('.ask-shot'); if (!b) return;
+        opener = b; set = Array.prototype.slice.call(b.parentNode.querySelectorAll('.ask-shot'));
+        view.classList.add('open'); show(set.indexOf(b)); view.focus();
+    });
+    view.querySelector('.prev').addEventListener('click', function(){ show(at - 1); });
+    view.querySelector('.next').addEventListener('click', function(){ show(at + 1); });
+    view.querySelector('.x').addEventListener('click', closeView);
+    view.addEventListener('click', function(e){ if (e.target === view) closeView(); });
+    document.addEventListener('keydown', function(e){
+        if (!view.classList.contains('open')) return;
+        if (e.key === 'Escape') closeView(); else if (e.key === 'ArrowLeft') show(at - 1); else if (e.key === 'ArrowRight') show(at + 1);
+    });
+    var touchX = null;
+    view.addEventListener('touchstart', function(e){ touchX = e.touches[0].clientX; }, {passive: true});
+    view.addEventListener('touchend', function(e){
+        if (touchX === null) return;
+        var dx = e.changedTouches[0].clientX - touchX; touchX = null;
+        if (Math.abs(dx) > 45 && set.length > 1) show(at + (dx < 0 ? 1 : -1));
     });
     Array.prototype.forEach.call(document.querySelectorAll('.ask-view'), function(b){
         b.addEventListener('click', function(){

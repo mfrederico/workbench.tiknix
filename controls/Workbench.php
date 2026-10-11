@@ -1380,6 +1380,8 @@ class Workbench extends BuildControl {
         // would end the same way.
         if (\app\PlanExecutor::ranOutOfTime((string) $task->errorMessage)) $task->timeLimit = \app\PlanExecutor::TIME_LIMIT_MAX;
         // Reset the task for a fresh attempt (fresh auto-retry budget).
+        // What it stopped on stays with the task: its next brief says it beside what the person answered.
+        if (trim((string) $task->errorMessage) !== '') $task->lastFailReason = mb_substr((string) $task->errorMessage, 0, 1000);
         $task->status       = 'pending';
         $task->errorMessage = '';
         $task->retryCount   = 0;
