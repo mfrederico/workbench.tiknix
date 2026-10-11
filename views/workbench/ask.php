@@ -74,7 +74,24 @@ $__inst = (int) ($selected['id'] ?? 0);
         var was = atBottom();
         return fetch('/workbench/askfeed', {credentials: 'same-origin', headers: {'X-Requested-With': 'XMLHttpRequest'}})
             .then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); return r.text(); })
-            .then(function(html){ feed.innerHTML = html; if (stick || was) window.scrollTo(0, document.body.scrollHeight); });
+            .then(function(html){ feed.innerHTML = html; paintLive(); if (stick || was) window.scrollTo(0, document.body.scrollHeight); });
+    }
+    // What each agent building right now is doing, under its task: a build runs for many minutes
+    // with nothing else moving, and has to be seen to be working.
+    var doing = {};
+    function paintLive(){
+        Array.prototype.forEach.call(feed.querySelectorAll('.ask-live'), function(el){
+            var d = doing[el.getAttribute('data-live')]; if (!d) return;
+            var ago = d.quiet_seconds === null || d.quiet_seconds === undefined ? '' : (d.quiet_seconds < 45 ? 'just now' : (d.quiet_seconds < 3600 ? Math.round(d.quiet_seconds / 60) + ' min ago' : 'over an hour ago'));
+            el.textContent = (d.doing || 'Working…') + (ago ? ' · ' + ago : '');
+            el.classList.toggle('text-warning', d.quiet_seconds > 600);
+        });
+    }
+    function live(){
+        if (!feed.querySelector('.ask-live')) return Promise.resolve();
+        return fetch('/workbench/askdoing', {credentials: 'same-origin', headers: {'X-Requested-With': 'XMLHttpRequest'}})
+            .then(function(r){ return r.json(); })
+            .then(function(j){ if (j && j.success !== false && j.data) { doing = j.data.tasks || {}; paintLive(); } });
     }
     function planning(){ var s = document.getElementById('ask-state'); return !!s && s.getAttribute('data-planning') === '1'; }
     function tick(){
@@ -93,6 +110,7 @@ $__inst = (int) ($selected['id'] ?? 0);
                 });
                 if (s !== sig) return redraw().then(function(){ sig = s; });
             })
+            .then(live)
             .catch(function(e){ say('Could not check for news (' + e.message + ').', true); })
             .then(function(){ busy = false; });
     }

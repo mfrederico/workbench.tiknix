@@ -22,8 +22,11 @@ $steps = function (array $list, int $show = 7, bool $decomposed = true) use ($h,
         $o .= '<li class="d-flex gap-2 align-items-baseline" title="' . $h($say) . '">'
             . ($s['mark'] === 'now' ? '<span class="spinner-border spinner-border-sm text-primary flex-shrink-0" style="width:.75rem;height:.75rem" role="status"></span>'
                                     : '<i class="bi bi-' . $icon . ' ' . $tone . ' flex-shrink-0" aria-hidden="true"></i>')
-            . '<a class="text-reset text-decoration-none' . ($s['mark'] === 'next' ? ' text-body-secondary' : '') . '" href="/workbench/view?id=' . (int) $s['id'] . '">' . $h($s['title']) . '</a>'
-            . '<span class="visually-hidden"> — ' . $h($say) . '</span></li>';
+            . '<span class="flex-grow-1" style="min-width:0"><a class="text-reset text-decoration-none' . ($s['mark'] === 'next' ? ' text-body-secondary' : '') . '" href="/workbench/view?id=' . (int) $s['id'] . '">' . $h($s['title']) . '</a>'
+            . '<span class="visually-hidden"> — ' . $h($say) . '</span>'
+            // what its agent is doing right now (filled and kept current by the page: /workbench/askdoing)
+            . ($s['mark'] === 'now' ? '<span class="d-block text-body-secondary ask-live" data-live="' . (int) $s['id'] . '" style="font-size:.8rem">Working…</span>' : '')
+            . '</span></li>';
     }
     if (count($list) > $show) $o .= '<li class="text-body-secondary ps-4">and ' . (count($list) - $show) . ' more</li>';
     return $o . '</ul>';

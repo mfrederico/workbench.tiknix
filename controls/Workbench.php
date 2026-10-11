@@ -1641,6 +1641,41 @@ class Workbench extends BuildControl {
     }
 
     /**
+     * GET /workbench/askdoing — what the agents building right now are doing, read from their live
+     * transcripts in the project's container (TenantRun::activity): per running task, the last
+     * thing its agent said or did, and how long ago. A task runs for many minutes with nothing
+     * else on the page moving; without this a working build is indistinguishable from a stuck
+     * one. JSON: {tasks: {<id>: {doing, quiet_seconds}}}.
+     */
+    public function askdoing($params = []) {
+        if (!$this->requireLogin()) return;
+        $ct = $this->tenantInst();
+        if (!$ct || !in_array('workbenchtask', Bean::inspect(), true)) { Flight::jsonSuccess(['tasks' => (object) []]); return; }
+        $ids = []; $out = [];
+        foreach (Bean::find('workbenchtask', "status = 'running' AND parent_task_id > 0 AND instance_id = ? ORDER BY id", [(int) $this->selected['id']]) as $t) {
+            if (!$this->access->canView($this->member->id, $t)) continue;
+            $ids['plan-' . (int) $t->parentTaskId . '-task-' . (int) $t->id] = (int) $t->id;
+            $out[(int) $t->id] = ['doing' => '', 'quiet_seconds' => null];
+        }
+        if (!$ids) { Flight::jsonSuccess(['tasks' => (object) []]); return; }
+        try { $acts = \app\TenantRun::activity($ct, array_keys($ids), 6); }
+        catch (\RuntimeException $e) { Flight::jsonError('The agents could not be asked what they are doing: ' . $e->getMessage(), 502); return; }
+        $clean = fn(string $l) => trim(preg_replace('/^\[[0-9:]*\]\s*(→\s*)?/u', '', $l));
+        foreach ($ids as $run => $taskId) {
+            $a = $acts[$run] ?? null;
+            if (!$a || empty($a['found'])) { $out[$taskId]['doing'] = 'Setting up its copy of the app…'; continue; }
+            $lines = array_values(array_filter(array_map($clean, (array) $a['lines']), fn($l) => $l !== ''));
+            // In a person's words where the transcript names a tool, and short: this is a sign of life, not a log.
+            $last = $lines ? (string) end($lines) : 'Started — nothing said yet';
+            $last = preg_replace(['/^Bash:\s*/', '/^Read:\s*/', '/^(Edit|MultiEdit):\s*/', '/^Write:\s*/', '/^(Grep|Glob):\s*/', '/^mcp__tiknix__(\w+):?\s*/', '/^mcp__playwright__browser_(\w+):?\s*/'],
+                                 ['Running: ', 'Reading ', 'Editing ', 'Writing ', 'Searching for ', 'Asking the app ($1) ', 'In the browser ($1) '], $last, 1);
+            $out[$taskId]['doing'] = mb_strlen($last) > 120 ? mb_substr($last, 0, 119) . '…' : $last;
+            $out[$taskId]['quiet_seconds'] = ($a['at'] ?? '') !== '' ? max(0, time() - (int) strtotime((string) $a['at'])) : null;
+        }
+        Flight::jsonSuccess(['tasks' => $out]);
+    }
+
+    /**
      * The conversation: the selected project's last requests, oldest first — each a plan (or a
      * task made on its own) with what became of it — then what is being planned right now and
      * what is waiting for the project to be free.
