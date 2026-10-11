@@ -1393,6 +1393,32 @@ class Workbench extends BuildControl {
         Flight::jsonSuccess(['deleted' => $n + 1], 'Deleted the plan and ' . $n . ' task(s).');
     }
 
+    /**
+     * GET /workbench/boardsig — a fingerprint of this project's board: it changes when any task's
+     * state does (a task starts, merges, fails, splits; a plan is approved, audited). The board
+     * and a task's page ask for it every few seconds and redraw only when it differs, so nobody
+     * has to press Refresh to see that a build moved on. One cheap query, no rendering.
+     * `task` narrows the answer to one task's own state (its page). JSON.
+     */
+    public function boardsig($params = []) {
+        if (!$this->requireLogin()) return;
+        if (!in_array('workbenchtask', Bean::inspect(), true)) { Flight::jsonSuccess(['sig' => 'empty', 'busy' => false]); return; }
+        $have = array_keys(Bean::inspect('workbenchtask'));
+        $cols = array_values(array_intersect(['id', 'status', 'plan_status', 'audit_status', 'split_outcome', 'progress_message', 'error_message', 'completed_at', 'needs_planning', 'agent'], $have));
+        $one = (int) $this->getParam('task', 0);
+        if ($one > 0) {
+            $task = Bean::load('workbenchtask', $one);
+            if (!$task->id || !$this->access->canView($this->member->id, $task)) { Flight::jsonError('Access denied', 403); return; }
+            $row = Bean::getRow('SELECT ' . implode(', ', $cols) . ' FROM workbenchtask WHERE id = ?', [$one]);
+            Flight::jsonSuccess(['sig' => md5(json_encode($row)), 'status' => (string) $task->status, 'busy' => in_array((string) $task->status, ['running', 'queued'], true)]);
+            return;
+        }
+        $rows = Bean::getAll('SELECT ' . implode(', ', $cols) . ' FROM workbenchtask ORDER BY id');
+        $busy = false;
+        foreach ($rows as $r) if (in_array((string) ($r['status'] ?? ''), ['running', 'queued'], true) || (string) ($r['plan_status'] ?? '') === 'building') { $busy = true; break; }
+        Flight::jsonSuccess(['sig' => md5(json_encode($rows)), 'busy' => $busy, 'tasks' => count($rows)]);
+    }
+
     /** GET /workbench/planprogress — per-task status for a plan (for the build poller). JSON. */
     public function planprogress($params = []) {
         if (!$this->requireLogin()) return;

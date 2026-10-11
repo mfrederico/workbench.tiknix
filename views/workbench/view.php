@@ -1030,6 +1030,42 @@ $baseDomain = $baseUrl === '' ? '' : preg_replace('#^https?://#', '', rtrim($bas
 <script>
 const taskId = <?= $task->id ?>;
 const taskStatus = '<?= $task->status ?>';
+
+// This page keeps itself current: it asks for the task's fingerprint every few seconds and shows the
+// page again when the task has moved on (started, merged, failed, split) — unless something is being
+// typed here, in which case it says so and waits to be asked.
+(function () {
+    let sig = null, timer = null, busy = true, told = false;
+    const typing = () => { const a = document.activeElement; return !!(a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName) && (a.value || '') !== ''); };
+    const tell = () => {
+        if (told) return; told = true;
+        const bar = document.createElement('div');
+        bar.className = 'alert alert-info d-flex align-items-center justify-content-between gap-3 position-fixed bottom-0 start-50 translate-middle-x mb-3 shadow';
+        bar.style.zIndex = 1080; bar.setAttribute('role', 'status');
+        bar.innerHTML = '<span>This task has changed since the page was opened.</span><button type="button" class="btn btn-sm btn-primary">Show it</button>';
+        bar.querySelector('button').addEventListener('click', () => location.reload());
+        document.body.appendChild(bar);
+    };
+    const poll = () => {
+        timer = null;
+        if (document.hidden) return;
+        fetch('/workbench/boardsig?task=' + taskId, {headers: {'X-Requested-With': 'XMLHttpRequest'}, credentials: 'same-origin'})
+            .then(r => r.ok ? r.json() : null)
+            .then(j => {
+                const d = j && j.data;
+                if (!d || !d.sig) return;
+                busy = !!d.busy;
+                if (sig === null) { sig = d.sig; return; }
+                if (d.sig === sig) return;
+                if (typing() || document.querySelector('.modal.show')) { tell(); return; }
+                location.reload();
+            })
+            .catch(() => {})
+            .then(() => { if (!timer && !told) timer = setTimeout(poll, busy ? 5000 : 20000); });
+    };
+    document.addEventListener('visibilitychange', () => { if (!document.hidden && !timer && !told) poll(); });
+    timer = setTimeout(poll, 4000);
+})();
 const csrfToken = '<?= \app\SimpleCsrf::getToken() ?>';
 let pollInterval = null;
 

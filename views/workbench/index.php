@@ -834,6 +834,7 @@
                             setTimeout(function(){ table.draw(false); }, 0);
                         });
                         bindPlanActions();
+                        liveTable = table;   // the keep-current poll below redraws through it
                     }
                     // POST a plan lifecycle action, then refresh so the new state shows.
                     async function planAction(url, btn, confirmMsg){
@@ -863,6 +864,65 @@
                             .on('click.wbplan', '.wb-plan-build',   function(){ planAction('/workbench/planbuild', this); })
                             .on('click.wbplan', '.wb-plan-delete',  function(){ planAction('/workbench/plandelete', this, 'Delete this entire plan and all of its tasks? This cannot be undone.'); });
                     }
+                    // ── the board keeps itself current ─────────────────────────────────────────────
+                    // Every few seconds it asks for the board's fingerprint (/workbench/boardsig); when
+                    // that differs it fetches this page again and swaps in the new task rows and plan
+                    // headers, keeping the sort, the search and the place on the page. It waits while
+                    // someone is in the middle of something (a box ticked, a menu open, typing).
+                    var liveSig = null, liveTimer = null, liveBusy = true, liveTable = null;
+                    function liveInTheMiddle(){
+                        var a = document.activeElement;
+                        if (a && /^(INPUT|SELECT|TEXTAREA)$/.test(a.tagName) && !(a.type === 'search' && a.value === '')) return true;
+                        if (document.querySelector('.modal.show, .dropdown-menu.show')) return true;
+                        if (document.querySelector('#wbTasks input[type=checkbox]:checked')) return true;
+                        return false;
+                    }
+                    function liveSwap(){
+                        return fetch(location.href, {headers: {'X-Requested-With': 'fetch'}, credentials: 'same-origin'})
+                            .then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); return r.text(); })
+                            .then(function(html){
+                                var doc = new DOMParser().parseFromString(html, 'text/html');
+                                var body = doc.querySelector('#wbTasks tbody');
+                                var meta = html.match(/var PLAN_META = (.*);\n/);
+                                // The page is no longer this table (the last task went, a planner took over the page): show it as it is.
+                                if (!body || !meta || !liveTable) { location.reload(); return; }
+                                var next = JSON.parse(meta[1]);
+                                Object.keys(PLAN_META).forEach(function(k){ delete PLAN_META[k]; });
+                                Object.keys(next).forEach(function(k){ PLAN_META[k] = next[k]; });
+                                var y = window.scrollY;
+                                var rows = Array.prototype.map.call(body.querySelectorAll('tr'), function(tr){ return document.importNode(tr, true); });
+                                liveTable.clear();
+                                liveTable.rows.add(rows);
+                                liveTable.draw(false);
+                                window.scrollTo(0, y);
+                                // parts of the page outside the table that say how plans stand
+                                Array.prototype.forEach.call(document.querySelectorAll('[data-wb-live]'), function(el){
+                                    var fresh = doc.querySelector('[data-wb-live="' + el.getAttribute('data-wb-live') + '"]');
+                                    if (fresh) el.innerHTML = fresh.innerHTML;
+                                });
+                            });
+                    }
+                    function livePoll(){
+                        liveTimer = null;
+                        if (document.hidden) return;   // picked up again when the tab is looked at
+                        fetch('/workbench/boardsig', {headers: {'X-Requested-With': 'XMLHttpRequest'}, credentials: 'same-origin'})
+                            .then(function(r){ return r.ok ? r.json() : null; })
+                            .then(function(j){
+                                var d = j && j.data;
+                                if (!d || !d.sig) return;
+                                liveBusy = !!d.busy;
+                                if (liveSig === null) { liveSig = d.sig; return; }
+                                if (d.sig === liveSig) return;
+                                if (liveInTheMiddle()) return;         // try again next time; the fingerprint is still different then
+                                liveSig = d.sig;
+                                return liveSwap();
+                            })
+                            .catch(function(){ /* a missed poll is not worth a message; the next one tries again */ })
+                            .then(function(){ if (!liveTimer) liveTimer = setTimeout(livePoll, liveBusy ? 5000 : 20000); });
+                    }
+                    document.addEventListener('visibilitychange', function(){ if (!document.hidden && !liveTimer) livePoll(); });
+                    liveTimer = setTimeout(livePoll, 4000);
+
                     // jQuery is loaded near the end of <body> (after this view), so wait for it,
                     // then load DataTables + RowGroup in order and initialise.
                     (function waitJQ(n){
