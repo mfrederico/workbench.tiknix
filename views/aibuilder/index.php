@@ -163,6 +163,28 @@ foreach ($instances as $__i) { if (!empty($__i->isDefault)) { $hasDefault = true
 
       <!-- Changes + checkpoints + plan -->
       <div class="col-lg-4">
+        <!-- What is building right now, as on the board (/workbench/inprogress); empty when nothing is. -->
+        <div id="ab-inprogress" class="ab-inprogress"></div>
+        <script>
+        (function(){
+            var box = document.getElementById('ab-inprogress'), sig = null, busy = false;
+            function draw(){
+                return fetch('/workbench/inprogress', {credentials: 'same-origin', headers: {'X-Requested-With': 'XMLHttpRequest'}})
+                    .then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); return r.text(); })
+                    .then(function(html){ box.innerHTML = html; });
+            }
+            function tick(){
+                if (busy || document.hidden) return;
+                busy = true;
+                fetch('/workbench/boardsig', {credentials: 'same-origin', headers: {'X-Requested-With': 'XMLHttpRequest'}})
+                    .then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+                    .then(function(j){ var s = j && j.data ? j.data.sig : null; if (s === sig) return; return draw().then(function(){ sig = s; }); })
+                    .catch(function(e){ box.innerHTML = '<div class="alert alert-warning small py-2 mb-3">What is building could not be read (' + String(e.message).replace(/[<>&]/g, '') + ').</div>'; sig = null; })
+                    .then(function(){ busy = false; });
+            }
+            tick(); setInterval(tick, 5000);
+        })();
+        </script>
         <!-- Save your work: changes + uploads + checkpoint, in one place -->
         <div class="card shadow-sm">
           <div class="card-header d-flex justify-content-between align-items-center">

@@ -1447,6 +1447,24 @@ class Workbench extends BuildControl {
     }
 
     /**
+     * GET /workbench/inprogress — the In progress card on its own, as HTML, for a page that shows
+     * it beside something else (the Terminal page asks for it, narrow). Empty when nothing is live.
+     */
+    public function inprogress($params = []) {
+        if (!$this->requireLogin()) return;
+        $liveTree = [];
+        if (in_array('workbenchtask', Bean::inspect(), true)) {
+            $live = $this->access->getVisibleTasks($this->member->id, ['status' => 'live']);
+            usort($live, fn($a, $b) => [(string) $a->status !== 'awaiting', -(int) $a->id] <=> [(string) $b->status !== 'awaiting', -(int) $b->id]);
+            $liveTree = $this->liveTree($live);
+        }
+        $compact = true;
+        header('Content-Type: text/html; charset=utf-8');
+        header('Cache-Control: no-store');
+        include dirname(__DIR__) . '/views/workbench/_inprogress.php';
+    }
+
+    /**
      * The In progress card's entries: each building plan with its tasks beneath it, then the live
      * tasks that belong to no plan. A plan's own row is its title and how far it is; under it:
      * `now` (an agent has it, or it waits on its person), `trouble` (failed or stuck at a merge),
