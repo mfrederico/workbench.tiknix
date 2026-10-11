@@ -82,6 +82,7 @@ $reply = fn(string $body) => '<div class="d-flex mb-4"><div class="ask-reply rou
 <style>
     /* a report written out in full: its pictures and code stay inside the bubble */
     .ask-report img{max-width:100% !important;max-height:12rem !important;width:auto !important;height:auto !important;border-radius:.4rem;border:1px solid var(--bs-border-color)}
+    .ask-report img{cursor:zoom-in}
     .ask-report pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:.8rem;background:var(--bs-tertiary-bg);padding:.5rem;border-radius:.4rem}
     .ask-report h1,.ask-report h2,.ask-report h3{font-size:.95rem;margin:.75rem 0 .25rem}
     .ask-report{overflow-wrap:anywhere}
@@ -101,14 +102,18 @@ $reply = fn(string $body) => '<div class="d-flex mb-4"><div class="ask-reply rou
         if ($e['review'] !== null) {
             $rv = $e['review'];
             $b .= '<hr class="my-2"><div class="fw-semibold"><i class="bi bi-hourglass-split text-warning me-1"></i>A fix is built — waiting for you.</div>'
-                . ($rv['said'] !== '' ? '<div class="ask-said small border-start border-3 ps-2 mt-2">' . nl2br($h($rv['said'])) . '</div>' : '')
+                . ($rv['said'] !== '' ? '<div class="ask-said ask-report small border-start border-3 ps-2 mt-2">' . \app\MarkdownParser::parseSafe($rv['said']) . '</div>' : '')
                 . ($e['can_approve'] ? '<div class="mt-2 d-flex flex-wrap gap-1 align-items-center">' . $btn('btn-success', 'approve', 'check-lg', 'Put it in my app', ['task' => $id]) . $btn('btn-outline-secondary', 'decline', 'x-lg', 'Discard it', ['task' => $id]) . $details($id) . '</div>' : '')
                 . $answer($id, 'solo', 'Or say what to change, and it builds it again…', 'Build again');
         } else {
-            $say = ['pending' => '', 'running' => 'A fix is being built now.', 'merged' => 'Fixed — it is in your app.', 'resolved' => 'Looked at: nothing needed changing.', 'failed' => 'The fix stopped: ' . mb_strimwidth($e['error'], 0, 240, '…'), 'declined' => 'Left as it is.'][$st] ?? ucfirst($st) . '.';
+            if ($st === 'running') {
+                $b .= '<hr class="my-2"><div class="fw-semibold d-flex align-items-center gap-2"><span class="spinner-border spinner-border-sm text-primary" role="status"></span>Building a fix…</div>'
+                    . '<div class="small text-body-secondary ask-live mt-1" data-live="' . $id . '">Working…</div>';
+            }
+            $say = ['pending' => '', 'running' => '', 'merged' => 'Fixed — it is in your app.', 'resolved' => 'Looked at: nothing needed changing.', 'failed' => 'The fix stopped: ' . mb_strimwidth($e['error'], 0, 240, '…'), 'declined' => 'Left as it is.'][$st] ?? ucfirst($st) . '.';
             $b .= ($say !== '' ? '<div class="small fw-semibold mt-2">' . $h($say) . '</div>' : '')
                 . '<div class="mt-2 d-flex flex-wrap gap-1 align-items-center">'
-                . (in_array($st, ['pending', 'failed'], true) ? $btn('btn-primary', 'start', 'wrench-adjustable', $st === 'failed' ? 'Try the fix again' : 'Fix it', ['task' => $id, 'again' => $st === 'failed' ? 1 : 0]) : '')
+                . (in_array($st, ['pending', 'failed'], true) ? $btn('btn-primary', 'fix', 'wrench-adjustable', $st === 'failed' ? 'Try the fix again' : 'Fix it', ['task' => $id]) : '')
                 . $details($id) . '</div>';
         }
         echo $reply($b);
@@ -166,7 +171,7 @@ $reply = fn(string $body) => '<div class="d-flex mb-4"><div class="ask-reply rou
                 $rv = $e['review'];
                 $b = '<div class="fw-semibold"><i class="bi bi-hourglass-split text-warning me-1"></i>Built — waiting for you.</div>'
                    . '<div class="small text-body-secondary">It is not in your app yet. Read what it did, then put it in, send it back, or ask for a change.</div>'
-                   . ($rv['said'] !== '' ? '<div class="ask-said small border-start border-3 ps-2 mt-2">' . nl2br($h($rv['said'])) . '</div>' : '')
+                   . ($rv['said'] !== '' ? '<div class="ask-said ask-report small border-start border-3 ps-2 mt-2">' . \app\MarkdownParser::parseSafe($rv['said']) . '</div>' : '')
                    . ($rv['changed'] !== '' ? '<details class="small mt-2"><summary class="text-body-secondary" style="cursor:pointer">Files it changed</summary><pre class="small mb-0 mt-1 p-2 rounded bg-body-tertiary" style="white-space:pre-wrap">' . $h($rv['changed']) . '</pre></details>' : '')
                    . ($e['can_approve']
                         ? '<div class="mt-2 d-flex flex-wrap gap-1 align-items-center">' . $btn('btn-success', 'approve', 'check-lg', 'Put it in my app', ['task' => $id]) . $btn('btn-outline-secondary', 'decline', 'x-lg', 'Discard it', ['task' => $id]) . $details($id) . '</div>'
@@ -174,7 +179,8 @@ $reply = fn(string $body) => '<div class="d-flex mb-4"><div class="ask-reply rou
                    . $answer($id, 'solo', 'Or say what to change, and it builds it again…', 'Build again');
                 break;
             }
-            $b = '<div class="fw-semibold">' . $h($say) . '</div>' . ($e['error'] !== '' && in_array($st, ['failed', 'conflict'], true) ? '<div class="small text-body-secondary mt-1">' . $h(mb_strimwidth($e['error'], 0, 260, '…')) . '</div>' : '')
+            $b = '<div class="fw-semibold' . ($st === 'running' ? ' d-flex align-items-center gap-2' : '') . '">' . ($st === 'running' ? '<span class="spinner-border spinner-border-sm text-primary" role="status"></span>' : '') . $h($say) . '</div>'
+               . ($st === 'running' ? '<div class="small text-body-secondary ask-live mt-1" data-live="' . $id . '">Working…</div>' : '') . ($e['error'] !== '' && in_array($st, ['failed', 'conflict'], true) ? '<div class="small text-body-secondary mt-1">' . $h(mb_strimwidth($e['error'], 0, 260, '…')) . '</div>' : '')
                . '<div class="mt-2 d-flex flex-wrap gap-1 align-items-center">' . ($st === 'pending' ? $btn('btn-primary', 'start', 'play-fill', 'Build it', ['task' => $id]) : '') . '<a class="btn btn-sm btn-outline-primary" href="/workbench/view?id=' . $id . '">Open it</a></div>';
     }
     echo $reply($b);

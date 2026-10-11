@@ -1552,11 +1552,25 @@ class Workbench extends BuildControl {
         // Who it is for is not asked here: the request says it, or the planner asks through the plan.
         $goal  = \app\GoalBrief::compose($said . $attached['text'], 'none', '');
         $title = mb_substr(trim((string) strtok($said, "\n")), 0, 90);
-        // EVERY request is decomposed first, however short: the project's planner reads the app and
-        // writes the tasks, and only then is anything built. (A one-line request once went straight
-        // to a build agent to save those minutes; it read as "it skipped the planning", and a
-        // planner's task comes with its files and its checks, which a typed line does not.)
         \app\ToolUse::record('builder.ask', (int) $this->member->id, ['review' => $review, 'files' => $attached['count'], 'sheets' => $attached['sheets']], (int) $instance->id);
+        $this->askPlan($instance, $goal, $title, $review);
+    }
+
+    /**
+     * Send a request down the Builder's road: decomposed into tasks by the project's planner
+     * FIRST, always, then built straight through unless it is held for review. (A one-line
+     * request once went straight to a build agent to save those minutes; it read as "it skipped
+     * the planning", and a planner's task comes with its files and its checks, which a typed
+     * line does not.) Answers the request as JSON either way.
+     *
+     * $supersede: tasks this request takes the place of (a found problem being fixed) — removed
+     * when its plan lands. Such a request is not queued while the project is busy: the queue
+     * does not carry what it replaces, so it is refused with the reason and asked again.
+     */
+    private function askPlan(object $instance, string $goal, string $title, bool $review, array $supersede = []): void {
+        $slug = (string) $instance->slug;
+        $app  = $instance->app ?: 'tiknix';
+        $dir  = \app\WorkbenchDb::dirOf($slug, $app);
         $promptId = \app\PromptLog::record([
             'member_id' => (int) $this->member->id, 'source' => \app\PromptLog::SOURCE_DECOMPOSE, 'title' => $title, 'body' => $goal,
             'instance_id' => (int) $instance->id, 'instance_tag' => $slug . '.' . $app, 'auto_build' => !$review,
@@ -1566,17 +1580,48 @@ class Workbench extends BuildControl {
             $runner->useAgent('');
             $runner->deepen('flagged');
             $this->notePlannerAgent($dir, '');
-            $runner->start($goal, [], !$review, $promptId);
+            $runner->start($goal, $supersede, !$review, $promptId);
         } catch (\Throwable $e) {
-            if ($promptId > 0 && \app\PromptQueue::enqueue($promptId, !$review)) {
+            if (!$supersede && $promptId > 0 && \app\PromptQueue::enqueue($promptId, !$review)) {
                 Flight::jsonSuccess(['state' => 'waiting'], 'Got it. The project is busy with an earlier request — this one starts by itself when that is planned.');
                 return;
             }
             $this->logger->error('Workbench ask: the planner did not start', ['error' => $e->getMessage(), 'instance' => $slug]);
-            Flight::jsonError('This could not start: ' . $e->getMessage(), 500);
+            Flight::jsonError($supersede ? 'The project is busy decomposing another request right now (' . $e->getMessage() . '). Press it again when that is done.' : 'This could not start: ' . $e->getMessage(), $supersede ? 409 : 500);
             return;
         }
         Flight::jsonSuccess(['state' => 'planning'], $review ? 'Decomposing it into tasks — they appear here for you to start.' : 'Decomposing it into tasks, then building them.');
+    }
+
+    /**
+     * POST /workbench/askfix — "Fix it" on a problem Tiknix found: handled as a request like any
+     * other (decomposed, built, checked afterwards), written from the problem's own report. The
+     * found-problem task it came from is replaced by the plan that fixes it. JSON.
+     */
+    public function askfix($params = []) {
+        if (!$this->planActionGuard()) return;
+        if (!$this->requireAgent(true)) return;
+        $task = Bean::load('workbenchtask', (int) $this->getParam('id', 0));
+        if (!$task->id || !$this->access->canRun((int) $this->member->id, $task)) { Flight::jsonError('No such task', 404); return; }
+        if ((string) ($task->source ?? '') !== 'detected_error' || !empty($task->parentTaskId)) { Flight::jsonError('That is not a problem Tiknix found.', 409); return; }
+        if (!in_array((string) $task->status, ['pending', 'failed'], true)) { Flight::jsonError('A fix for this is already ' . ((string) $task->status === 'running' ? 'being built' : (string) $task->status) . '.', 409); return; }
+        $instance = $this->selected ? $this->access->instanceMeta((int) $this->selected['id']) : null;
+        if (!$instance || !$instance->id || (int) $task->instanceId !== (int) $instance->id) { Flight::jsonError('That problem belongs to another project.', 409); return; }
+        $tenant = \app\TenantBuilder::bySlug((string) $instance->slug);
+        if (!$tenant) { Flight::jsonError("{$instance->slug} is not running in its own container yet, so nothing can be built in it.", 409); return; }
+        if ($why = $this->tenantAgentProblem($tenant, '')) { Flight::jsonError('This project has no working AI agent right now, so nothing can be built: ' . $why . '.', 409); return; }
+
+        $f = $this->askFound((string) $task->description);
+        $what = $f['message'] !== '' ? $f['message'] : (string) $task->title;
+        // The check's pictures are files of the app itself (public/uploads/audit/…): named by where they are, for the agent to open.
+        $shots = array_map(fn($s) => '- `/srv/app/public' . parse_url($s['url'], PHP_URL_PATH) . '`', $f['shots']);
+        $said = "Fix this problem, which the check found after the last build: {$what}"
+              . ($f['full'] !== '' && $f['full'] !== $what ? "\n\n{$f['full']}" : '')
+              . ($f['where'] !== '' ? "\n\nIt was seen on: {$f['where']}" : '')
+              . ($shots ? "\n\nPictures of it, taken by the check (open them with the Read tool — they are in the app itself, not in your working copy):\n" . implode("\n", $shots) : '')
+              . "\n\nFind the cause before changing anything, fix that, and give the task a check in its `verify` that would have caught this.";
+        \app\ToolUse::record('builder.ask', (int) $this->member->id, ['review' => false, 'fix' => true], (int) $instance->id);
+        $this->askPlan($instance, \app\GoalBrief::compose($said, 'none', ''), mb_substr('Fix: ' . $what, 0, 90), false, [(int) $task->id]);
     }
 
     private const ASK_FILES_MAX = 5;
@@ -1726,9 +1771,20 @@ class Workbench extends BuildControl {
         $ct = $this->tenantInst();
         if (!$ct || !in_array('workbenchtask', Bean::inspect(), true)) { Flight::jsonSuccess(['tasks' => (object) []]); return; }
         $ids = []; $out = [];
-        foreach (Bean::find('workbenchtask', "status = 'running' AND parent_task_id > 0 AND instance_id = ? ORDER BY id", [(int) $this->selected['id']]) as $t) {
+        foreach (Bean::find('workbenchtask', "status = 'running' AND instance_id = ? ORDER BY id", [(int) $this->selected['id']]) as $t) {
             if (!$this->access->canView($this->member->id, $t)) continue;
-            $ids['plan-' . (int) $t->parentTaskId . '-task-' . (int) $t->id] = (int) $t->id;
+            if (empty($t->parentTaskId)) {
+                // A task built on its own has no build watching it: its end is noticed when someone
+                // looks (the board does this too). Ended: it is now waiting, done or failed — the
+                // board's fingerprint changes and the conversation redraws.
+                if (!empty($t->planStatus) || (string) $t->agentSession === '') continue;
+                $this->syncContainerTask($t, $ct);
+                if ((string) $t->status !== 'running') { $this->bustTaskCache(); continue; }
+                $run = $this->runIdOf($t) ?: $this->boardRunId($t);
+            } else {
+                $run = 'plan-' . (int) $t->parentTaskId . '-task-' . (int) $t->id;
+            }
+            $ids[$run] = (int) $t->id;
             $out[(int) $t->id] = ['doing' => '', 'quiet_seconds' => null];
         }
         if (!$ids) { Flight::jsonSuccess(['tasks' => (object) []]); return; }

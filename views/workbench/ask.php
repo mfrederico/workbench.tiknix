@@ -97,7 +97,7 @@ $__inst = (int) ($selected['id'] ?? 0);
         var was = atBottom();
         return fetch('/workbench/askfeed', {credentials: 'same-origin', headers: {'X-Requested-With': 'XMLHttpRequest'}})
             .then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); return r.text(); })
-            .then(function(html){ feed.innerHTML = html; paintLive(); if (stick || was) window.scrollTo(0, document.body.scrollHeight); });
+            .then(function(html){ feed.innerHTML = html; paintLive(); if (stick || was) window.scrollTo(0, document.body.scrollHeight); if (feed.querySelector('.ask-live')) live(); });
     }
     // What each agent building right now is doing, under its task: a build runs for many minutes
     // with nothing else moving, and has to be seen to be working.
@@ -207,13 +207,15 @@ $__inst = (int) ($selected['id'] ?? 0);
             else if (act === 'build')    j = await post('/workbench/planbuild', {plan_id: plan});
             else if (act === 'retry')    j = await post('/workbench/taskretry', {task_id: b.getAttribute('data-task')});
             else if (act === 'stopplan') j = await post('/workbench/decomposestop', {});
-            else if (act === 'start')    j = await post(b.getAttribute('data-again') === '1' ? '/workbench/rerun' : '/workbench/run', {id: b.getAttribute('data-task')});
+            else if (act === 'start')    j = await post('/workbench/run', {id: b.getAttribute('data-task')});
+            else if (act === 'fix')      j = await post('/workbench/askfix', {id: b.getAttribute('data-task')});
             else if (act === 'approve')  j = await post('/workbench/approve', {id: b.getAttribute('data-task')});
             else if (act === 'decline')  j = await post('/workbench/decline', {id: b.getAttribute('data-task')});
             else if (act === 'undo')     j = await post('/aibuilder/rollback/' + encodeURIComponent(b.getAttribute('data-checkpoint')), {id: INST});
             say((j && j.message) || '');
             if (act === 'undo') await tkAlert((j && j.message) || 'Undone.');
-            await redraw();
+            // what was pressed has started something: show it, at the bottom, where a new request shows
+            await redraw(act === 'fix' || act === 'go' || act === 'build');
         } catch (err) { say(err.message, true); b.disabled = false; }
     });
     // "Say what to change": the words go on the task (they are part of its brief from then on) and it is built again.
@@ -235,14 +237,19 @@ $__inst = (int) ($selected['id'] ?? 0);
     function show(i){
         at = (i + set.length) % set.length;
         var s = set[at];
-        vImg.src = s.getAttribute('data-full'); vImg.alt = s.getAttribute('data-label') || 'A screenshot from the check';
-        vCap.textContent = (set.length > 1 ? (at + 1) + ' of ' + set.length + ' — ' : '') + (s.getAttribute('data-ok') === '1' ? '✓ ' : '✗ ') + (s.getAttribute('data-label') || '');
+        // a thumbnail (data-full, data-label, data-ok) or a picture inside a written-out report (its own src)
+        var label = s.getAttribute('data-label') || (s.tagName === 'IMG' && s.alt !== 'screenshot' ? s.alt : '') || '', ok = s.getAttribute('data-ok');
+        vImg.src = s.getAttribute('data-full') || s.currentSrc || s.src; vImg.alt = label || 'A screenshot from the check';
+        vCap.textContent = (set.length > 1 ? (at + 1) + ' of ' + set.length + (label ? ' — ' : '') : '') + (ok === '1' ? '✓ ' : (ok === '0' ? '✗ ' : '')) + label;
         Array.prototype.forEach.call(view.querySelectorAll('.nav'), function(b){ b.style.display = set.length > 1 ? '' : 'none'; });
     }
     function closeView(){ view.classList.remove('open'); vImg.removeAttribute('src'); if (opener && document.contains(opener)) opener.focus(); }
     feed.addEventListener('click', function(e){
-        var b = e.target.closest('.ask-shot'); if (!b) return;
-        opener = b; set = Array.prototype.slice.call(b.parentNode.querySelectorAll('.ask-shot'));
+        var b = e.target.closest('.ask-shot'), group = b ? b.parentNode.querySelectorAll('.ask-shot') : null;
+        // pictures inside "Read the whole report" open the same way, as one set
+        if (!b && e.target.tagName === 'IMG' && e.target.closest('.ask-report')) { b = e.target; group = b.closest('.ask-report').querySelectorAll('img'); e.preventDefault(); }
+        if (!b) return;
+        opener = b; set = Array.prototype.slice.call(group);
         view.classList.add('open'); show(set.indexOf(b)); view.focus();
     });
     view.querySelector('.prev').addEventListener('click', function(){ show(at - 1); });
