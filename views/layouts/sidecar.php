@@ -15,8 +15,13 @@ $__onBuilder = strpos($__p, '/aibuilder') === 0;
 // Prompts must be matched BEFORE the board: it lives under /workbench/… too, so a plain
 // prefix test would light up the Task Board tab while you are looking at prompts.
 $__facet = $__onBuilder ? 'builder' : (strpos($__p, '/workbench/prompts') === 0 ? 'prompts' : (strpos($__p, '/workbench/notebook') === 0 ? 'notebook' : 'board'));
+?><?php
+/* Light or dark is chosen in core's shell, which frames this page from another origin: it cannot
+   read core's saved choice. Core leaves it in a cookie on the shared parent domain (read here, so
+   the page is drawn right the first time) and tells the frame when it is switched (below). */
+$__theme = (($_COOKIE['ui_theme'] ?? '') === 'dark') ? 'dark' : 'light';
 ?><!doctype html>
-<html lang="en" data-bs-theme="light">
+<html lang="en" data-bs-theme="<?= $__theme ?>">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -24,6 +29,15 @@ $__facet = $__onBuilder ? 'builder' : (strpos($__p, '/workbench/prompts') === 0 
 <title><?= $title ?></title>
 <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
 <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
+<script>
+window.addEventListener('message', function (e) {
+    if (e.origin !== <?= json_encode(rtrim((string) Flight::get('sidecar.core_url'), '/')) ?>) return;
+    var t = e.data && e.data.tiknixTheme;
+    if (t === 'dark' || t === 'light') document.documentElement.setAttribute('data-bs-theme', t);
+});
+</script>
+<?php /* Core's own look — its fonts, colours and surfaces — so this page reads as part of the same product. After Bootstrap, as in core's layout. */
+include \app\Paths::runtime() . '/views/components/design-system.php'; ?>
 </head>
 <body>
 <nav class="navbar navbar-expand bg-body-tertiary border-bottom px-3 py-1">

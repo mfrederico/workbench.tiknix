@@ -750,7 +750,7 @@ $baseDomain = $baseUrl === '' ? '' : preg_replace('#^https?://#', '', rtrim($bas
                                         </div>
                                     <?php endif; ?>
                                     <div class="flex-grow-1">
-                                        <div class="<?= $isFromClaude ? 'bg-primary bg-opacity-10 border border-primary' : 'bg-light text-dark border' ?> rounded p-3 position-relative">
+                                        <div class="<?= $isFromClaude ? 'bg-primary bg-opacity-10 border border-primary' : 'bg-body-tertiary text-body border' ?> rounded p-3 position-relative">
                                             <?php if ($canEdit): ?>
                                                 <button type="button" class="btn btn-sm btn-link text-danger position-absolute p-0" style="top: 8px; right: 8px; opacity: 0.5;" onclick="deleteComment(<?= $comment['id'] ?>)" title="Delete">
                                                     <i class="bi bi-trash"></i>
@@ -1308,7 +1308,7 @@ function updateCommentsList(comments) {
                         </div>`
                     }
                     <div class="flex-grow-1">
-                        <div class="${isFromClaude ? 'bg-primary bg-opacity-10 border border-primary' : 'bg-light text-dark border'} rounded p-3">
+                        <div class="${isFromClaude ? 'bg-primary bg-opacity-10 border border-primary' : 'bg-body-tertiary text-body border'} rounded p-3">
                             <div class="d-flex justify-content-between mb-1">
                                 <strong>${isFromClaude ? '<i class="bi bi-robot me-1"></i>' : ''}${comment.author}</strong>
                                 <small class="text-muted">${new Date(comment.created_at).toLocaleString()}</small>
@@ -1459,7 +1459,7 @@ document.getElementById('commentForm')?.addEventListener('submit', async functio
                         ${data.comment.author.charAt(0).toUpperCase()}
                     </div>
                     <div class="flex-grow-1">
-                        <div class="bg-light text-dark border rounded p-3 position-relative">
+                        <div class="bg-body-tertiary text-body border rounded p-3 position-relative">
                             <div class="d-flex justify-content-between mb-1 pe-4">
                                 <strong>${data.comment.author}</strong>
                                 <small class="text-muted">Just now</small>
@@ -1524,7 +1524,7 @@ async function sendInlineComment() {
                         ${data.comment.author.charAt(0).toUpperCase()}
                     </div>
                     <div class="flex-grow-1">
-                        <div class="bg-light text-dark border rounded p-3 position-relative">
+                        <div class="bg-body-tertiary text-body border rounded p-3 position-relative">
                             <div class="d-flex justify-content-between mb-1 pe-4">
                                 <strong>${data.comment.author}</strong>
                                 <small class="text-muted">Just now</small>

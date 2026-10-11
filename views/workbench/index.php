@@ -225,7 +225,7 @@
                   <?php $__bucket = $__isFinished($__ph) ? 'finished' : 'open'; ?>
                   <div class="d-flex align-items-center gap-2 <?= ($__ph['superseded'] || !empty($__ph['replaced_by'])) ? 'opacity-50' : '' ?><?= $__bucket === $__show ? '' : ' d-none' ?>" data-phase-bucket="<?= $__bucket ?>">
                     <?php if ($__ph['replan_of']): ?>
-                    <span class="badge text-bg-light border text-nowrap" style="min-width:4.5rem" title="Made automatically when plan #<?= (int) $__ph['replan_of'] ?> stalled: a re-plan of what was left of it"><?= $__ph['superseded'] ? 'Superseded' : 'Re-plan' ?></span>
+                    <span class="badge bg-body-secondary text-body border text-nowrap" style="min-width:4.5rem" title="Made automatically when plan #<?= (int) $__ph['replan_of'] ?> stalled: a re-plan of what was left of it"><?= $__ph['superseded'] ? 'Superseded' : 'Re-plan' ?></span>
                     <?php else: ?>
                     <span class="badge text-bg-<?= $__done ? 'success' : ($__isNext ? 'primary' : 'secondary') ?> text-nowrap" style="min-width:4.5rem">Phase <?= (int) $__ph['phase'] ?></span>
                     <?php endif; ?>
@@ -419,7 +419,7 @@
                 <li class="nav-item">
                     <a class="nav-link <?= $sActive ? 'active' : '' ?>" href="<?= htmlspecialchars($statusLink($sKey)) ?>">
                         <i class="bi bi-<?= $sIcon ?>"></i> <?= $sLabel ?>
-                        <span class="badge bg-<?= $sActive ? 'light text-dark' : $sColor ?> rounded-pill ms-1"><?= $sCount ?></span>
+                        <span class="badge bg-<?= $sActive ? 'body-secondary text-body' : $sColor ?> rounded-pill ms-1"><?= $sCount ?></span>
                     </a>
                 </li>
                 <?php endforeach; ?>
@@ -807,7 +807,7 @@
                                         : '';
                                     // A superseded re-plan: said on the header, and its tasks are dimmed.
                                     var state = m.superseded
-                                        ? ' <span class="badge text-bg-light border ms-1" title="An automatic re-plan of plan #'+m.superseded+', which then finished without it: these tasks are already built. Safe to delete."><i class="bi bi-slash-circle me-1"></i>Superseded</span>'
+                                        ? ' <span class="badge bg-body-secondary text-body border ms-1" title="An automatic re-plan of plan #'+m.superseded+', which then finished without it: these tasks are already built. Safe to delete."><i class="bi bi-slash-circle me-1"></i>Superseded</span>'
                                           + ' <span class="text-muted small ms-1">already built by plan #'+m.superseded+'</span>'
                                         : statusBadge(m.status);
                                     if (m.superseded) rows.nodes().to$().addClass('wb-superseded');

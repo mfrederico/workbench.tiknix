@@ -25,7 +25,7 @@
             <?php else: ?>
                 <div class="table-responsive">
                     <table class="table table-sm table-hover mb-0">
-                        <thead class="table-light">
+                        <thead>
                             <tr>
                                 <th style="width: 150px;">Time</th>
                                 <th style="width: 80px;">Level</th>

@@ -31,7 +31,7 @@
         <div class="btn-group btn-group-sm">
             <a href="/workbench/prompts<?= $q !== '' ? '?q=' . urlencode($q) : '' ?>"
                class="btn <?= $source === '' ? 'btn-primary' : 'btn-outline-secondary' ?>">
-                All <span class="badge text-bg-light ms-1"><?= (int) ($counts[''] ?? 0) ?></span>
+                All <span class="badge bg-body-secondary text-body ms-1"><?= (int) ($counts[''] ?? 0) ?></span>
             </a>
             <?php
               /* Every link has to carry the current scope, or clicking a source tab
@@ -42,7 +42,7 @@
                 <a href="/workbench/prompts?source=<?= urlencode($key) ?><?= $keep ?>"
                    class="btn <?= $source === $key ? 'btn-primary' : 'btn-outline-secondary' ?>">
                     <?= htmlspecialchars($label) ?>
-                    <span class="badge text-bg-light ms-1"><?= (int) ($counts[$key] ?? 0) ?></span>
+                    <span class="badge bg-body-secondary text-body ms-1"><?= (int) ($counts[$key] ?? 0) ?></span>
                 </a>
             <?php endforeach; ?>
             <?php if (!empty($queued)): ?>
@@ -100,7 +100,7 @@
                                     · <span class="text-warning"><?= (int) $qd['attempts'] ?> attempt<?= $qd['attempts'] === 1 ? '' : 's' ?></span>
                                 <?php endif; ?>
                                 <?php if (!empty($qd['auto_build'])): ?>
-                                    · <span class="badge text-bg-light border">runs straight through</span>
+                                    · <span class="badge bg-body-secondary text-body border">runs straight through</span>
                                 <?php endif; ?>
                             </div>
                         </div>
@@ -145,7 +145,7 @@
                                 <i class="bi bi-<?= $icon ?> me-1"></i><?= htmlspecialchars($sources[$src] ?? $src) ?>
                             </span>
                             <?php if ($tag !== ''): ?>
-                                <span class="badge text-bg-light border<?= $here ? '' : ' opacity-75' ?>"
+                                <span class="badge bg-body-secondary text-body border<?= $here ? '' : ' opacity-75' ?>"
                                       title="<?= $here ? 'The project you are working on' : 'Another of your projects' ?>">
                                     <?= htmlspecialchars($tag) ?>
                                 </span>
