@@ -30,6 +30,15 @@ $__theme = (($_COOKIE['ui_theme'] ?? '') === 'dark') ? 'dark' : 'light';
 <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
 <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
 <script>
+// Tell the shell which page this is, so a refresh of the shell comes back HERE (it keeps it in
+// its own address). Without the one-time parts of an address: a refresh must not start a task
+// again (autorun) or show a banner for something that has finished (decomposing).
+(function () {
+    if (window.parent === window) return;
+    var q = new URLSearchParams(location.search); q.delete('autorun'); q.delete('decomposing');
+    var qs = q.toString();
+    try { window.parent.postMessage({tiknixPath: location.pathname + (qs ? '?' + qs : '')}, <?= json_encode(rtrim((string) Flight::get('sidecar.core_url'), '/')) ?>); } catch (e) {}
+})();
 window.addEventListener('message', function (e) {
     if (e.origin !== <?= json_encode(rtrim((string) Flight::get('sidecar.core_url'), '/')) ?>) return;
     var t = e.data && e.data.tiknixTheme;
