@@ -49,7 +49,7 @@ $__inst = (int) ($selected['id'] ?? 0);
         <div class="d-flex align-items-center gap-3 mt-1 small text-body-secondary">
             <div class="form-check mb-0">
                 <input class="form-check-input" type="checkbox" id="ask-review">
-                <label class="form-check-label" for="ask-review" title="Otherwise it is built as soon as the steps are worked out. Every build starts from a restore point, and Undo brings it back.">Show me the steps before building</label>
+                <label class="form-check-label" for="ask-review" title="Every request is decomposed into tasks first. Otherwise building starts as soon as that is done. Every build starts from a restore point, and Undo brings it back.">Show me the tasks before building</label>
             </div>
             <span id="ask-msg" class="ms-auto text-truncate" role="status"></span>
             <a id="ask-fix" class="btn btn-sm btn-warning flex-shrink-0 d-none" target="_blank" rel="noopener" href="#"><i class="bi bi-cpu me-1"></i>Connect an agent</a>

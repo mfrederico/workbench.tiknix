@@ -1509,9 +1509,9 @@ class Workbench extends BuildControl {
     }
 
     /**
-     * POST /workbench/asksend — what was typed in the box. It is planned by the project's planner
-     * and built straight through (a small request comes back as a one-task plan; the planner
-     * decides, not a guess made here). The project busy with an earlier request: this one is
+     * POST /workbench/asksend — what was typed in the box. It is decomposed into tasks by the
+     * project's planner FIRST, always, and then built straight through (a small request comes
+     * back as a one-task plan; the planner decides, not a guess made here). The project busy with an earlier request: this one is
      * kept and starts by itself (app\PromptQueue), and the answer says so. JSON.
      */
     public function asksend($params = []) {
@@ -1550,31 +1550,15 @@ class Workbench extends BuildControl {
         // Who it is for is not asked here: the request says it, or the planner asks through the plan.
         $goal  = \app\GoalBrief::compose($said . $attached['text'], 'none', '');
         $title = mb_substr(trim((string) strtok($said, "\n")), 0, 90);
-        // SHORT and not held for review: straight to a build agent, no planner first (PlanIngestor::direct).
-        // The agent judges its size and splits it if it is several. Long, or "show me the steps": the planner.
-        // A spreadsheet is a whole specification however short the sentence beside it: planned.
-        $direct = !$review && !$attached['sheets'] && mb_strlen($said) <= self::ASK_DIRECT_MAX;
-        \app\ToolUse::record('builder.ask', (int) $this->member->id, ['review' => $review, 'path' => $direct ? 'direct' : 'planner', 'files' => $attached['count']], (int) $instance->id);
+        // EVERY request is decomposed first, however short: the project's planner reads the app and
+        // writes the tasks, and only then is anything built. (A one-line request once went straight
+        // to a build agent to save those minutes; it read as "it skipped the planning", and a
+        // planner's task comes with its files and its checks, which a typed line does not.)
+        \app\ToolUse::record('builder.ask', (int) $this->member->id, ['review' => $review, 'files' => $attached['count'], 'sheets' => $attached['sheets']], (int) $instance->id);
         $promptId = \app\PromptLog::record([
             'member_id' => (int) $this->member->id, 'source' => \app\PromptLog::SOURCE_DECOMPOSE, 'title' => $title, 'body' => $goal,
             'instance_id' => (int) $instance->id, 'instance_tag' => $slug . '.' . $app, 'auto_build' => !$review,
         ]);
-        if ($direct) {
-            try {
-                $planId = \app\PlanIngestor::direct($instance, $title, $goal, (int) $this->member->id, $app);
-                $plan = Bean::load('workbenchtask', $planId);
-                if ($promptId > 0) \app\PromptLog::linkPlan($promptId, (string) $plan->planUid, (string) $plan->title, $planId);
-                $r = \app\BuildQueue::start($plan, $slug, $dir, (int) $this->member->level);
-            } catch (\Throwable $e) {
-                $this->logger->error('Workbench ask: a direct build did not start', ['error' => $e->getMessage(), 'instance' => $slug]);
-                Flight::jsonError('This could not start: ' . $e->getMessage(), 500);
-                return;
-            }
-            $this->bustTaskCache();
-            if ($r['state'] === 'failed') { Flight::jsonError("Your request is kept as #{$planId}, but its build could not be started. Press “Build it” on it.", 500); return; }
-            Flight::jsonSuccess(['state' => $r['state'], 'plan' => $planId], $r['state'] === 'queued' ? 'Got it — ' . lcfirst($r['message']) : 'On it — building now.');
-            return;
-        }
         try {
             $runner = new PlanRunner($slug, $dir, (int) $this->member->id, (int) $this->member->level, (string) ($instance->engine ?: \app\EngineRegistry::defaultEngine()));
             $runner->useAgent('');
@@ -1590,11 +1574,9 @@ class Workbench extends BuildControl {
             Flight::jsonError('This could not start: ' . $e->getMessage(), 500);
             return;
         }
-        Flight::jsonSuccess(['state' => 'planning'], $review ? 'Working out the steps — the plan appears here for you to start.' : 'Working out the steps, then building them.');
+        Flight::jsonSuccess(['state' => 'planning'], $review ? 'Decomposing it into tasks — they appear here for you to start.' : 'Decomposing it into tasks, then building them.');
     }
 
-    /** A request up to this long goes straight to a build agent; a longer one is planned first. */
-    public const ASK_DIRECT_MAX = 700;
     private const ASK_FILES_MAX = 5;
     private const ASK_FILES_HEAD = "\n\n## Attached files\n";
 
@@ -1689,11 +1671,11 @@ class Workbench extends BuildControl {
                 foreach ($kids as $k) {
                     $st = (string) $k->status;
                     $mark = in_array($st, ['merged', 'resolved', 'completed'], true) ? 'done' : (in_array($st, ['failed', 'conflict'], true) ? 'trouble' : (in_array($st, ['awaiting', 'waiting'], true) ? 'you' : ($st === 'running' ? 'now' : 'next')));
-                    if ($mark === 'done') $built++;
                     if ($mark === 'you' && !$needs) $needs = $k;
                     if ($mark === 'trouble' && !$trouble) $trouble = $k;
-                    // A task that split itself is not a step of its own: its pieces are.
+                    // A task that split itself is not a task of its own any more: its pieces are.
                     if (str_starts_with((string) ($k->splitOutcome ?? ''), 'split')) continue;
+                    if ($mark === 'done') $built++;
                     $steps[] = ['id' => (int) $k->id, 'title' => (string) $k->title, 'mark' => $mark, 'note' => (string) ($k->progressMessage ?? '')];
                 }
                 $ps = (string) $r->planStatus;
@@ -1701,8 +1683,10 @@ class Workbench extends BuildControl {
                        : ((int) ($r->queuePos ?? 0) > 0 && in_array($ps, ['approved', 'stalled'], true) ? 'queued' : ($ps !== '' ? $ps : 'draft'));
                 $out['entries'][] = [
                     'id' => (int) $r->id, 'plan' => $isPlan, 'title' => (string) $r->title, 'asked' => $asked, 'files' => $files,
+                    // one of the few requests that went straight to a build agent (2026-10-11): it was not decomposed, so it is not said to have been
+                    'direct' => (string) ($r->source ?? '') === 'ask',
                     'by_me' => (int) $r->memberId === (int) $this->member->id, 'replan_of' => (int) ($r->replanOf ?? 0),
-                    'at' => (string) $r->createdAt, 'state' => $state, 'steps' => $steps, 'built' => $built, 'total' => count($kids),
+                    'at' => (string) $r->createdAt, 'state' => $state, 'steps' => $steps, 'built' => $built, 'total' => count($steps),
                     'message' => (string) ($r->progressMessage ?: ''), 'error' => (string) ($r->errorMessage ?: ''),
                     'needs' => $needs ? ['id' => (int) $needs->id, 'title' => (string) $needs->title] : null,
                     'trouble' => $trouble ? ['id' => (int) $trouble->id, 'title' => (string) $trouble->title, 'why' => (string) $trouble->errorMessage] : null,

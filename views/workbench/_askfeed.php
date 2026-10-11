@@ -11,9 +11,12 @@ $when = function (string $at): string {
 };
 $marks = ['done' => ['check-circle-fill', 'text-success', 'Built'], 'now' => ['', '', 'Being built now'], 'trouble' => ['exclamation-triangle-fill', 'text-danger', 'Stopped'],
           'you' => ['chat-dots-fill', 'text-warning', 'Waiting for your answer'], 'next' => ['circle', 'text-body-tertiary', 'Not started yet']];
-$steps = function (array $list, int $show = 7) use ($h, $marks): string {
+$steps = function (array $list, int $show = 7, bool $decomposed = true) use ($h, $marks): string {
     if (!$list) return '';
-    $o = '<ul class="list-unstyled small mb-0 mt-2 ask-steps">';
+    // The first thing done for every request, said as the first step: it was decomposed into these tasks.
+    $o = '<ul class="list-unstyled small mb-0 mt-2 ask-steps">'
+       . ($decomposed ? '<li class="d-flex gap-2 align-items-baseline text-body-secondary"><i class="bi bi-check-circle-fill text-success flex-shrink-0" aria-hidden="true"></i>'
+                      . '<span>Decomposed into ' . count($list) . ' task' . (count($list) === 1 ? '' : 's') . '</span></li>' : '');
     foreach (array_slice($list, 0, $show) as $s) {
         [$icon, $tone, $say] = $marks[$s['mark']];
         $o .= '<li class="d-flex gap-2 align-items-baseline" title="' . $h($say) . '">'
@@ -43,19 +46,19 @@ $reply = fn(string $body) => '<div class="d-flex mb-4"><div class="ask-reply rou
 <?php foreach ($feed['entries'] as $e):
     $id = (int) $e['id'];
     echo $you($e['replan_of'] ? "(Tiknix re-planned what was left of #{$e['replan_of']})" : $e['asked'], trim(($e['files'] ? $e['files'] . ($e['files'] === 1 ? ' file attached' : ' files attached') . ' · ' : '') . $when($e['at']), ' ·'));
-    $count = $e['total'] ? $e['built'] . ' of ' . $e['total'] . ' steps built' : '';
+    $count = $e['total'] ? $e['built'] . ' of ' . $e['total'] . ' tasks built' : '';
     $b = '';
     switch ($e['state']) {
         case 'draft':
-            $b = '<div class="fw-semibold">Here is how I would do it' . ($e['total'] ? ' — ' . $e['total'] . ' step' . ($e['total'] === 1 ? '' : 's') : '') . '.</div>' . $steps($e['steps'])
+            $b = '<div class="fw-semibold">Here is how I would do it' . ($e['total'] ? ' — ' . $e['total'] . ' task' . ($e['total'] === 1 ? '' : 's') : '') . '.</div>' . $steps($e['steps'], 7, empty($e['direct']))
                . '<div class="mt-2 d-flex flex-wrap gap-1 align-items-center">' . $btn('btn-primary', 'go', 'play-fill', 'Build it', ['plan' => $id]) . $details($id) . '</div>';
             break;
         case 'approved':
-            $b = '<div class="fw-semibold">Ready when you are.</div>' . $steps($e['steps'])
+            $b = '<div class="fw-semibold">Ready when you are.</div>' . $steps($e['steps'], 7, empty($e['direct']))
                . '<div class="mt-2 d-flex flex-wrap gap-1 align-items-center">' . $btn('btn-primary', 'build', 'play-fill', 'Build it', ['plan' => $id]) . $details($id) . '</div>';
             break;
         case 'queued':
-            $b = '<div class="fw-semibold"><i class="bi bi-hourglass-split me-1 text-info"></i>Waiting its turn.</div><div class="small text-body-secondary">' . $h(preg_replace('/^Queued: /', 'It ', $e['message'])) . ' It starts by itself.</div>' . $steps($e['steps'], 4)
+            $b = '<div class="fw-semibold"><i class="bi bi-hourglass-split me-1 text-info"></i>Waiting its turn.</div><div class="small text-body-secondary">' . $h(preg_replace('/^Queued: /', 'It ', $e['message'])) . ' It starts by itself.</div>' . $steps($e['steps'], 4, empty($e['direct']))
                . '<div class="mt-2">' . $details($id) . '</div>';
             break;
         case 'building':
@@ -63,10 +66,10 @@ $reply = fn(string $body) => '<div class="d-flex mb-4"><div class="ask-reply rou
             $b = '<div class="fw-semibold d-flex align-items-center gap-2"><span class="spinner-border spinner-border-sm text-primary" role="status"></span>Building — ' . $h($count) . '</div>'
                . '<div class="progress mt-2" style="height:4px" role="progressbar" aria-label="Built" aria-valuenow="' . $pct . '" aria-valuemin="0" aria-valuemax="100"><div class="progress-bar" style="width:' . $pct . '%"></div></div>'
                . ($e['needs'] ? '<div class="alert alert-warning py-2 px-3 small mt-2 mb-0"><i class="bi bi-chat-dots-fill me-1"></i>It needs an answer from you on “' . $h($e['needs']['title']) . '”. <a class="alert-link" href="/workbench/view?id=' . (int) $e['needs']['id'] . '">Answer it</a></div>' : '')
-               . $steps($e['steps']) . '<div class="mt-2">' . $details($id) . '</div>';
+               . $steps($e['steps'], 7, empty($e['direct'])) . '<div class="mt-2">' . $details($id) . '</div>';
             break;
         case 'done':
-            $b = '<div class="fw-semibold"><i class="bi bi-check-circle-fill text-success me-1"></i>Done — ' . ($e['total'] === 1 ? 'it is in your app.' : $h((string) $e['total']) . ' steps, all in your app.') . '</div>' . $steps($e['steps'])
+            $b = '<div class="fw-semibold"><i class="bi bi-check-circle-fill text-success me-1"></i>Done — ' . ($e['total'] === 1 ? 'it is in your app.' : $h((string) $e['total']) . ' tasks, all in your app.') . '</div>' . $steps($e['steps'], 7, empty($e['direct']))
                . ($e['audit'] !== '' && !in_array($e['audit'], ['passed', 'clean', 'done'], true) ? '<div class="small text-body-secondary mt-2">Checked afterwards: ' . $h($e['audit']) . '.</div>' : '')
                . '<div class="mt-2 d-flex flex-wrap gap-1 align-items-center">'
                . ($appUrl !== '' ? '<a class="btn btn-sm btn-primary" href="' . $h($appUrl) . '" target="_blank" rel="noopener"><i class="bi bi-box-arrow-up-right me-1"></i>Look at it</a>' : '')
@@ -76,7 +79,7 @@ $reply = fn(string $body) => '<div class="d-flex mb-4"><div class="ask-reply rou
         case 'attention': case 'stalled':
             $why = $e['trouble'] ? '“' . $e['trouble']['title'] . '”: ' . mb_strimwidth($e['trouble']['why'], 0, 260, '…') : ($e['message'] !== '' ? $e['message'] : $e['error']);
             $b = '<div class="fw-semibold"><i class="bi bi-exclamation-triangle-fill text-danger me-1"></i>It stopped' . ($count !== '' ? ' — ' . $h($count) : '') . '.</div>'
-               . ($why !== '' ? '<div class="small text-body-secondary mt-1">' . $h($why) . '</div>' : '') . $steps($e['steps'])
+               . ($why !== '' ? '<div class="small text-body-secondary mt-1">' . $h($why) . '</div>' : '') . $steps($e['steps'], 7, empty($e['direct']))
                . '<div class="mt-2 d-flex flex-wrap gap-1 align-items-center">'
                . ($e['trouble'] ? $btn('btn-primary', 'retry', 'arrow-repeat', 'Try again', ['task' => (int) $e['trouble']['id']]) : $btn('btn-primary', 'build', 'play-fill', 'Go on', ['plan' => $id]))
                . $details($id) . '</div>';
@@ -96,8 +99,8 @@ endforeach; ?>
 <?php endforeach; ?>
 <?php if ($feed['planning']): ?>
     <?= $you($feed['planning']['title'] . ($feed['planning']['excerpt'] !== '' ? "\n" . $feed['planning']['excerpt'] : ''), '') ?>
-    <?= $reply('<div class="fw-semibold d-flex align-items-center gap-2"><span class="spinner-border spinner-border-sm text-primary" role="status"></span>Working out the steps…</div>'
-        . '<div class="small text-body-secondary mt-1" id="ask-doing">Reading your app first. This takes a few minutes.</div>'
+    <?= $reply('<div class="fw-semibold d-flex align-items-center gap-2"><span class="spinner-border spinner-border-sm text-primary" role="status"></span>Decomposing into appropriate tasks…</div>'
+        . '<div class="small text-body-secondary mt-1" id="ask-doing">Reading your app first, then writing the tasks. This takes a few minutes; building starts by itself after it.</div>'
         . '<div class="mt-2">' . $btn('btn-outline-secondary', 'stopplan', 'stop-fill', 'Stop') . '</div>') ?>
 <?php endif; ?>
 <?php if (!$feed['entries'] && !$feed['planning'] && !$feed['waiting']): ?>
