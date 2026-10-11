@@ -40,7 +40,8 @@ window.addEventListener('message', function (e) {
 include \app\Paths::runtime() . '/views/components/design-system.php'; ?>
 </head>
 <body>
-<nav class="navbar navbar-expand bg-body-tertiary border-bottom px-3 py-1">
+<?php /* Stays at the top while the page scrolls: the way to the other views is always in reach. */ ?>
+<nav class="navbar navbar-expand bg-body-tertiary border-bottom px-3 py-1 sticky-top">
   <?php /* Below sm (phones) every item is its icon alone — labels stay for screen readers
            and as a tooltip — so the bar keeps one row instead of spilling off the side. */ ?>
   <span class="navbar-brand fw-semibold d-flex align-items-center gap-1 me-2" style="font-size:.95rem"><i class="bi bi-hammer"></i><span class="d-none d-sm-inline"> Build</span></span>

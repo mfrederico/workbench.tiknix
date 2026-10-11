@@ -1455,7 +1455,7 @@ class Workbench extends BuildControl {
     // board — or a project where this turns out wrong — switches back and finds the same work.
 
     /** Which view the Builder opens on for someone who has not chosen: 'board' or 'ask'. */
-    public const DEFAULT_VIEW = 'board';
+    public const DEFAULT_VIEW = 'ask';
     private const VIEW_COOKIE = 'tkx_builder_view';
 
     /** The view this person chose ('ask' | 'board'), or the default. */
@@ -1481,6 +1481,13 @@ class Workbench extends BuildControl {
         $this->viewData['feed']  = $this->conversation();
         $this->viewData['appUrl'] = $this->askAppUrl();
         $this->viewData['prefersAsk'] = self::preferredView() === 'ask';
+        // Which of the project's agents builds what is asked here, as the app last reported it, and
+        // where to change it. (No agent at all: the layout shows the gate instead of this page.)
+        $meta = $this->selected ? $this->access->instanceMeta((int) $this->selected['id']) : null;
+        $rj   = $meta ? (json_decode((string) ($meta->reportJson ?? ''), true) ?: []) : [];
+        $name = (string) ($rj['default_agent'] ?? '');
+        $this->viewData['askAgent'] = $name === '' ? '' : ($name === 'anthropic' ? 'the Anthropic account' : (string) (($rj['agent_names'][$name] ?? '') ?: $name));
+        $this->viewData['askAgentsUrl'] = rtrim((string) Flight::get('sidecar.core_url'), '/') . '/projects/open?to=' . rawurlencode('/agents');
         $this->render('workbench/ask', $this->viewData);
     }
 
@@ -1524,7 +1531,14 @@ class Workbench extends BuildControl {
         $dir  = \app\WorkbenchDb::dirOf($slug, $app);
         $tenant = \app\TenantBuilder::bySlug($slug);
         if (!$tenant) { Flight::jsonError("{$slug} is not running in its own container yet, so nothing can be built in it.", 409); return; }
-        if ($why = $this->tenantAgentProblem($tenant, '')) { Flight::jsonError('This cannot start: ' . $why . '.', 409); return; }
+        // Asked of the app NOW, not what a page load remembered: an agent disconnected since then must
+        // stop the request here, with the way to connect one, not minutes later inside a build.
+        if ($why = $this->tenantAgentProblem($tenant, '')) {
+            unset($_SESSION['workbench_agent_ok'][(int) $instance->id]);   // the next page shows the gate
+            Flight::json(['success' => false, 'message' => 'This project has no working AI agent right now, so nothing can be built: ' . $why . '.',
+                          'data' => ['agents_url' => rtrim((string) Flight::get('sidecar.core_url'), '/') . '/projects/open?to=' . rawurlencode('/agents')]], 409);
+            return;
+        }
 
         // What was attached goes to the app's container, where its agents can read it; the request names each file.
         try { $attached = $this->askAttach($tenant); }
@@ -1538,7 +1552,8 @@ class Workbench extends BuildControl {
         $title = mb_substr(trim((string) strtok($said, "\n")), 0, 90);
         // SHORT and not held for review: straight to a build agent, no planner first (PlanIngestor::direct).
         // The agent judges its size and splits it if it is several. Long, or "show me the steps": the planner.
-        $direct = !$review && mb_strlen($said) <= self::ASK_DIRECT_MAX;
+        // A spreadsheet is a whole specification however short the sentence beside it: planned.
+        $direct = !$review && !$attached['sheets'] && mb_strlen($said) <= self::ASK_DIRECT_MAX;
         \app\ToolUse::record('builder.ask', (int) $this->member->id, ['review' => $review, 'path' => $direct ? 'direct' : 'planner', 'files' => $attached['count']], (int) $instance->id);
         $promptId = \app\PromptLog::record([
             'member_id' => (int) $this->member->id, 'source' => \app\PromptLog::SOURCE_DECOMPOSE, 'title' => $title, 'body' => $goal,
@@ -1587,16 +1602,16 @@ class Workbench extends BuildControl {
      * The files sent with a request (field `files[]`): each checked for what it IS (its content,
      * not its name), put in the app's container, and listed for the agent. None is fine.
      * A file that may not be attached throws InvalidArgumentException with a sentence for the person.
-     * @return array{text:string, count:int}
+     * @return array{text:string, count:int, sheets:bool}
      */
     private function askAttach(object $tenant): array {
         $up = $_FILES['files'] ?? null;
-        if (!$up || !is_array($up['name'] ?? null)) return ['text' => '', 'count' => 0];
+        if (!$up || !is_array($up['name'] ?? null)) return ['text' => '', 'count' => 0, 'sheets' => false];
         $n = count($up['name']);
         if ($n > self::ASK_FILES_MAX) throw new \InvalidArgumentException('Attach at most ' . self::ASK_FILES_MAX . ' files to one request.');
         $kinds = ['image/png' => 'png', 'image/jpeg' => 'jpg', 'image/webp' => 'webp', 'image/gif' => 'gif', 'application/pdf' => 'pdf', 'text/plain' => 'txt', 'text/csv' => 'csv', 'text/markdown' => 'md'];
         $folder = bin2hex(random_bytes(8));
-        $lines = [];
+        $lines = []; $sheets = false;
         for ($i = 0; $i < $n; $i++) {
             $orig = (string) $up['name'][$i];
             $err  = (int) $up['error'][$i];
@@ -1608,20 +1623,39 @@ class Workbench extends BuildControl {
             $tmp  = (string) $up['tmp_name'][$i];
             $mime = (string) (new \finfo(FILEINFO_MIME_TYPE))->file($tmp);
             $ext  = $kinds[$mime] ?? null;
+            // A workbook is a zip, whatever its content reads as: it is one when it opens as one.
+            if ($ext === null && \app\SheetReader::is($tmp)) $ext = 'xlsx';
+            if ($ext === null && strtolower(pathinfo($orig, PATHINFO_EXTENSION)) === 'xls') {
+                throw new \InvalidArgumentException("“{$orig}” is in the old Excel format (.xls), which cannot be read here. Save it as .xlsx (File → Save As → Excel Workbook) and attach that.");
+            }
             // a text file keeps the kind its name says, when that is one of the text kinds
             if ($ext === 'txt' && in_array($named = strtolower(pathinfo($orig, PATHINFO_EXTENSION)), ['md', 'csv', 'txt'], true)) $ext = $named;
-            if ($ext === null) throw new \InvalidArgumentException("“{$orig}” cannot be attached (what is in it reads as {$mime}). A request can carry pictures (PNG, JPEG, WebP, GIF), PDFs and text files.");
+            if ($ext === null) throw new \InvalidArgumentException("“{$orig}” cannot be attached (what is in it reads as {$mime}). A request can carry pictures (PNG, JPEG, WebP, GIF), PDFs, Excel workbooks (.xlsx) and text files.");
             $base = trim(preg_replace('/[^a-z0-9]+/', '-', strtolower(pathinfo($orig, PATHINFO_FILENAME))), '-');
             $name = ($base !== '' ? mb_substr($base, 0, 40) : 'file') . '-' . ($i + 1) . '.' . $ext;
             $path = \app\TenantHost::attach($tenant, $folder, $name, $tmp);
+            if ($ext === 'xlsx') {
+                // An agent cannot open a workbook: its sheets and formulas are written out beside it.
+                try { $md = \app\SheetReader::markdown($tmp, mb_substr($orig, 0, 80)); }
+                catch (\RuntimeException $e) { throw new \InvalidArgumentException("“{$orig}” could not be read: " . $e->getMessage() . '.'); }
+                $mdFile = tempnam(sys_get_temp_dir(), 'sheet');
+                if ($mdFile === false || file_put_contents($mdFile, $md) === false) throw new \RuntimeException("the written-out copy of “{$orig}” could not be made");
+                try { $mdPath = \app\TenantHost::attach($tenant, $folder, preg_replace('/\.xlsx$/', '-sheets.md', $name), $mdFile); }
+                finally { @unlink($mdFile); }
+                $lines[] = "- `{$mdPath}` — the spreadsheet the person attached as “" . str_replace(['`', "\n"], ' ', mb_substr($orig, 0, 80)) . "”, WRITTEN OUT: every sheet, its first rows and its formulas. Read this. (The workbook itself is at `{$path}`; the Read tool cannot open it.)";
+                $sheets = true;
+                continue;
+            }
             $what = str_starts_with($mime, 'image/') ? 'a picture' : ($ext === 'pdf' ? 'a PDF' : 'a text file');
             $lines[] = "- `{$path}` — {$what} the person attached as “" . str_replace(['`', "\n"], ' ', mb_substr($orig, 0, 80)) . '”';
         }
-        if (!$lines) return ['text' => '', 'count' => 0];
-        return ['count' => count($lines), 'text' => self::ASK_FILES_HEAD . implode("\n", $lines) . "\n\n"
+        if (!$lines) return ['text' => '', 'count' => 0, 'sheets' => false];
+        return ['count' => count($lines), 'sheets' => $sheets, 'text' => self::ASK_FILES_HEAD . implode("\n", $lines) . "\n\n"
             . "Open each one first (the Read tool shows pictures and PDFs) — they are part of the request. A screenshot or a sketch is a REFERENCE: build what it shows, do not put the file in the app. "
             . "A file that is meant to BE in the app (a logo, a photo to show, a document to offer) is copied from there into the app, under `public/` when it is a static part of the site. "
-            . "If you cannot see a picture, say so in your `## Handoff` instead of guessing what it shows.\n"];
+            . "If you cannot see a picture, say so in your `## Handoff` instead of guessing what it shows.\n"
+            . ($sheets ? "\nA spreadsheet attached to a request is the SPECIFICATION of what is wanted: its columns are the data the app keeps, each formula is a rule the app must compute the same way, and its sheets are usually the app's pages or reports. "
+                       . "Build the app that does what the spreadsheet does — records people enter, results worked out for them — not a page that shows a spreadsheet. Its rows are sample data: seed a few so the result can be compared with the sheet, and say which numbers you checked against it.\n" : '')];
     }
 
     /**

@@ -20,7 +20,14 @@ $__inst = (int) ($selected['id'] ?? 0);
 <script>window.WB_CSRF = <?= json_encode(csrf_token(), JSON_UNESCAPED_SLASHES) ?>;</script>
 <div class="ask-wrap">
     <div class="d-flex align-items-center gap-2 mb-3 small text-body-secondary">
-        <span class="flex-grow-1"><?= htmlspecialchars((string) ($selected['display_name'] ?? $selected['slug'] ?? '')) ?></span>
+        <span class="flex-grow-1 text-truncate">
+            <?php if (($askAgent ?? '') !== ''): ?>
+                <i class="bi bi-cpu me-1"></i>Built by <strong class="text-body"><?= htmlspecialchars($askAgent) ?></strong>
+                &middot; <a class="text-body-secondary" href="<?= htmlspecialchars($askAgentsUrl) ?>" target="_blank" rel="noopener">change</a>
+            <?php else: ?>
+                <i class="bi bi-cpu me-1"></i><a class="text-body-secondary" href="<?= htmlspecialchars($askAgentsUrl) ?>" target="_blank" rel="noopener">This project's AI agents</a>
+            <?php endif; ?>
+        </span>
         <?php if (!empty($prefersAsk)): ?>
             <button type="button" class="btn btn-sm btn-link text-body-secondary text-decoration-none p-0 ask-view" data-view="board">Use the full Builder instead</button>
         <?php else: ?>
@@ -34,8 +41,8 @@ $__inst = (int) ($selected['id'] ?? 0);
         <div id="ask-chips" class="d-flex flex-wrap gap-1 mb-1"></div>
         <div class="d-flex gap-2 align-items-end">
             <label class="visually-hidden" for="ask-box">What should your app do next?</label>
-            <button class="btn btn-outline-secondary flex-shrink-0" type="button" id="ask-attach" title="Attach pictures, PDFs or text files (or drop or paste them)" aria-label="Attach files"><i class="bi bi-paperclip"></i></button>
-            <input type="file" id="ask-files" class="d-none" multiple accept="image/png,image/jpeg,image/webp,image/gif,application/pdf,text/plain,text/csv,.md">
+            <button class="btn btn-outline-secondary flex-shrink-0" type="button" id="ask-attach" title="Attach pictures, PDFs, spreadsheets or text files (or drop or paste them)" aria-label="Attach files"><i class="bi bi-paperclip"></i></button>
+            <input type="file" id="ask-files" class="d-none" multiple accept="image/png,image/jpeg,image/webp,image/gif,application/pdf,text/plain,text/csv,.md,.xlsx">
             <textarea class="form-control" id="ask-box" rows="1" maxlength="20000" placeholder="What should your app do next?" required></textarea>
             <button class="btn btn-primary flex-shrink-0" type="submit" id="ask-send" aria-label="Send"><i class="bi bi-arrow-up"></i></button>
         </div>
@@ -45,6 +52,7 @@ $__inst = (int) ($selected['id'] ?? 0);
                 <label class="form-check-label" for="ask-review" title="Otherwise it is built as soon as the steps are worked out. Every build starts from a restore point, and Undo brings it back.">Show me the steps before building</label>
             </div>
             <span id="ask-msg" class="ms-auto text-truncate" role="status"></span>
+            <a id="ask-fix" class="btn btn-sm btn-warning flex-shrink-0 d-none" target="_blank" rel="noopener" href="#"><i class="bi bi-cpu me-1"></i>Connect an agent</a>
         </div>
     </form>
 </div>
@@ -96,7 +104,7 @@ $__inst = (int) ($selected['id'] ?? 0);
         picked.forEach(function(f, i){
             var c = document.createElement('span'); c.className = 'ask-chip';
             if (/^image\//.test(f.type)) { var im = document.createElement('img'); im.src = URL.createObjectURL(f); im.alt = ''; c.appendChild(im); }
-            else { var ic = document.createElement('i'); ic.className = 'bi bi-file-earmark-text'; c.appendChild(ic); }
+            else { var ic = document.createElement('i'); ic.className = /\.xlsx$/i.test(f.name) ? 'bi bi-file-earmark-spreadsheet' : 'bi bi-file-earmark-text'; c.appendChild(ic); }
             var n = document.createElement('span'); n.className = 'text-truncate'; n.textContent = f.name; c.appendChild(n);
             var x = document.createElement('button'); x.type = 'button'; x.className = 'btn btn-sm btn-link text-body-secondary p-0 px-1'; x.setAttribute('aria-label', 'Remove ' + f.name); x.innerHTML = '<i class="bi bi-x-lg"></i>';
             x.addEventListener('click', function(){ picked.splice(i, 1); drawChips(); });
@@ -107,7 +115,8 @@ $__inst = (int) ($selected['id'] ?? 0);
         var bad = '';
         Array.prototype.forEach.call(list, function(f){
             if (picked.length >= MAX_FILES) { bad = 'At most ' + MAX_FILES + ' files for one request.'; return; }
-            if (!OK.test(f.type) && !/\.(md|txt|csv)$/i.test(f.name)) { bad = '“' + f.name + '” cannot be attached — pictures, PDFs and text files only.'; return; }
+            if (/\.xls$/i.test(f.name)) { bad = '“' + f.name + '” is in the old Excel format. Save it as .xlsx and attach that.'; return; }
+            if (!OK.test(f.type) && !/\.(md|txt|csv|xlsx)$/i.test(f.name)) { bad = '“' + f.name + '” cannot be attached — pictures, PDFs, Excel workbooks and text files only.'; return; }
             if (f.size > MAX_BYTES) { bad = '“' + f.name + '” is too large — 6 MB at most.'; return; }
             picked.push(f);
         });
@@ -124,7 +133,12 @@ $__inst = (int) ($selected['id'] ?? 0);
         picked.forEach(function(f){ fd.append('files[]', f, f.name); });
         return fetch('/workbench/asksend', {method: 'POST', credentials: 'same-origin', headers: {'X-CSRF-TOKEN': window.WB_CSRF || '', 'X-Requested-With': 'XMLHttpRequest'}, body: fd})
             .then(function(r){ return r.json().catch(function(){ throw new Error('The Builder answered with something unreadable (HTTP ' + r.status + ').'); }); })
-            .then(function(j){ if (!j || j.success === false) throw new Error((j && j.message) || 'That did not work.'); return j; });
+            .then(function(j){
+                var fix = document.getElementById('ask-fix'), url = j && j.data && j.data.agents_url;
+                fix.classList.toggle('d-none', !url); if (url) fix.href = url;
+                if (!j || j.success === false) throw new Error((j && j.message) || 'That did not work.');
+                return j;
+            });
     }
     function grow(){ box.style.height = 'auto'; box.style.height = Math.min(box.scrollHeight + 2, 192) + 'px'; }
     box.addEventListener('input', grow);
