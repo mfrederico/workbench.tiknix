@@ -1446,6 +1446,170 @@ class Workbench extends BuildControl {
         Flight::jsonSuccess(['sig' => md5(json_encode($rows)), 'busy' => $busy, 'tasks' => count($rows)]);
     }
 
+    // ── Ask: the simple view ───────────────────────────────────────────────────────────────
+    //
+    // One box and a conversation. It is a second VIEW of the board, not a second system: what is
+    // typed goes down the same road as the create form's "Plan it first" with "run it straight
+    // through" ticked (the project's planner, then the build), and the conversation is drawn from
+    // the same plans and tasks the board lists. Nothing is stored for it. Someone who prefers the
+    // board — or a project where this turns out wrong — switches back and finds the same work.
+
+    /** Which view the Builder opens on for someone who has not chosen: 'board' or 'ask'. */
+    public const DEFAULT_VIEW = 'board';
+    private const VIEW_COOKIE = 'tkx_builder_view';
+
+    /** The view this person chose ('ask' | 'board'), or the default. */
+    public static function preferredView(): string {
+        $v = (string) ($_COOKIE[self::VIEW_COOKIE] ?? '');
+        return in_array($v, ['ask', 'board'], true) ? $v : self::DEFAULT_VIEW;
+    }
+
+    /** POST /workbench/askview — remember which view this person wants the Builder to open on. JSON. */
+    public function askview($params = []) {
+        if (!$this->planActionGuard()) return;
+        $v = (string) $this->getParam('view', '');
+        if (!in_array($v, ['ask', 'board'], true)) { Flight::jsonError("view is ask or board, not '{$v}'", 422); return; }
+        setcookie(self::VIEW_COOKIE, $v, ['expires' => time() + 365 * 86400, 'path' => '/', 'secure' => true, 'httponly' => true, 'samesite' => 'None']);
+        \app\ToolUse::record('builder.view', (int) $this->member->id, ['view' => $v], (int) ($this->selected['id'] ?? 0));
+        Flight::jsonSuccess(['view' => $v, 'url' => $v === 'ask' ? '/workbench/ask' : '/workbench']);
+    }
+
+    /** GET /workbench/ask — the page: the conversation so far, and the box. */
+    public function ask($params = []) {
+        if (!$this->requireLogin()) return;
+        $this->viewData['title'] = 'Ask';
+        $this->viewData['feed']  = $this->conversation();
+        $this->viewData['appUrl'] = $this->askAppUrl();
+        $this->viewData['prefersAsk'] = self::preferredView() === 'ask';
+        $this->render('workbench/ask', $this->viewData);
+    }
+
+    /** GET /workbench/askfeed — the conversation alone, as HTML: the page redraws it when the board's fingerprint changes. */
+    public function askfeed($params = []) {
+        if (!$this->requireLogin()) return;
+        $feed = $this->conversation();
+        $appUrl = $this->askAppUrl();
+        header('Content-Type: text/html; charset=utf-8');
+        header('Cache-Control: no-store');
+        include dirname(__DIR__) . '/views/workbench/_askfeed.php';
+    }
+
+    /** Where the selected project's app is served, for "Look at it" ('' while it has no address). */
+    private function askAppUrl(): string {
+        $meta = $this->selected ? $this->access->instanceMeta((int) $this->selected['id']) : null;
+        $d = $meta ? trim((string) ($meta->ctDomain ?? '')) : '';
+        return $d !== '' ? 'https://' . $d : '';
+    }
+
+    /**
+     * POST /workbench/asksend — what was typed in the box. It is planned by the project's planner
+     * and built straight through (a small request comes back as a one-task plan; the planner
+     * decides, not a guess made here). The project busy with an earlier request: this one is
+     * kept and starts by itself (app\PromptQueue), and the answer says so. JSON.
+     */
+    public function asksend($params = []) {
+        if (!$this->planActionGuard()) return;
+        if (!$this->requireAgent(true)) return;
+        $instance = $this->selected ? $this->access->instanceMeta((int) $this->selected['id']) : null;
+        if (!$instance || !$instance->id || !$this->access->canAccessInstance((int) $this->member->id, (int) $instance->id)) {
+            Flight::jsonError('Choose a project to work on first.', 409); return;
+        }
+        $said = trim((string) $this->getParam('message', ''));
+        if (mb_strlen($said) < 20) { Flight::jsonError('Say a little more — a sentence or two about what you want and who it is for.', 422); return; }
+        if (mb_strlen($said) > 20000) { Flight::jsonError('That is too long for one request (20,000 characters at most). Split it, or attach it as a goal on the Task Board.', 422); return; }
+        $review = in_array((string) $this->getParam('review', ''), ['1', 'on', 'true'], true);   // "show me the plan first"
+
+        $slug = (string) $instance->slug;
+        $app  = $instance->app ?: 'tiknix';
+        $dir  = \app\WorkbenchDb::dirOf($slug, $app);
+        $tenant = \app\TenantBuilder::bySlug($slug);
+        if (!$tenant) { Flight::jsonError("{$slug} is not running in its own container yet, so nothing can be built in it.", 409); return; }
+        if ($why = $this->tenantAgentProblem($tenant, '')) { Flight::jsonError('This cannot start: ' . $why . '.', 409); return; }
+
+        // Who it is for is not asked here: the request says it, or the planner asks through the plan.
+        $goal  = \app\GoalBrief::compose($said, 'none', '');
+        $title = mb_substr(trim((string) strtok($said, "\n")), 0, 90);
+        \app\ToolUse::record('builder.ask', (int) $this->member->id, ['review' => $review, 'chars' => mb_strlen($said) > 600 ? 'long' : 'short'], (int) $instance->id);
+        $promptId = \app\PromptLog::record([
+            'member_id' => (int) $this->member->id, 'source' => \app\PromptLog::SOURCE_DECOMPOSE, 'title' => $title, 'body' => $goal,
+            'instance_id' => (int) $instance->id, 'instance_tag' => $slug . '.' . $app, 'auto_build' => !$review,
+        ]);
+        try {
+            $runner = new PlanRunner($slug, $dir, (int) $this->member->id, (int) $this->member->level, (string) ($instance->engine ?: \app\EngineRegistry::defaultEngine()));
+            $runner->useAgent('');
+            $runner->deepen('flagged');
+            $this->notePlannerAgent($dir, '');
+            $runner->start($goal, [], !$review, $promptId);
+        } catch (\Throwable $e) {
+            if ($promptId > 0 && \app\PromptQueue::enqueue($promptId, !$review)) {
+                Flight::jsonSuccess(['state' => 'waiting'], 'Got it. The project is busy with an earlier request — this one starts by itself when that is planned.');
+                return;
+            }
+            $this->logger->error('Workbench ask: the planner did not start', ['error' => $e->getMessage(), 'instance' => $slug]);
+            Flight::jsonError('This could not start: ' . $e->getMessage(), 500);
+            return;
+        }
+        Flight::jsonSuccess(['state' => 'planning'], $review ? 'Working out the steps — the plan appears here for you to start.' : 'Working out the steps, then building them.');
+    }
+
+    /**
+     * The conversation: the selected project's last requests, oldest first — each a plan (or a
+     * task made on its own) with what became of it — then what is being planned right now and
+     * what is waiting for the project to be free.
+     *
+     * @return array{entries: array<int, array>, planning: ?array, waiting: array, more: int}
+     */
+    private function conversation(): array {
+        $out = ['entries' => [], 'planning' => null, 'waiting' => [], 'more' => 0];
+        if (!$this->selected) return $out;
+        $instId = (int) $this->selected['id'];
+        if (in_array('workbenchtask', Bean::inspect(), true)) {
+            $total = (int) Bean::count('workbenchtask', 'instance_id = ? AND parent_task_id IS NULL', [$instId]);
+            $rows  = array_reverse(array_values(Bean::find('workbenchtask', 'instance_id = ? AND parent_task_id IS NULL ORDER BY id DESC LIMIT 12', [$instId])));
+            $out['more'] = max(0, $total - count($rows));
+            $lastDone = 0;
+            foreach ($rows as $r) if ((string) $r->planStatus === 'done') $lastDone = (int) $r->id;
+            $newest = $rows ? (int) end($rows)->id : 0;
+            foreach ($rows as $r) {
+                if (!$this->access->canView($this->member->id, $r)) continue;
+                $kids  = array_values(Bean::find('workbenchtask', 'parent_task_id = ? ORDER BY id', [(int) $r->id]));
+                $isPlan = $kids !== [] || trim((string) $r->planStatus) !== '';
+                $asked = trim(\app\GoalBrief::split((string) (($r->planGoal ?? '') !== '' ? $r->planGoal : $r->description))['goal']);
+                if ($asked === '') $asked = (string) $r->title;
+                $steps = []; $built = 0; $needs = null; $trouble = null;
+                foreach ($kids as $k) {
+                    $st = (string) $k->status;
+                    $mark = in_array($st, ['merged', 'resolved', 'completed'], true) ? 'done' : (in_array($st, ['failed', 'conflict'], true) ? 'trouble' : (in_array($st, ['awaiting', 'waiting'], true) ? 'you' : ($st === 'running' ? 'now' : 'next')));
+                    if ($mark === 'done') $built++;
+                    if ($mark === 'you' && !$needs) $needs = $k;
+                    if ($mark === 'trouble' && !$trouble) $trouble = $k;
+                    // A task that split itself is not a step of its own: its pieces are.
+                    if (str_starts_with((string) ($k->splitOutcome ?? ''), 'split')) continue;
+                    $steps[] = ['id' => (int) $k->id, 'title' => (string) $k->title, 'mark' => $mark, 'note' => (string) ($k->progressMessage ?? '')];
+                }
+                $ps = (string) $r->planStatus;
+                $state = !$isPlan ? ('task-' . (string) $r->status)
+                       : ((int) ($r->queuePos ?? 0) > 0 && in_array($ps, ['approved', 'stalled'], true) ? 'queued' : ($ps !== '' ? $ps : 'draft'));
+                $out['entries'][] = [
+                    'id' => (int) $r->id, 'plan' => $isPlan, 'title' => (string) $r->title, 'asked' => $asked,
+                    'by_me' => (int) $r->memberId === (int) $this->member->id, 'replan_of' => (int) ($r->replanOf ?? 0),
+                    'at' => (string) $r->createdAt, 'state' => $state, 'steps' => $steps, 'built' => $built, 'total' => count($kids),
+                    'message' => (string) ($r->progressMessage ?: ''), 'error' => (string) ($r->errorMessage ?: ''),
+                    'needs' => $needs ? ['id' => (int) $needs->id, 'title' => (string) $needs->title] : null,
+                    'trouble' => $trouble ? ['id' => (int) $trouble->id, 'title' => (string) $trouble->title, 'why' => (string) $trouble->errorMessage] : null,
+                    'audit' => (string) ($r->auditStatus ?? ''),
+                    // Undo is offered on the newest request only, when it is finished: going back
+                    // to before an older one would also take away everything built since.
+                    'undo' => ((int) $r->id === $lastDone && (int) $r->id === $newest) ? (string) ($r->planCheckpoint ?? '') : '',
+                ];
+            }
+        }
+        $slug = (string) $this->selected['slug'];
+        if (TmuxManager::exists('tiknix-' . (int) $this->member->id . '-plan-' . $slug) && ($g = $this->decomposingGoal())) $out['planning'] = $g;
+        $out['waiting'] = \app\PromptQueue::queued((int) $this->member->id, $slug . '.' . ((string) ($this->selected['app'] ?? '') ?: 'tiknix'));
+        return $out;
+    }
+
     /**
      * GET /workbench/inprogress — the In progress card on its own, as HTML, for a page that shows
      * it beside something else (the Terminal page asks for it, narrow). Empty when nothing is live.

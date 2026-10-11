@@ -14,7 +14,7 @@ $__p = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/';
 $__onBuilder = strpos($__p, '/aibuilder') === 0;
 // Prompts must be matched BEFORE the board: it lives under /workbench/… too, so a plain
 // prefix test would light up the Task Board tab while you are looking at prompts.
-$__facet = $__onBuilder ? 'builder' : (strpos($__p, '/workbench/prompts') === 0 ? 'prompts' : (strpos($__p, '/workbench/notebook') === 0 ? 'notebook' : 'board'));
+$__facet = $__onBuilder ? 'builder' : (strpos($__p, '/workbench/ask') === 0 ? 'ask' : (strpos($__p, '/workbench/prompts') === 0 ? 'prompts' : (strpos($__p, '/workbench/notebook') === 0 ? 'notebook' : 'board')));
 ?><?php
 /* Light or dark is chosen in core's shell, which frames this page from another origin: it cannot
    read core's saved choice. Core leaves it in a cookie on the shared parent domain (read here, so
@@ -47,6 +47,8 @@ include \app\Paths::runtime() . '/views/components/design-system.php'; ?>
   <?php /* No agent on the project: there is nothing to build with, so the three views are not
            offered at all — the gate below is the page (BuildControl::agentGate). */ ?>
   <ul class="nav nav-pills gap-1 flex-nowrap"<?= !empty($agentGate) ? ' style="display:none"' : '' ?>>
+    <?php /* Ask: the simple view of the same work — one box, and what became of each request (Workbench::ask). */ ?>
+    <li class="nav-item"><a class="nav-link py-1 px-2 <?= $__facet === 'ask' ? 'active' : '' ?>" href="/workbench/ask" title="Ask"><i class="bi bi-chat-square-text me-sm-1"></i><span class="d-none d-sm-inline">Ask</span><span class="visually-hidden d-sm-none">Ask</span></a></li>
     <li class="nav-item"><a class="nav-link py-1 px-2 <?= $__facet === 'board' ? 'active' : '' ?>" href="/workbench" title="Task Board"><i class="bi bi-kanban me-sm-1"></i><span class="d-none d-sm-inline">Task Board</span><span class="visually-hidden d-sm-none">Task Board</span></a></li>
     <li class="nav-item"><a class="nav-link py-1 px-2 <?= $__onBuilder ? 'active' : '' ?>" href="/aibuilder" title="Terminal"><i class="bi bi-terminal me-sm-1"></i><span class="d-none d-sm-inline">Terminal</span><span class="visually-hidden d-sm-none">Terminal</span></a></li>
     <?php /* The prompt log belongs beside the two surfaces that produce it — the board's
