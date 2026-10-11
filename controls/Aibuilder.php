@@ -420,6 +420,27 @@ class Aibuilder extends BuildControl {
         Flight::jsonSuccess($c, 'Checkpoint ' . preg_replace('/^checkpoint-/', '', $c['tag']) . ' saved' . ($c['committed'] ? ' (uncommitted changes included)' : ''));
     }
 
+    /**
+     * POST /aibuilder/save?id= — save what is uncommitted in the app (work done in the terminal)
+     * as a commit by this member (TenantHost::saveWork). The Terminal page calls it by itself
+     * once the changed files have stopped changing; nobody has to remember to. JSON.
+     */
+    public function save($params = []): void {
+        if (!$this->requireLevel($this->minLevel())) return;
+        if (!$this->validateCSRF()) return;
+        $inst = $this->accessibleInstance($this->getParam('id', 0));
+        if (!$inst) { Flight::jsonError('No such instance', 404); return; }
+        if (!$this->inContainer($inst)) { Flight::jsonError("{$inst->slug} is not running in its own container, so there is nothing to save here.", 409); return; }
+        try { $r = \app\TenantHost::saveWork($inst, \app\TenantHost::author((int) $this->member->id)); }
+        catch (\RuntimeException $e) { $r = ['ok' => false, 'error' => $e->getMessage()]; }
+        if (!$r['ok']) {
+            $this->logger->error('aibuilder save failed', ['instance' => $inst->slug, 'error' => $r['error']]);
+            Flight::jsonError('Your work was not saved: ' . $r['error'], 502);
+            return;
+        }
+        Flight::jsonSuccess($r, $r['files'] > 0 ? 'Saved ' . $r['files'] . ' file' . ($r['files'] === 1 ? '' : 's') . '.' : 'Nothing to save.');
+    }
+
     /** GET /aibuilder/checkpoints?id= — list checkpoints with descriptions. JSON. */
     public function checkpoints($params = []): void {
         if (!$this->requireLevel($this->minLevel())) return;

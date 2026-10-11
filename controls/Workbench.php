@@ -1738,6 +1738,39 @@ class Workbench extends BuildControl {
     }
 
     /**
+     * GET /workbench/boardmini — the task board, narrow, as HTML: what is building, every plan not
+     * finished with its tasks under it, and the tasks made on their own that are still open. The
+     * Terminal page shows it beside the terminal and redraws it when the board's fingerprint changes.
+     */
+    public function boardmini($params = []) {
+        if (!$this->requireLogin()) return;
+        $liveTree = []; $miniPlans = []; $miniSolo = [];
+        if (in_array('workbenchtask', Bean::inspect(), true)) {
+            $live = $this->access->getVisibleTasks($this->member->id, ['status' => 'live']);
+            usort($live, fn($a, $b) => [(string) $a->status !== 'awaiting', -(int) $a->id] <=> [(string) $b->status !== 'awaiting', -(int) $b->id]);
+            $liveTree = $this->liveTree($live);
+            foreach (array_reverse($this->phaseList()) as $ph) {   // newest first
+                if ($ph['plan_status'] === 'done' || !empty($ph['superseded']) || !empty($ph['replaced_by'])) continue;
+                $plan = Bean::load('workbenchtask', (int) $ph['id']);
+                if (!$plan->id || !$this->access->canView($this->member->id, $plan)) continue;
+                $tasks = [];
+                foreach (Bean::find('workbenchtask', 'parent_task_id = ? ORDER BY id', [(int) $ph['id']]) as $t) $tasks[] = ['id' => (int) $t->id, 'title' => (string) $t->title, 'status' => (string) $t->status];
+                $miniPlans[] = ['id' => (int) $ph['id'], 'title' => $ph['title'], 'built' => $ph['built'], 'total' => $ph['total'], 'tasks' => $tasks,
+                                'state' => (int) ($plan->queuePos ?? 0) > 0 && $ph['plan_status'] !== 'building' ? 'queued' : $ph['plan_status']];
+                if (count($miniPlans) >= 12) break;
+            }
+            // tasks made on their own, still open
+            foreach (Bean::find('workbenchtask', "(parent_task_id IS NULL OR parent_task_id = 0) AND (plan_status IS NULL OR plan_status = '') AND status NOT IN ('merged', 'completed', 'resolved', 'declined') ORDER BY id DESC LIMIT 12") as $t) {
+                if (Bean::count('workbenchtask', 'parent_task_id = ?', [(int) $t->id]) > 0 || !$this->access->canView($this->member->id, $t)) continue;
+                $miniSolo[] = ['id' => (int) $t->id, 'title' => (string) $t->title, 'status' => (string) $t->status];
+            }
+        }
+        header('Content-Type: text/html; charset=utf-8');
+        header('Cache-Control: no-store');
+        include dirname(__DIR__) . '/views/workbench/_boardmini.php';
+    }
+
+    /**
      * The In progress card's entries: each building plan with its tasks beneath it, then the live
      * tasks that belong to no plan. A plan's own row is its title and how far it is; under it:
      * `now` (an agent has it, or it waits on its person), `trouble` (failed or stuck at a merge),

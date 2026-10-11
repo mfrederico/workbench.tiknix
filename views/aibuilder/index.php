@@ -163,15 +163,20 @@ foreach ($instances as $__i) { if (!empty($__i->isDefault)) { $hasDefault = true
 
       <!-- Changes + checkpoints + plan -->
       <div class="col-lg-4">
-        <!-- What is building right now, as on the board (/workbench/inprogress); empty when nothing is. -->
+        <!-- The task board, narrow (/workbench/boardmini): what is building, then every plan not finished with its tasks. -->
         <div id="ab-inprogress" class="ab-inprogress"></div>
         <script>
         (function(){
             var box = document.getElementById('ab-inprogress'), sig = null, busy = false;
             function draw(){
-                return fetch('/workbench/inprogress', {credentials: 'same-origin', headers: {'X-Requested-With': 'XMLHttpRequest'}})
+                return fetch('/workbench/boardmini', {credentials: 'same-origin', headers: {'X-Requested-With': 'XMLHttpRequest'}})
                     .then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); return r.text(); })
-                    .then(function(html){ box.innerHTML = html; });
+                    .then(function(html){
+                        // a plan someone unfolded stays unfolded across a redraw
+                        var open = Array.prototype.map.call(box.querySelectorAll('details[open] summary span.text-truncate'), function(e){ return e.textContent.trim().split(' ')[0]; });
+                        box.innerHTML = html;
+                        Array.prototype.forEach.call(box.querySelectorAll('details'), function(d){ var k = d.querySelector('summary span.text-truncate').textContent.trim().split(' ')[0]; if (open.indexOf(k) >= 0) d.open = true; });
+                    });
             }
             function tick(){
                 if (busy || document.hidden) return;
@@ -179,69 +184,25 @@ foreach ($instances as $__i) { if (!empty($__i->isDefault)) { $hasDefault = true
                 fetch('/workbench/boardsig', {credentials: 'same-origin', headers: {'X-Requested-With': 'XMLHttpRequest'}})
                     .then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
                     .then(function(j){ var s = j && j.data ? j.data.sig : null; if (s === sig) return; return draw().then(function(){ sig = s; }); })
-                    .catch(function(e){ box.innerHTML = '<div class="alert alert-warning small py-2 mb-3">What is building could not be read (' + String(e.message).replace(/[<>&]/g, '') + ').</div>'; sig = null; })
+                    .catch(function(e){ box.innerHTML = '<div class="alert alert-warning small py-2 mb-3">The task board could not be read (' + String(e.message).replace(/[<>&]/g, '') + ').</div>'; sig = null; })
                     .then(function(){ busy = false; });
             }
             tick(); setInterval(tick, 5000);
         })();
         </script>
-        <!-- Save your work: changes + uploads + checkpoint, in one place -->
+        <?php /* History. Work in the terminal saves itself (the page does it once the changed files stop
+                 changing; a build saves it too before merging) and a restore point is taken before every
+                 build and every update — so nothing here has to be done. It shows that it is saved, and
+                 is the way back to an earlier point. */ ?>
         <div class="card shadow-sm">
-          <div class="card-header d-flex justify-content-between align-items-center">
-            <span class="fw-semibold"><i class="bi bi-save me-1"></i>Save your work</span>
-            <button id="ab-changes-refresh" class="btn btn-sm btn-outline-secondary" title="Refresh changes"><i class="bi bi-arrow-clockwise"></i></button>
-          </div>
-          <div class="card-body">
-            <!-- 1) Changes since last checkpoint -->
-            <div class="text-uppercase text-body-secondary fw-semibold mb-1" style="font-size:.68rem;letter-spacing:.04em"><i class="bi bi-file-diff me-1"></i>Changes since last checkpoint</div>
-            <div id="ab-changes" class="mb-3"><div class="text-body-secondary small">No changes yet.</div></div>
-
-            <!-- 2) Uploads -->
-            <?php /* Uploads land in THIS host's copy; a project in its own container has none here. */ ?>
-            <div<?= !empty($ab_inCt) ? ' class="d-none"' : '' ?>>
-            <div class="text-uppercase text-body-secondary fw-semibold mb-1" style="font-size:.68rem;letter-spacing:.04em"><i class="bi bi-paperclip me-1"></i>Uploads <span class="fw-normal text-lowercase">— @reference in the terminal</span></div>
-            <form id="ab-upload-form" class="mb-2">
-              <input id="ab-upload-file" type="file" class="form-control form-control-sm mb-2" multiple>
-              <div class="d-flex gap-2">
-                <select id="ab-upload-bucket" class="form-select form-select-sm">
-                  <option value="secure">Secure — not web-accessible (published)</option>
-                  <option value="public">Public — web-accessible (published)</option>
-                </select>
-                <button class="btn btn-primary btn-sm" type="submit" title="Upload"><i class="bi bi-upload"></i></button>
-              </div>
-              <div class="form-check mt-1">
-                <input class="form-check-input" type="checkbox" id="ab-upload-overwrite">
-                <label class="form-check-label small" for="ab-upload-overwrite">Overwrite existing (<code>index.php</code> protected)</label>
-              </div>
-              <div id="ab-upload-msg" class="form-text"></div>
-            </form>
-            <div id="ab-upload-list" class="small mb-3"></div>
-
-            </div>
-            <!-- 3) Checkpoint (commits everything above; local only — publishing is the Publisher's) -->
-            <hr class="my-2">
-            <div class="text-uppercase text-body-secondary fw-semibold mb-1" style="font-size:.68rem;letter-spacing:.04em"><i class="bi bi-bookmark-plus me-1"></i>Checkpoint</div>
-            <form id="ab-ckpt-form" class="d-flex gap-2 mb-1">
-              <input id="ab-ckpt-desc" class="form-control form-control-sm" placeholder="Describe this checkpoint…" maxlength="200">
-              <button class="btn btn-success btn-sm text-nowrap" type="submit" title="Save checkpoint"><i class="bi bi-save me-1"></i>Save</button>
-            </form>
-            <div class="text-body-secondary mb-2" style="font-size:.72rem">Commits all changes above and copies the data as a restore point, by you. Going live is separate — use <strong>Publish</strong> in the top bar.</div>
-            <div id="ab-ckpt-list" class="small"></div>
-          </div>
-        </div>
-        <div class="card shadow-sm mt-3">
-          <div class="card-header fw-semibold"><i class="bi bi-diagram-3 me-1"></i>Plan &amp; build</div>
-          <div class="card-body">
-            <p class="text-body-secondary small mb-2">Decompose a goal into a multi-agent plan for this instance — grounded on its reuse inventory so tasks build on what already exists. Planning, review, approve &amp; build all live in the Task Board.</p>
-            <div class="d-flex gap-2">
-              <?php /* No ?instance_id: the task board builds against the selected project,
-                       the same one this page is editing. Passing an id would imply the two
-                       could differ, and a stale one in a bookmarked link would look like it
-                       still worked. */ ?>
-              <a href="/workbench/create" class="btn btn-info btn-sm flex-fill"><i class="bi bi-diagram-3 me-1"></i>Plan &amp; build in Task Board</a>
-              <button id="ab-reuse-digest" class="btn btn-outline-secondary btn-sm text-nowrap" type="button" title="Preview the reuse inventory the planner is grounded on for this instance"><i class="bi bi-recycle me-1"></i>Reuse digest</button>
-            </div>
-            <div class="text-body-secondary mt-2" style="font-size:.72rem">Preview this instance's <a href="#" id="ab-reuse-digest-link">reuse inventory</a>, or review generated plans in <a href="/workbench" target="_blank">the Task Board</a>, tagged to this instance.</div>
+          <div class="card-body py-2">
+            <div id="ab-saved" class="small d-flex align-items-center gap-2" role="status"><i class="bi bi-check-circle text-success"></i><span>Everything is saved.</span></div>
+            <div id="ab-changes"></div>
+            <details class="mt-2">
+              <summary class="small text-body-secondary" style="cursor:pointer"><i class="bi bi-clock-history me-1"></i>Go back to an earlier point</summary>
+              <div id="ab-ckpt-list" class="small mt-2"></div>
+              <div class="text-body-secondary mt-2" style="font-size:.72rem">A restore point is kept before every build and every update. <a href="#" id="ab-ckpt-now">Keep one of right now</a></div>
+            </details>
           </div>
         </div>
       </div>
@@ -519,30 +480,55 @@ if (AB.has && !AB.keyNeeded) {
     connect();
   }
 
-  // --- Changes panel (polls so terminal edits show up live) ---
-  let lastChangePaths=[];
+  // --- What changed in the terminal, and saving it ---
+  // Nobody presses Save: once the changed files have been the same for QUIET seconds (the agent
+  // has stopped writing), the page saves them (/aibuilder/save). A build saves them too before it
+  // merges, so work is never lost to a closed tab — this only makes it sooner.
+  const QUIET=90;
+  let lastChangePaths=[], sameSince=0, saving=false, savedAt='';
+  function savedLine(icon, tone, text, action){
+    const el=document.getElementById('ab-saved');
+    el.innerHTML='<i class="bi bi-'+icon+' '+tone+'"></i><span class="flex-grow-1">'+esc(text)+'</span>'+(action?'<a href="#" id="ab-save-now">Save now</a>':'');
+    const a=document.getElementById('ab-save-now'); if(a) a.addEventListener('click',e=>{ e.preventDefault(); saveWork(); });
+  }
+  function saveWork(){
+    if(saving) return; saving=true; savedLine('arrow-repeat','text-primary','Saving…',false);
+    post('/aibuilder/save',{}).then(j=>{
+      if(!j||!j.success){ savedLine('exclamation-triangle-fill','text-danger',(j&&j.message)||'Your work was not saved.',true); return; }
+      savedAt=new Date().toLocaleTimeString([], {hour:'numeric', minute:'2-digit'});
+      lastChangePaths=[]; sameSince=0; document.getElementById('ab-changes').innerHTML='';
+      savedLine('check-circle','text-success','Everything is saved'+(j.data&&j.data.files?' — '+j.data.files+' file'+(j.data.files===1?'':'s')+' at '+savedAt:'')+'.',false);
+    }).catch(()=>savedLine('exclamation-triangle-fill','text-danger','Your work was not saved — the request failed.',true)).finally(()=>{ saving=false; });
+  }
   function refreshChanges(){
+    if(saving) return;
     fetch('/aibuilder/changes?id='+AB.id,{headers:{'X-Requested-With':'XMLHttpRequest'}})
       .then(r=>r.json()).then(j=>{
+        if(saving) return;
+        if(!j||j.success===false){ savedLine('exclamation-triangle-fill','text-danger',(j&&j.message)||'What changed could not be read.',false); return; }
         const box=document.getElementById('ab-changes'); const files=(j.data&&j.data.files)||[];
         const prev=new Set(lastChangePaths);
-        if(!files.length){ box.innerHTML='<div class="text-body-secondary small">No changes since last checkpoint.</div>'; lastChangePaths=[]; return; }
+        if(!files.length){ box.innerHTML=''; lastChangePaths=[]; sameSince=0; savedLine('check-circle','text-success','Everything is saved'+(savedAt?' — at '+savedAt:'')+'.',false); return; }
         box.innerHTML=files.map(f=>{
           const code=(f.status||'?').replace(/[^MADRU?]/g,'').charAt(0)||'M';
           const fresh=!prev.has(f.path)?' fresh':'';
           return '<div class="ab-file'+fresh+'"><span class="st '+code+'">'+esc(code)+'</span><span class="path">'+esc(f.path)+'</span></div>';
         }).join('');
+        const now=files.map(f=>f.status+' '+f.path), same=now.length===lastChangePaths.length&&files.every(f=>prev.has(f.path));
+        if(!same||!sameSince) sameSince=Date.now();
         lastChangePaths=files.map(f=>f.path);
+        const left=Math.max(0,QUIET-Math.round((Date.now()-sameSince)/1000));
+        if(left===0){ saveWork(); return; }
+        savedLine('pencil','text-warning',files.length+' file'+(files.length===1?'':'s')+' changed in the terminal — saved by itself once it goes quiet.',true);
       }).catch(()=>{});
   }
-  document.getElementById('ab-changes-refresh').addEventListener('click',()=>{ lastChangePaths=[]; refreshChanges(); });
 
   // --- Checkpoints ---
   function loadCheckpoints(){
     fetch('/aibuilder/checkpoints?id='+AB.id,{headers:{'X-Requested-With':'XMLHttpRequest'}})
       .then(r=>r.json()).then(j=>{
         const box=document.getElementById('ab-ckpt-list'); const cps=(j.data&&j.data.checkpoints)||[];
-        if(!cps.length){ box.innerHTML='<div class="text-body-secondary">No checkpoints yet.</div>'; return; }
+        if(!cps.length){ box.innerHTML='<div class="text-body-secondary">None yet — the first is kept when the first build starts.</div>'; return; }
         box.innerHTML=cps.map(c=>'<div class="ab-ckpt"><div class="d-flex justify-content-between"><span class="fw-semibold">'+esc(c.name.replace(/^checkpoint-/,''))+'</span>'
           +'<button class="btn btn-link btn-sm p-0 ab-rb" data-ckpt="'+esc(c.name)+'" data-data="'+(c.data?'1':'0')+'" title="Roll back or fork from here"><i class="bi bi-three-dots"></i></button></div>'
           +(c.description?'<div class="desc">'+esc(c.description)+'</div>':'')
@@ -554,12 +540,13 @@ if (AB.has && !AB.keyNeeded) {
     headers:{'Content-Type':'application/x-www-form-urlencoded','X-CSRF-TOKEN':AB.csrf,'X-Requested-With':'XMLHttpRequest'},
     body:new URLSearchParams(Object.assign({csrf_token:AB.csrf,id:AB.id},extra||{})).toString()}).then(r=>r.json());
 
-  document.getElementById('ab-ckpt-form').addEventListener('submit',function(e){
-    e.preventDefault(); const inp=document.getElementById('ab-ckpt-desc'); const btn=this.querySelector('button'); btn.disabled=true;
-    post('/aibuilder/checkpoint',{label:inp.value.trim()}).then(j=>{
-      if(!j||!j.success){ tkAlert((j&&j.message)||'The checkpoint was not saved.'); return; }
-      inp.value=''; loadCheckpoints(); refreshChanges();
-    }).catch(()=>tkAlert('The checkpoint was not saved — the request failed.')).finally(()=>btn.disabled=false);
+  // A restore point of right now, for someone about to try something in the terminal.
+  document.getElementById('ab-ckpt-now').addEventListener('click',function(e){
+    e.preventDefault(); const a=this; if(a.dataset.busy) return; a.dataset.busy='1'; a.textContent='Keeping it…';
+    post('/aibuilder/checkpoint',{label:'Kept by hand'}).then(j=>{
+      if(!j||!j.success){ tkAlert((j&&j.message)||'The restore point was not kept.'); return; }
+      loadCheckpoints(); refreshChanges();
+    }).catch(()=>tkAlert('The restore point was not kept — the request failed.')).finally(()=>{ delete a.dataset.busy; a.textContent='Keep one of right now'; });
   });
   let _ckpt=null, _ckptData=false;
   // A checkpoint with a copy of the data restores code AND data; one without (a runtime update's) restores the code only.
@@ -606,37 +593,7 @@ if (AB.has && !AB.keyNeeded) {
   // spot posted to /connections/publish and polled /connections/status — core routes with
   // no counterpart in this sidecar, so both had been 404ing since the extraction.
 
-  // --- Uploads (both published; secure = outside docroot/not web-served, public = web-served) ---
-  function humanSize(n){ n=+n||0; return n>1048576?(n/1048576).toFixed(1)+'MB':(n>1024?(n/1024).toFixed(0)+'KB':n+'B'); }
-  function loadUploads(){
-    fetch('/aibuilder/uploads?id='+AB.id,{headers:{'X-Requested-With':'XMLHttpRequest'}}).then(r=>r.json()).then(j=>{
-      const box=document.getElementById('ab-upload-list'); const u=(j.data&&j.data.uploads)||{secure:[],public:[]};
-      const row=(f,bucket)=>'<div class="ab-file"><span class="st '+(bucket==='public'?'A':'U')+'">'+(bucket==='public'?'P':'S')+'</span>'
-        +'<span class="path flex-grow-1">'+esc(f.name)+' <span class="text-body-secondary">'+humanSize(f.size)+'</span></span>'
-        +'<button class="btn btn-link btn-sm p-0 ab-cp" title="Copy @reference" data-ref="'+esc(f.ref)+'"><i class="bi bi-clipboard"></i></button>'
-        +'<button class="btn btn-link btn-sm p-0 text-danger ab-del" title="Delete" data-bucket="'+bucket+'" data-name="'+esc(f.name)+'"><i class="bi bi-x-lg"></i></button></div>';
-      const sec=(u.secure||[]).map(f=>row(f,'secure')).join(''), pub=(u.public||[]).map(f=>row(f,'public')).join('');
-      box.innerHTML=(sec||pub)?((sec?'<div class="text-body-secondary mt-1 mb-1">Secure</div>'+sec:'')+(pub?'<div class="text-body-secondary mt-2 mb-1">Public</div>'+pub:'')):'<div class="text-body-secondary">No uploads yet.</div>';
-      box.querySelectorAll('.ab-cp').forEach(b=>b.addEventListener('click',()=>{ if(navigator.clipboard) navigator.clipboard.writeText(b.dataset.ref); b.innerHTML='<i class="bi bi-check2"></i>'; setTimeout(()=>b.innerHTML='<i class="bi bi-clipboard"></i>',1200); }));
-      box.querySelectorAll('.ab-del').forEach(b=>b.addEventListener('click',async ()=>{ if(!await tkConfirm('Delete '+b.dataset.name+'?', {okText: 'Delete', danger: true})) return; post('/aibuilder/deleteupload',{bucket:b.dataset.bucket,name:b.dataset.name}).then(()=>{ loadUploads(); refreshChanges(); }); }));
-    }).catch(()=>{});
-  }
-  document.getElementById('ab-upload-form').addEventListener('submit',function(e){
-    e.preventDefault();
-    const inp=document.getElementById('ab-upload-file'); if(!inp.files.length) return;
-    const fd=new FormData();
-    fd.append('id',AB.id); fd.append('csrf_token',AB.csrf);
-    fd.append('bucket',document.getElementById('ab-upload-bucket').value);
-    fd.append('overwrite',document.getElementById('ab-upload-overwrite').checked?'1':'0');
-    for(const f of inp.files) fd.append('files[]',f);
-    const btn=this.querySelector('button[type=submit]'); btn.disabled=true;
-    const msg=document.getElementById('ab-upload-msg'); msg.className='form-text text-body-secondary'; msg.textContent='Uploading…';
-    fetch('/aibuilder/upload',{method:'POST',headers:{'X-CSRF-TOKEN':AB.csrf,'X-Requested-With':'XMLHttpRequest'},body:fd}).then(r=>r.json()).then(j=>{
-      if(j.success){ const errs=(j.data&&j.data.errors)||[]; msg.className='form-text '+(errs.length?'text-warning':'text-success');
-        msg.textContent=(j.message||'Uploaded')+(errs.length?(' · '+errs.join('; ')):''); inp.value=''; loadUploads(); refreshChanges(); }
-      else { msg.className='form-text text-danger'; msg.textContent=j.message||'Upload failed.'; }
-    }).catch(()=>{ msg.className='form-text text-danger'; msg.textContent='Network error.'; }).finally(()=>btn.disabled=false);
-  });
+  // (Files for the agent are attached to a request on the Ask page; there is no upload panel here.)
 
   // --- Agent picker: your own session on another of the app's agents ----------------
   // A reload with ?agent=: a different agent is a different session (yours), so nothing needs
@@ -753,7 +710,7 @@ if (AB.has && !AB.keyNeeded) {
   } else {
     setStatus('connecting…'); initTerminal();
   }
-  refreshChanges(); loadCheckpoints(); if(!AB.inCt) loadUploads();
+  refreshChanges(); loadCheckpoints();
   setInterval(refreshChanges, 4000);
 
 }
