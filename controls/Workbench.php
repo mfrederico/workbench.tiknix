@@ -1526,14 +1526,40 @@ class Workbench extends BuildControl {
         if (!$tenant) { Flight::jsonError("{$slug} is not running in its own container yet, so nothing can be built in it.", 409); return; }
         if ($why = $this->tenantAgentProblem($tenant, '')) { Flight::jsonError('This cannot start: ' . $why . '.', 409); return; }
 
+        // What was attached goes to the app's container, where its agents can read it; the request names each file.
+        try { $attached = $this->askAttach($tenant); }
+        catch (\InvalidArgumentException $e) { Flight::jsonError($e->getMessage(), 422); return; }
+        catch (\RuntimeException $e) {
+            $this->logger->error('Workbench ask: an attachment did not reach the container', ['error' => $e->getMessage(), 'instance' => $slug]);
+            Flight::jsonError('Your files could not be attached: ' . $e->getMessage() . ' Nothing was started.', 502); return;
+        }
         // Who it is for is not asked here: the request says it, or the planner asks through the plan.
-        $goal  = \app\GoalBrief::compose($said, 'none', '');
+        $goal  = \app\GoalBrief::compose($said . $attached['text'], 'none', '');
         $title = mb_substr(trim((string) strtok($said, "\n")), 0, 90);
-        \app\ToolUse::record('builder.ask', (int) $this->member->id, ['review' => $review, 'chars' => mb_strlen($said) > 600 ? 'long' : 'short'], (int) $instance->id);
+        // SHORT and not held for review: straight to a build agent, no planner first (PlanIngestor::direct).
+        // The agent judges its size and splits it if it is several. Long, or "show me the steps": the planner.
+        $direct = !$review && mb_strlen($said) <= self::ASK_DIRECT_MAX;
+        \app\ToolUse::record('builder.ask', (int) $this->member->id, ['review' => $review, 'path' => $direct ? 'direct' : 'planner', 'files' => $attached['count']], (int) $instance->id);
         $promptId = \app\PromptLog::record([
             'member_id' => (int) $this->member->id, 'source' => \app\PromptLog::SOURCE_DECOMPOSE, 'title' => $title, 'body' => $goal,
             'instance_id' => (int) $instance->id, 'instance_tag' => $slug . '.' . $app, 'auto_build' => !$review,
         ]);
+        if ($direct) {
+            try {
+                $planId = \app\PlanIngestor::direct($instance, $title, $goal, (int) $this->member->id, $app);
+                $plan = Bean::load('workbenchtask', $planId);
+                if ($promptId > 0) \app\PromptLog::linkPlan($promptId, (string) $plan->planUid, (string) $plan->title, $planId);
+                $r = \app\BuildQueue::start($plan, $slug, $dir, (int) $this->member->level);
+            } catch (\Throwable $e) {
+                $this->logger->error('Workbench ask: a direct build did not start', ['error' => $e->getMessage(), 'instance' => $slug]);
+                Flight::jsonError('This could not start: ' . $e->getMessage(), 500);
+                return;
+            }
+            $this->bustTaskCache();
+            if ($r['state'] === 'failed') { Flight::jsonError("Your request is kept as #{$planId}, but its build could not be started. Press “Build it” on it.", 500); return; }
+            Flight::jsonSuccess(['state' => $r['state'], 'plan' => $planId], $r['state'] === 'queued' ? 'Got it — ' . lcfirst($r['message']) : 'On it — building now.');
+            return;
+        }
         try {
             $runner = new PlanRunner($slug, $dir, (int) $this->member->id, (int) $this->member->level, (string) ($instance->engine ?: \app\EngineRegistry::defaultEngine()));
             $runner->useAgent('');
@@ -1550,6 +1576,52 @@ class Workbench extends BuildControl {
             return;
         }
         Flight::jsonSuccess(['state' => 'planning'], $review ? 'Working out the steps — the plan appears here for you to start.' : 'Working out the steps, then building them.');
+    }
+
+    /** A request up to this long goes straight to a build agent; a longer one is planned first. */
+    public const ASK_DIRECT_MAX = 700;
+    private const ASK_FILES_MAX = 5;
+    private const ASK_FILES_HEAD = "\n\n## Attached files\n";
+
+    /**
+     * The files sent with a request (field `files[]`): each checked for what it IS (its content,
+     * not its name), put in the app's container, and listed for the agent. None is fine.
+     * A file that may not be attached throws InvalidArgumentException with a sentence for the person.
+     * @return array{text:string, count:int}
+     */
+    private function askAttach(object $tenant): array {
+        $up = $_FILES['files'] ?? null;
+        if (!$up || !is_array($up['name'] ?? null)) return ['text' => '', 'count' => 0];
+        $n = count($up['name']);
+        if ($n > self::ASK_FILES_MAX) throw new \InvalidArgumentException('Attach at most ' . self::ASK_FILES_MAX . ' files to one request.');
+        $kinds = ['image/png' => 'png', 'image/jpeg' => 'jpg', 'image/webp' => 'webp', 'image/gif' => 'gif', 'application/pdf' => 'pdf', 'text/plain' => 'txt', 'text/csv' => 'csv', 'text/markdown' => 'md'];
+        $folder = bin2hex(random_bytes(8));
+        $lines = [];
+        for ($i = 0; $i < $n; $i++) {
+            $orig = (string) $up['name'][$i];
+            $err  = (int) $up['error'][$i];
+            if ($err === UPLOAD_ERR_NO_FILE) continue;
+            if ($err === UPLOAD_ERR_INI_SIZE || $err === UPLOAD_ERR_FORM_SIZE || (int) $up['size'][$i] > \app\TenantHost::ATTACH_BYTES) {
+                throw new \InvalidArgumentException("“{$orig}” is too large — " . (int) (\app\TenantHost::ATTACH_BYTES / 1048576) . ' MB at most for one file.');
+            }
+            if ($err !== UPLOAD_ERR_OK || !is_uploaded_file((string) $up['tmp_name'][$i])) throw new \RuntimeException("“{$orig}” did not upload (error {$err}).");
+            $tmp  = (string) $up['tmp_name'][$i];
+            $mime = (string) (new \finfo(FILEINFO_MIME_TYPE))->file($tmp);
+            $ext  = $kinds[$mime] ?? null;
+            // a text file keeps the kind its name says, when that is one of the text kinds
+            if ($ext === 'txt' && in_array($named = strtolower(pathinfo($orig, PATHINFO_EXTENSION)), ['md', 'csv', 'txt'], true)) $ext = $named;
+            if ($ext === null) throw new \InvalidArgumentException("“{$orig}” cannot be attached (what is in it reads as {$mime}). A request can carry pictures (PNG, JPEG, WebP, GIF), PDFs and text files.");
+            $base = trim(preg_replace('/[^a-z0-9]+/', '-', strtolower(pathinfo($orig, PATHINFO_FILENAME))), '-');
+            $name = ($base !== '' ? mb_substr($base, 0, 40) : 'file') . '-' . ($i + 1) . '.' . $ext;
+            $path = \app\TenantHost::attach($tenant, $folder, $name, $tmp);
+            $what = str_starts_with($mime, 'image/') ? 'a picture' : ($ext === 'pdf' ? 'a PDF' : 'a text file');
+            $lines[] = "- `{$path}` — {$what} the person attached as “" . str_replace(['`', "\n"], ' ', mb_substr($orig, 0, 80)) . '”';
+        }
+        if (!$lines) return ['text' => '', 'count' => 0];
+        return ['count' => count($lines), 'text' => self::ASK_FILES_HEAD . implode("\n", $lines) . "\n\n"
+            . "Open each one first (the Read tool shows pictures and PDFs) — they are part of the request. A screenshot or a sketch is a REFERENCE: build what it shows, do not put the file in the app. "
+            . "A file that is meant to BE in the app (a logo, a photo to show, a document to offer) is copied from there into the app, under `public/` when it is a static part of the site. "
+            . "If you cannot see a picture, say so in your `## Handoff` instead of guessing what it shows.\n"];
     }
 
     /**
@@ -1575,6 +1647,9 @@ class Workbench extends BuildControl {
                 $kids  = array_values(Bean::find('workbenchtask', 'parent_task_id = ? ORDER BY id', [(int) $r->id]));
                 $isPlan = $kids !== [] || trim((string) $r->planStatus) !== '';
                 $asked = trim(\app\GoalBrief::split((string) (($r->planGoal ?? '') !== '' ? $r->planGoal : $r->description))['goal']);
+                // what was attached is said as a count, not as the note written for the agent
+                $files = 0;
+                if (($cut = strpos($asked, trim(self::ASK_FILES_HEAD))) !== false) { $files = preg_match_all('/^- `/m', substr($asked, $cut)); $asked = trim(substr($asked, 0, $cut)); }
                 if ($asked === '') $asked = (string) $r->title;
                 $steps = []; $built = 0; $needs = null; $trouble = null;
                 foreach ($kids as $k) {
@@ -1591,7 +1666,7 @@ class Workbench extends BuildControl {
                 $state = !$isPlan ? ('task-' . (string) $r->status)
                        : ((int) ($r->queuePos ?? 0) > 0 && in_array($ps, ['approved', 'stalled'], true) ? 'queued' : ($ps !== '' ? $ps : 'draft'));
                 $out['entries'][] = [
-                    'id' => (int) $r->id, 'plan' => $isPlan, 'title' => (string) $r->title, 'asked' => $asked,
+                    'id' => (int) $r->id, 'plan' => $isPlan, 'title' => (string) $r->title, 'asked' => $asked, 'files' => $files,
                     'by_me' => (int) $r->memberId === (int) $this->member->id, 'replan_of' => (int) ($r->replanOf ?? 0),
                     'at' => (string) $r->createdAt, 'state' => $state, 'steps' => $steps, 'built' => $built, 'total' => count($kids),
                     'message' => (string) ($r->progressMessage ?: ''), 'error' => (string) ($r->errorMessage ?: ''),

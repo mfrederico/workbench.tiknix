@@ -42,7 +42,7 @@ $reply = fn(string $body) => '<div class="d-flex mb-4"><div class="ask-reply rou
 <?php endif; ?>
 <?php foreach ($feed['entries'] as $e):
     $id = (int) $e['id'];
-    echo $you($e['replan_of'] ? "(Tiknix re-planned what was left of #{$e['replan_of']})" : $e['asked'], $when($e['at']));
+    echo $you($e['replan_of'] ? "(Tiknix re-planned what was left of #{$e['replan_of']})" : $e['asked'], trim(($e['files'] ? $e['files'] . ($e['files'] === 1 ? ' file attached' : ' files attached') . ' · ' : '') . $when($e['at']), ' ·'));
     $count = $e['total'] ? $e['built'] . ' of ' . $e['total'] . ' steps built' : '';
     $b = '';
     switch ($e['state']) {
