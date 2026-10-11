@@ -35,6 +35,26 @@ $btn = fn(string $cls, string $act, string $icon, string $label, array $data = [
     '<button type="button" class="btn btn-sm ' . $cls . ' ask-act" data-act="' . $act . '"' . implode('', array_map(fn($k, $v) => ' data-' . $k . '="' . htmlspecialchars((string) $v) . '"', array_keys($data), $data)) . '>'
     . '<i class="bi bi-' . $icon . ' me-1"></i>' . htmlspecialchars($label) . '</button>';
 $details = fn(int $id) => '<a class="btn btn-sm btn-link text-body-secondary text-decoration-none px-1" href="/workbench/view?id=' . $id . '">Details</a>';
+// The audit's verdict and what it saw: a strip of its screenshots, each with the check it proves.
+$proof = function (array $p) use ($h): string {
+    if ($p['passed'] === null && !$p['shots']) return '';
+    $o = '';
+    if ($p['passed'] !== null) {
+        $o .= '<div class="small mt-2"><i class="bi bi-' . ($p['passed'] ? 'patch-check-fill text-success' : 'patch-exclamation-fill text-danger') . ' me-1"></i>'
+            . '<span class="fw-semibold">' . ($p['passed'] ? 'Checked afterwards in a browser: it works.' : 'Checked afterwards in a browser: something is not right.') . '</span>'
+            . ($p['verdict'] !== '' ? ' <span class="text-body-secondary">' . $h($p['verdict']) . '</span>' : '') . '</div>';
+    }
+    if ($p['shots']) {
+        $o .= '<div class="ask-shots d-flex gap-2 mt-2 pb-1">';
+        foreach ($p['shots'] as $sh) {
+            $o .= '<a class="ask-shot flex-shrink-0 text-decoration-none" href="' . $h($sh['url']) . '" target="_blank" rel="noopener" title="' . $h($sh['label']) . '">'
+                . '<img src="' . $h($sh['url']) . '" alt="' . $h($sh['label'] !== '' ? $sh['label'] : 'A screenshot from the check') . '" loading="lazy">'
+                . '<span class="d-block small text-body-secondary mt-1"><i class="bi bi-' . ($sh['ok'] ? 'check-lg text-success' : 'x-lg text-danger') . ' me-1"></i>' . $h(mb_strimwidth($sh['label'], 0, 70, '…')) . '</span></a>';
+        }
+        $o .= '</div>';
+    }
+    return $o;
+};
 $you = function (string $text, string $meta) use ($h): string {
     $long = mb_strlen($text) > 420;
     return '<div class="d-flex justify-content-end mb-2"><div class="ask-you rounded-4 px-3 py-2">'
@@ -68,12 +88,12 @@ $reply = fn(string $body) => '<div class="d-flex mb-4"><div class="ask-reply rou
             $pct = $e['total'] ? (int) round($e['built'] * 100 / $e['total']) : 0;
             $b = '<div class="fw-semibold d-flex align-items-center gap-2"><span class="spinner-border spinner-border-sm text-primary" role="status"></span>Building — ' . $h($count) . '</div>'
                . '<div class="progress mt-2" style="height:4px" role="progressbar" aria-label="Built" aria-valuenow="' . $pct . '" aria-valuemin="0" aria-valuemax="100"><div class="progress-bar" style="width:' . $pct . '%"></div></div>'
-               . ($e['needs'] ? '<div class="alert alert-warning py-2 px-3 small mt-2 mb-0"><i class="bi bi-chat-dots-fill me-1"></i>It needs an answer from you on “' . $h($e['needs']['title']) . '”. <a class="alert-link" href="/workbench/view?id=' . (int) $e['needs']['id'] . '">Answer it</a></div>' : '')
+               . ($e['needs'] ? '<div class="alert alert-warning py-2 px-3 small mt-2 mb-0"><i class="bi bi-chat-dots-fill me-1"></i>It needs an answer from you on “' . $h($e['needs']['title']) . '”' . (($e['needs']['about'] ?? '') !== '' ? ': ' . $h($e['needs']['about']) : '.') . ' <a class="alert-link" href="/workbench/view?id=' . (int) $e['needs']['id'] . '">Answer it</a></div>' : '')
                . $steps($e['steps'], 7, empty($e['direct'])) . '<div class="mt-2">' . $details($id) . '</div>';
             break;
         case 'done':
             $b = '<div class="fw-semibold"><i class="bi bi-check-circle-fill text-success me-1"></i>Done — ' . ($e['total'] === 1 ? 'it is in your app.' : $h((string) $e['total']) . ' tasks, all in your app.') . '</div>' . $steps($e['steps'], 7, empty($e['direct']))
-               . ($e['audit'] !== '' && !in_array($e['audit'], ['passed', 'clean', 'done'], true) ? '<div class="small text-body-secondary mt-2">Checked afterwards: ' . $h($e['audit']) . '.</div>' : '')
+               . $proof($e['proof'])
                . '<div class="mt-2 d-flex flex-wrap gap-1 align-items-center">'
                . ($appUrl !== '' ? '<a class="btn btn-sm btn-primary" href="' . $h($appUrl) . '" target="_blank" rel="noopener"><i class="bi bi-box-arrow-up-right me-1"></i>Look at it</a>' : '')
                . ($e['undo'] !== '' ? $btn('btn-outline-secondary', 'undo', 'arrow-counterclockwise', 'Undo', ['checkpoint' => $e['undo']]) : '')
@@ -82,7 +102,7 @@ $reply = fn(string $body) => '<div class="d-flex mb-4"><div class="ask-reply rou
         case 'attention': case 'stalled':
             $why = $e['trouble'] ? '“' . $e['trouble']['title'] . '”: ' . mb_strimwidth($e['trouble']['why'], 0, 260, '…') : ($e['message'] !== '' ? $e['message'] : $e['error']);
             $b = '<div class="fw-semibold"><i class="bi bi-exclamation-triangle-fill text-danger me-1"></i>It stopped' . ($count !== '' ? ' — ' . $h($count) : '') . '.</div>'
-               . ($why !== '' ? '<div class="small text-body-secondary mt-1">' . $h($why) . '</div>' : '') . $steps($e['steps'], 7, empty($e['direct']))
+               . ($why !== '' ? '<div class="small text-body-secondary mt-1">' . $h($why) . '</div>' : '') . $steps($e['steps'], 7, empty($e['direct'])) . $proof($e['proof'])
                . '<div class="mt-2 d-flex flex-wrap gap-1 align-items-center">'
                . ($e['trouble'] ? $btn('btn-primary', 'retry', 'arrow-repeat', 'Try again', ['task' => (int) $e['trouble']['id']]) : $btn('btn-primary', 'build', 'play-fill', 'Go on', ['plan' => $id]))
                . $details($id) . '</div>';
@@ -91,6 +111,20 @@ $reply = fn(string $body) => '<div class="d-flex mb-4"><div class="ask-reply rou
             $st = substr($e['state'], 5);
             $say = ['pending' => 'Not started yet.', 'running' => 'Being built now.', 'awaiting' => 'It needs an answer from you.', 'completed' => 'Built — waiting for you to approve it.',
                     'merged' => 'Done — it is in your app.', 'failed' => 'It stopped.', 'conflict' => 'It stopped at the merge.'][$st] ?? ucfirst($st) . '.';
+            if ($e['review'] !== null) {
+                // Built, and waiting for its person: what it did and what it changed, and the three answers.
+                $rv = $e['review'];
+                $b = '<div class="fw-semibold"><i class="bi bi-hourglass-split text-warning me-1"></i>Built — waiting for you.</div>'
+                   . '<div class="small text-body-secondary">It is not in your app yet. Read what it did, then put it in, send it back, or ask for a change.</div>'
+                   . ($rv['said'] !== '' ? '<div class="ask-said small border-start border-3 ps-2 mt-2">' . nl2br($h($rv['said'])) . '</div>' : '')
+                   . ($rv['changed'] !== '' ? '<details class="small mt-2"><summary class="text-body-secondary" style="cursor:pointer">Files it changed</summary><pre class="small mb-0 mt-1 p-2 rounded bg-body-tertiary" style="white-space:pre-wrap">' . $h($rv['changed']) . '</pre></details>' : '')
+                   . ($e['can_approve']
+                        ? '<div class="mt-2 d-flex flex-wrap gap-1 align-items-center">' . $btn('btn-success', 'approve', 'check-lg', 'Put it in my app', ['task' => $id]) . $btn('btn-outline-secondary', 'decline', 'x-lg', 'Discard it', ['task' => $id]) . $details($id) . '</div>'
+                        : '<div class="small text-body-secondary mt-2">An admin of this project approves it. ' . $details($id) . '</div>')
+                   . '<form class="ask-change d-flex gap-2 mt-2" data-task="' . $id . '"><input class="form-control form-control-sm" name="change" maxlength="2000" placeholder="Or say what to change, and it builds it again…" aria-label="What to change">'
+                   . '<button class="btn btn-sm btn-outline-primary text-nowrap" type="submit">Build again</button></form>';
+                break;
+            }
             $b = '<div class="fw-semibold">' . $h($say) . '</div>' . ($e['error'] !== '' && in_array($st, ['failed', 'conflict'], true) ? '<div class="small text-body-secondary mt-1">' . $h(mb_strimwidth($e['error'], 0, 260, '…')) . '</div>' : '')
                . '<div class="mt-2"><a class="btn btn-sm btn-outline-primary" href="/workbench/view?id=' . $id . '">Open it</a></div>';
     }

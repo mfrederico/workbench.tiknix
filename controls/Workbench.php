@@ -1641,6 +1641,55 @@ class Workbench extends BuildControl {
     }
 
     /**
+     * The audit's proof for a request, read from the comments it left on the plan and its tasks:
+     * {verdict, shots: [{label, url, ok}]}. Only pictures served by this project's own app are
+     * taken (a comment is text an agent wrote; an address in it is not trusted further than that).
+     * @param int[] $taskIds the plan and its tasks
+     * @return array{verdict:string, passed:?bool, shots: array<int, array{label:string, url:string, ok:bool}>}
+     */
+    private function askProof(array $taskIds): array {
+        $out = ['verdict' => '', 'passed' => null, 'shots' => []];
+        $host = parse_url($this->askAppUrl(), PHP_URL_HOST);
+        if (!$taskIds || !in_array('taskcomment', Bean::inspect(), true)) return $out;
+        $rows = Bean::find('taskcomment', 'task_id IN (' . implode(',', array_fill(0, count($taskIds), '?')) . ") AND is_from_claude = 1 AND content LIKE '%udit%' ORDER BY id", array_values($taskIds));
+        foreach ($rows as $c) {
+            $label = ''; $ok = true;
+            foreach (explode("\n", (string) $c->content) as $line) {
+                $line = trim($line);
+                if (preg_match('/^##\s*(✅|❌)\s*Audit (passed|failed)/u', $line, $m)) { $out['passed'] = $m[2] === 'passed'; $out['verdict'] = ''; continue; }
+                if ($out['passed'] !== null && $out['verdict'] === '' && preg_match('/^_(.+)_$/u', $line, $m)) { $out['verdict'] = mb_substr($m[1], 0, 400); continue; }
+                if (preg_match('/^-\s*(✅|❌)\s*(.+?)(\s+_\([^)]*\)_)?(\s+—\s+.*)?$/u', $line, $m)) { $ok = $m[1] === '✅'; $label = trim($m[2]); continue; }
+                // "How the pages read": a page the check looked at, named by its address
+                if (preg_match('/^-\s*\*\*`([^`]+)`\*\*/u', $line, $m)) { $ok = true; $label = 'How ' . trim($m[1]) . ' reads'; continue; }
+                if (preg_match('/^!\[screenshot\]\((https:\/\/[^)\s]+\.(?:png|jpe?g|webp))\)$/i', $line, $m) && $host && parse_url($m[1], PHP_URL_HOST) === $host) {
+                    $out['shots'][$m[1]] = ['label' => mb_substr($label, 0, 200), 'url' => $m[1], 'ok' => $ok];
+                }
+            }
+        }
+        // the newest audit's pictures, a handful: this is a look, not the report (which is on the plan's page)
+        $out['shots'] = array_slice(array_values($out['shots']), -8);
+        return $out;
+    }
+
+    /**
+     * A built task waiting for its person: what its agent said it did (its hand-off) and what it
+     * changed (the diffstat), from the task's own log.
+     * @return array{said:string, changed:string}
+     */
+    private function askReview($task): array {
+        $said = ''; $changed = '';
+        if (in_array('tasklog', Bean::inspect(), true)) {
+            foreach (Bean::find('tasklog', 'task_id = ? ORDER BY id DESC LIMIT 30', [(int) $task->id]) as $l) {
+                $m = (string) $l->message;
+                if ($changed === '' && str_starts_with($m, 'Changed (')) $changed = trim((string) substr($m, (int) strpos($m, "\n")));
+                if ($said === '' && str_starts_with($m, 'Agent output (tail): ')) $said = \app\PlanExecutor::handoffOf(substr($m, strlen('Agent output (tail): ')));
+                if ($said !== '' && $changed !== '') break;
+            }
+        }
+        return ['said' => mb_substr(trim($said), 0, 1200), 'changed' => mb_substr($changed, 0, 2000)];
+    }
+
+    /**
      * GET /workbench/askdoing — what the agents building right now are doing, read from their live
      * transcripts in the project's container (TenantRun::activity): per running task, the last
      * thing its agent said or did, and how long ago. A task runs for many minutes with nothing
@@ -1713,6 +1762,13 @@ class Workbench extends BuildControl {
                     if ($mark === 'done') $built++;
                     $steps[] = ['id' => (int) $k->id, 'title' => (string) $k->title, 'mark' => $mark, 'note' => (string) ($k->progressMessage ?? '')];
                 }
+                // What the check afterwards SAW: the audit's screenshots, each under the check it proves,
+                // and its one-line verdict (AuditReporter writes them as comments on the plan and its tasks).
+                $proof = $this->askProof(array_merge([(int) $r->id], array_map(fn($k) => (int) $k->id, $kids)));
+                // A task made on its own that is built and waits for its person: what it did, in its
+                // agent's words, and what it changed — so it can be approved or sent back from here.
+                $review = null;
+                if (!$isPlan && in_array((string) $r->status, ['awaiting', 'completed'], true)) $review = $this->askReview($r);
                 $ps = (string) $r->planStatus;
                 $state = !$isPlan ? ('task-' . (string) $r->status)
                        : ((int) ($r->queuePos ?? 0) > 0 && in_array($ps, ['approved', 'stalled'], true) ? 'queued' : ($ps !== '' ? $ps : 'draft'));
@@ -1723,9 +1779,10 @@ class Workbench extends BuildControl {
                     'by_me' => (int) $r->memberId === (int) $this->member->id, 'replan_of' => (int) ($r->replanOf ?? 0),
                     'at' => (string) $r->createdAt, 'state' => $state, 'steps' => $steps, 'built' => $built, 'total' => count($steps),
                     'message' => (string) ($r->progressMessage ?: ''), 'error' => (string) ($r->errorMessage ?: ''),
-                    'needs' => $needs ? ['id' => (int) $needs->id, 'title' => (string) $needs->title] : null,
+                    'needs' => $needs ? ['id' => (int) $needs->id, 'title' => (string) $needs->title, 'about' => mb_substr((string) ($needs->progressMessage ?? ''), 0, 300)] : null,
                     'trouble' => $trouble ? ['id' => (int) $trouble->id, 'title' => (string) $trouble->title, 'why' => (string) $trouble->errorMessage] : null,
-                    'audit' => (string) ($r->auditStatus ?? ''),
+                    'audit' => (string) ($r->auditStatus ?? ''), 'proof' => $proof, 'review' => $review,
+                    'can_approve' => (int) $this->member->level <= LEVELS['ADMIN'],
                     // Undo is offered on the newest request only, when it is finished: going back
                     // to before an older one would also take away everything built since.
                     'undo' => ((int) $r->id === $lastDone && (int) $r->id === $newest) ? (string) ($r->planCheckpoint ?? '') : '',

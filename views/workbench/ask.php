@@ -10,6 +10,10 @@ $__inst = (int) ($selected['id'] ?? 0);
     .ask-you{max-width:85%;background:var(--bs-primary);color:#fff;overflow-wrap:anywhere}
     .ask-reply{max-width:92%;min-width:min(22rem,92%);overflow-wrap:anywhere}
     .ask-steps li{padding:.1rem 0}
+    .ask-shots{overflow-x:auto;scroll-snap-type:x proximity}
+    .ask-shot{width:11rem;scroll-snap-align:start}
+    .ask-shot img{width:11rem;height:7rem;object-fit:cover;object-position:top;border-radius:.5rem;border:1px solid var(--bs-border-color);background:var(--bs-tertiary-bg)}
+    .ask-said{max-height:14rem;overflow-y:auto}
     .ask-bar{position:fixed;left:0;right:0;bottom:0;background:var(--bs-body-bg);border-top:1px solid var(--bs-border-color);padding:.75rem 1rem;z-index:20}
     .ask-bar-in{max-width:46rem;margin:0 auto}
     #ask-box{resize:none;max-height:12rem;overflow-y:auto}
@@ -62,7 +66,7 @@ $__inst = (int) ($selected['id'] ?? 0);
         send = document.getElementById('ask-send'), sig = null, busy = false, INST = <?= $__inst ?>;
     function say(t, bad){ msg.textContent = t || ''; msg.className = 'ms-auto text-truncate' + (bad ? ' text-danger' : ''); }
     function post(url, data){
-        data = data || {}; data._csrf_token = window.WB_CSRF || '';
+        data = data || {}; data._csrf_token = window.WB_CSRF || ''; data.csrf_token = window.WB_CSRF || '';
         return fetch(url, {method: 'POST', credentials: 'same-origin',
             headers: {'Content-Type': 'application/x-www-form-urlencoded', 'X-CSRF-TOKEN': window.WB_CSRF || '', 'X-Requested-With': 'XMLHttpRequest'},
             body: Object.keys(data).map(function(k){ return encodeURIComponent(k) + '=' + encodeURIComponent(data[k]); }).join('&')
@@ -71,6 +75,9 @@ $__inst = (int) ($selected['id'] ?? 0);
     }
     function atBottom(){ return window.innerHeight + window.scrollY >= document.body.scrollHeight - 160; }
     function redraw(stick){
+        // someone is typing a change into a reply: redrawing now would throw their words away
+        var a = document.activeElement;
+        if (!stick && a && feed.contains(a) && a.value) return Promise.resolve();
         var was = atBottom();
         return fetch('/workbench/askfeed', {credentials: 'same-origin', headers: {'X-Requested-With': 'XMLHttpRequest'}})
             .then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); return r.text(); })
@@ -174,6 +181,7 @@ $__inst = (int) ($selected['id'] ?? 0);
         var b = e.target.closest('.ask-act'); if (!b) return;
         var act = b.getAttribute('data-act'), plan = b.getAttribute('data-plan');
         try {
+            if (act === 'decline' && !await tkConfirm('Discard what this task built? Its work is not put in your app. You can ask for it again.', {okText: 'Discard it', danger: true})) return;
             if (act === 'undo') {
                 if (!await tkConfirm('Put your app back to how it was before this request? Its code and its data go back to that moment. How it is now is kept, so this can itself be undone from the Terminal page.', {okText: 'Undo it', danger: true})) return;
             }
@@ -183,11 +191,25 @@ $__inst = (int) ($selected['id'] ?? 0);
             else if (act === 'build')    j = await post('/workbench/planbuild', {plan_id: plan});
             else if (act === 'retry')    j = await post('/workbench/taskretry', {task_id: b.getAttribute('data-task')});
             else if (act === 'stopplan') j = await post('/workbench/decomposestop', {});
+            else if (act === 'approve')  j = await post('/workbench/approve', {id: b.getAttribute('data-task')});
+            else if (act === 'decline')  j = await post('/workbench/decline', {id: b.getAttribute('data-task')});
             else if (act === 'undo')     j = await post('/aibuilder/rollback/' + encodeURIComponent(b.getAttribute('data-checkpoint')), {id: INST});
             say((j && j.message) || '');
             if (act === 'undo') await tkAlert((j && j.message) || 'Undone.');
             await redraw();
         } catch (err) { say(err.message, true); b.disabled = false; }
+    });
+    // "Say what to change": the words go on the task (they are part of its brief from then on) and it is built again.
+    feed.addEventListener('submit', function(e){
+        var f = e.target.closest('.ask-change'); if (!f) return;
+        e.preventDefault();
+        var text = f.elements.change.value.trim(), id = f.getAttribute('data-task'), btn = f.querySelector('button');
+        if (!text) return;
+        btn.disabled = true; say('Sending it back…');
+        post('/workbench/comment', {id: id, content: text})
+            .then(function(){ return post('/workbench/rerun', {id: id}); })
+            .then(function(j){ say((j && j.message) || 'Building it again with your change.'); return redraw(); })
+            .catch(function(err){ say(err.message, true); btn.disabled = false; });
     });
     Array.prototype.forEach.call(document.querySelectorAll('.ask-view'), function(b){
         b.addEventListener('click', function(){
