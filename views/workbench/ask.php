@@ -23,7 +23,7 @@ $__inst = (int) ($selected['id'] ?? 0);
     #ask-view .x{position:absolute;top:.6rem;right:.6rem;width:2.5rem;height:2.5rem;border-radius:50%;border:0;background:rgba(255,255,255,.14);color:#fff}
     @media (prefers-reduced-motion: reduce){.ask-shot img{transition:none}.ask-shot:hover img{transform:none}}
     .ask-said{max-height:14rem;overflow-y:auto}
-    .ask-bar{position:fixed;left:0;right:0;bottom:0;background:var(--bs-body-bg);border-top:1px solid var(--bs-border-color);padding:.75rem 1rem;z-index:20}
+    .ask-bar{position:fixed;left:0;right:0;bottom:0;background:var(--bs-body-bg);border-top:1px solid var(--bs-border-color);padding:.75rem 1rem calc(.75rem + env(safe-area-inset-bottom, 0px));z-index:20}
     .ask-bar-in{max-width:46rem;margin:0 auto}
     #ask-box{resize:none;max-height:12rem;overflow-y:auto}
     .ask-chip{display:inline-flex;align-items:center;gap:.35rem;border:1px solid var(--bs-border-color);border-radius:2rem;padding:.1rem .25rem .1rem .6rem;font-size:.8rem;max-width:14rem}
