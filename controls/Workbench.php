@@ -202,6 +202,9 @@ class Workbench extends BuildControl {
                     // clicking Build should say so on the board — otherwise the first
                     // sign of it is code already landing in the project.
                     'autoBuild'   => !empty($p->autoBuild),
+                    // Waiting its turn to build (app\BuildQueue): its place, and what it waits for.
+                    'queuePos'    => (int) ($p->queuePos ?? 0),
+                    'queueWhy'    => (int) ($p->queuePos ?? 0) > 0 ? (string) ($p->progressMessage ?? '') : '',
                 ];
             }
         }
@@ -1243,15 +1246,39 @@ class Workbench extends BuildControl {
             return;
         }
 
-        if (!$this->startOrchestrator($plan, $inst)) {
-            Flight::jsonError('Could not start the orchestrator.', 500);
-            return;
+        // Now — or in the project's queue, when another plan building right now is changing the
+        // same files (app\BuildQueue says which plan and which files, and starts this one after it).
+        $r = \app\BuildQueue::start($plan, (string) $inst->slug, $dir, (int) $this->member->level);
+        if ($r['state'] === 'failed') { Flight::jsonError('Could not start the orchestrator.', 500); return; }
+        $this->bustTaskCache();
+        Flight::jsonSuccess(['plan_status' => $r['state'] === 'queued' ? 'queued' : 'building'], $r['message']);
+    }
+
+    /**
+     * POST /workbench/planqueue — a queued plan's place: move=up|down (one place), or move=leave
+     * (out of the queue; it stays approved and Build puts it back). After a reorder the queue is
+     * gone through again: the plan now first may have nothing left to wait for. JSON.
+     */
+    public function planqueue($params = []) {
+        if (!$this->planActionGuard()) return;
+        $pi = $this->accessiblePlan($this->getParam('plan_id', 0));
+        if (!$pi) { $this->noSuchPlan((int) $this->getParam('plan_id', 0)); return; }
+        [$plan, $inst] = $pi;
+        if (!$inst) { Flight::jsonError('This plan has no linked instance.', 409); return; }
+        if ((int) ($plan->queuePos ?? 0) <= 0) { Flight::jsonError('This plan is not in the queue.', 409); return; }
+        $move = (string) $this->getParam('move', '');
+        if (!in_array($move, ['up', 'down', 'leave'], true)) { Flight::jsonError("move is up, down or leave, not '{$move}'", 422); return; }
+        if ($move === 'leave') {
+            \app\BuildQueue::leave($plan);
+        } elseif (!\app\BuildQueue::move($plan, $move)) {
+            Flight::jsonError($move === 'up' ? 'It is already next.' : 'It is already last.', 409); return;
         }
-        $plan->planStatus = 'building';
-        $plan->status     = 'running';
-        $plan->updatedAt  = date('Y-m-d H:i:s');
-        Bean::store($plan);
-        Flight::jsonSuccess(['plan_status' => 'building'], 'Build started — up to ' . PlanExecutor::MAX_CONCURRENT . ' agents running.');
+        // Whoever it waited behind may no longer be ahead of it — or of the others.
+        $dir = \app\WorkbenchDb::dirOf((string) $inst->slug, (string) ($inst->app ?? ''));
+        $started = array_values(array_filter(\app\BuildQueue::advance((string) $inst->slug, $dir), fn($l) => str_ends_with($l, ': started')));
+        $this->bustTaskCache();
+        Flight::jsonSuccess(['started' => $started],
+            ($move === 'leave' ? 'Taken out of the queue — it stays approved.' : 'Moved ' . $move . '.') . ($started ? ' Started ' . implode(', ', array_map(fn($l) => strtok($l, ':'), $started)) . '.' : ''));
     }
 
     /**
@@ -1356,6 +1383,7 @@ class Workbench extends BuildControl {
         $task->status       = 'pending';
         $task->errorMessage = '';
         $task->retryCount   = 0;
+        $task->catchUps     = 0;   // a person's Retry also gives a fresh go at bringing it up to date with the app
         $task->updatedAt    = date('Y-m-d H:i:s');
         Bean::store($task);
 
@@ -1367,16 +1395,12 @@ class Workbench extends BuildControl {
             Flight::jsonSuccess(['plan_status' => 'building'], 'Retrying — the build already running picks it up in a few seconds.');
             return;
         }
-        if (!$this->startOrchestrator($plan, $inst)) {
-            Flight::jsonError('Could not start the orchestrator.', 500);
-            return;
-        }
-        // Reflect that the orchestrator is now running (matches planbuild).
-        $plan->planStatus = 'building';
-        $plan->status     = 'running';
-        $plan->updatedAt  = date('Y-m-d H:i:s');
-        Bean::store($plan);
-        Flight::jsonSuccess(['plan_status' => 'building'], 'Retrying — the orchestrator will rebuild this task and auto-correct known blockers.');
+        // The same door as Build: now, or queued behind a plan that is changing the same files.
+        $dir = \app\WorkbenchDb::dirOf((string) $inst->slug, (string) ($inst->app ?? ''));
+        $r = \app\BuildQueue::start($plan, (string) $inst->slug, $dir, (int) $this->member->level);
+        if ($r['state'] === 'failed') { Flight::jsonError('Could not start the orchestrator.', 500); return; }
+        Flight::jsonSuccess(['plan_status' => $r['state'] === 'queued' ? 'queued' : 'building'],
+            $r['state'] === 'queued' ? 'Retrying — ' . lcfirst($r['message']) : 'Retrying — the build is running again and takes this task up.');
     }
 
     /** POST /workbench/plandelete — delete a whole plan (task-chain): parent + all subtasks. JSON. */
@@ -1407,7 +1431,7 @@ class Workbench extends BuildControl {
         if (!$this->requireLogin()) return;
         if (!in_array('workbenchtask', Bean::inspect(), true)) { Flight::jsonSuccess(['sig' => 'empty', 'busy' => false]); return; }
         $have = array_keys(Bean::inspect('workbenchtask'));
-        $cols = array_values(array_intersect(['id', 'status', 'plan_status', 'audit_status', 'split_outcome', 'progress_message', 'error_message', 'completed_at', 'needs_planning', 'agent'], $have));
+        $cols = array_values(array_intersect(['id', 'status', 'plan_status', 'audit_status', 'split_outcome', 'progress_message', 'error_message', 'completed_at', 'needs_planning', 'agent', 'queue_pos'], $have));
         $one = (int) $this->getParam('task', 0);
         if ($one > 0) {
             $task = Bean::load('workbenchtask', $one);

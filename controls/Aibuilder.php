@@ -722,19 +722,12 @@ class Aibuilder extends BuildControl {
         // orchestrator script, exports the per-instance workbench.db so plan state is
         // written where this plan actually lives, and refuses to report success for a
         // command it cannot run.
-        if (!\app\PlanOrchestrator::launch(
-            (int)$plan->id, (string)$inst->slug, $dir, (int)$this->member->level
-        )) {
-            Flight::jsonError('Could not start the orchestrator.', 500);
-            return;
-        }
-        $plan->planStatus = 'building';
-        $plan->status     = 'running';   // sync the plain status column for the Workbench list
-        $plan->updatedAt  = date('Y-m-d H:i:s');
-        Bean::store($plan);
+        // Now, or in the project's queue when another build is changing the same files (app\BuildQueue).
+        $r = \app\BuildQueue::start($plan, (string) $inst->slug, $dir, (int) $this->member->level);
+        if ($r['state'] === 'failed') { Flight::jsonError('Could not start the orchestrator.', 500); return; }
         Flight::jsonSuccess(
-            ['session' => \app\PlanOrchestrator::sessionName((int)$plan->id, (string)$inst->slug)],
-            'Build started — up to ' . PlanExecutor::MAX_CONCURRENT . ' agents running.'
+            ['session' => \app\PlanOrchestrator::sessionName((int)$plan->id, (string)$inst->slug), 'queued' => $r['state'] === 'queued'],
+            $r['message']
         );
     }
 

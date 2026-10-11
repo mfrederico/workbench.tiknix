@@ -526,6 +526,8 @@
                         'status'      => $m['planStatus'] ?: $m['status'],
                         'plan_status' => $m['planStatus'] ?: '',
                         'auto_build'  => !empty($m['autoBuild']),
+                        'queue_pos'   => (int) ($m['queuePos'] ?? 0),
+                        'queue_why'   => (string) ($m['queueWhy'] ?? ''),
                         'superseded'  => $__sup[(int) $pid] ?? 0,   // the plan it re-planned, which then finished without it
                         'url'         => '/workbench/view?id=' . $pid,
                         'taskIds'     => $groupPendingIds['plan:' . $pid] ?? [],
@@ -544,6 +546,8 @@
                     $k = 'plan:' . (int) $t->parentTaskId;
                     if (isset($planMetaJs[$k])) $planMetaJs[$k]['movable'] = ($planMetaJs[$k]['movable'] ?? 0) + 1;
                 }
+                $__queueLen = count(array_filter($planMetaJs, fn($m) => !empty($m['queue_pos'])));
+                foreach ($planMetaJs as $k => $m) $planMetaJs[$k]['queue_len'] = $__queueLen;
                 $planMetaJs['solo'] = ['id' => 0, 'title' => 'Standalone tasks', 'tag' => null, 'status' => null, 'plan_status' => '', 'url' => null, 'taskIds' => $groupPendingIds['solo'] ?? []];
 
                 // Group ordering key: the plan's id, so phases read in the order they were planned —
@@ -783,7 +787,20 @@
                                               + ' title="Approved and started automatically — &quot;Run it straight through&quot; was ticked when this was decomposed">'
                                               + '<i class="bi bi-lightning-charge-fill"></i> Auto</span>';
                         // A superseded re-plan is not offered for building: its tasks are work already done.
+                        // Waiting its turn (another plan is changing the same files, or two are building):
+                        // its place and why, the arrows that reorder the queue, and the way out of it.
+                        var queued = m.queue_pos > 0 && (ps === 'approved' || ps === 'stalled');
                         if (m.superseded)                               out += '';
+                        else if (queued) {
+                            var qb = function(move, icon, title, off){
+                                return '<button type="button" class="btn btn-sm btn-outline-secondary wb-plan-queue ms-1" data-plan-id="'+m.id+'" data-move="'+move+'" title="'+title+'" aria-label="'+title+'"'+(off ? ' disabled' : '')+'><i class="bi bi-'+icon+'"></i></button>';
+                            };
+                            out += '<span class="small text-muted me-1 d-none d-lg-inline">'+esc(String(m.queue_why || '').replace(/^Queued: /, ''))+'</span>'
+                                 + '<span class="badge bg-info-subtle text-info-emphasis border border-info-subtle ms-1" title="'+esc(m.queue_why || '')+'"><i class="bi bi-hourglass-split me-1"></i>Queued '+m.queue_pos+' of '+m.queue_len+'</span>'
+                                 + qb('up',    'arrow-up',   'Build it sooner: move it up the queue',  m.queue_pos <= 1)
+                                 + qb('down',  'arrow-down', 'Build it later: move it down the queue', m.queue_pos >= m.queue_len)
+                                 + qb('leave', 'x-lg',       'Take it out of the queue (it stays approved)', false);
+                        }
                         else if (ps === 'draft')                        out += btn('btn-outline-info',   'wb-plan-approve', 'check2-circle', 'Approve');
                         else if (ps === 'approved' || ps === 'stalled') out += btn('btn-info',           'wb-plan-build',   'play-fill',     'Build');
                         else if (ps === 'building')                     out += '<span class="badge bg-primary ms-1"><span class="spinner-border spinner-border-sm me-1" role="status"></span>Building</span>';
@@ -888,10 +905,12 @@
                                 'X-CSRF-TOKEN': window.WB_CSRF || '',
                                 'X-Requested-With': 'XMLHttpRequest'
                             },
-                            body: 'plan_id=' + encodeURIComponent(id) + '&_csrf_token=' + encodeURIComponent(window.WB_CSRF || '')
+                            body: 'plan_id=' + encodeURIComponent(id) + (btn.getAttribute('data-move') ? '&move=' + encodeURIComponent(btn.getAttribute('data-move')) : '') + '&_csrf_token=' + encodeURIComponent(window.WB_CSRF || '')
                         }).then(function(r){ return r.json(); })
-                          .then(function(j){
+                          .then(async function(j){
                               if (j && j.success === false) { tkAlert(j.message || 'Action failed', {type: 'error'}); btn.disabled = false; return; }
+                              // Build that did not start: say that it is queued, and behind what, before the page redraws.
+                              if (j && j.data && j.data.plan_status === 'queued') await tkAlert(j.message || 'Queued.', {type: 'info'});
                               window.location.reload();
                           })
                           .catch(function(){ tkAlert('Network error', {type: 'error'}); btn.disabled = false; });
@@ -901,6 +920,7 @@
                         $('#wbTasks').off('click.wbplan')
                             .on('click.wbplan', '.wb-plan-approve', function(){ planAction('/workbench/planapprove', this); })
                             .on('click.wbplan', '.wb-plan-build',   function(){ planAction('/workbench/planbuild', this); })
+                            .on('click.wbplan', '.wb-plan-queue',   function(){ planAction('/workbench/planqueue', this); })
                             .on('click.wbplan', '.wb-plan-delete',  function(){ planAction('/workbench/plandelete', this, 'Delete this entire plan and all of its tasks? This cannot be undone.'); });
                     }
                     // ── the board keeps itself current ─────────────────────────────────────────────
