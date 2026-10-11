@@ -6,7 +6,7 @@
 $__inst = (int) ($selected['id'] ?? 0);
 ?>
 <style>
-    .ask-wrap{max-width:46rem;margin:0 auto;padding:1rem 1rem 11.5rem}
+    .ask-wrap{max-width:46rem;margin:0 auto;padding:1rem 1rem 10rem}
     .ask-you{max-width:85%;background:var(--bs-primary);color:#fff;overflow-wrap:anywhere}
     .ask-reply{max-width:92%;min-width:min(22rem,92%);overflow-wrap:anywhere}
     .ask-steps li{padding:.1rem 0}
@@ -26,6 +26,8 @@ $__inst = (int) ($selected['id'] ?? 0);
     .ask-bar{position:fixed;left:0;right:0;bottom:0;background:var(--bs-body-bg);border-top:1px solid var(--bs-border-color);padding:.75rem 1rem calc(.75rem + env(safe-area-inset-bottom, 0px));z-index:20}
     .ask-bar-in{max-width:46rem;margin:0 auto}
     #ask-box{resize:none;max-height:12rem;overflow-y:auto}
+    #ask-status:has(#ask-msg:empty):has(#ask-fix.d-none){display:none}
+    #ask-status{margin-top:.25rem}
     .ask-chip{display:inline-flex;align-items:center;gap:.35rem;border:1px solid var(--bs-border-color);border-radius:2rem;padding:.1rem .25rem .1rem .6rem;font-size:.8rem;max-width:14rem}
     .ask-chip img{width:1.4rem;height:1.4rem;object-fit:cover;border-radius:.25rem}
     .ask-drop{outline:2px dashed var(--bs-primary);outline-offset:-6px}
@@ -62,15 +64,21 @@ $__inst = (int) ($selected['id'] ?? 0);
         <div class="d-flex gap-2 align-items-end">
             <label class="visually-hidden" for="ask-box">What should your app do next?</label>
             <button class="btn btn-outline-secondary flex-shrink-0" type="button" id="ask-attach" title="Attach pictures, PDFs, spreadsheets or text files (or drop or paste them)" aria-label="Attach files"><i class="bi bi-paperclip"></i></button>
+            <button class="btn btn-outline-secondary flex-shrink-0" type="button" id="ask-opts" aria-expanded="false" aria-controls="ask-options" title="Options for this request" aria-label="Options for this request"><i class="bi bi-sliders"></i></button>
             <input type="file" id="ask-files" class="d-none" multiple accept="image/png,image/jpeg,image/webp,image/gif,application/pdf,text/plain,text/csv,.md,.xlsx">
             <textarea class="form-control" id="ask-box" rows="1" maxlength="20000" placeholder="What should your app do next?" required></textarea>
             <button class="btn btn-primary flex-shrink-0" type="submit" id="ask-send" aria-label="Send"><i class="bi bi-arrow-up"></i></button>
         </div>
-        <div class="d-flex align-items-center gap-3 mt-1 small text-body-secondary">
+        <?php /* Nothing under the box until there is something to say. The choices a request can carry
+                 are behind the sliders button, which shows (filled) when one of them is on. */ ?>
+        <div id="ask-options" class="small text-body-secondary mt-2" hidden>
             <div class="form-check mb-0">
                 <input class="form-check-input" type="checkbox" id="ask-review">
-                <label class="form-check-label" for="ask-review" title="Every request is decomposed into tasks first. Otherwise building starts as soon as that is done. Every build starts from a restore point, and Undo brings it back.">Show me the tasks before building</label>
+                <label class="form-check-label" for="ask-review">Show me the tasks before building</label>
+                <div style="font-size:.75rem">Every request is decomposed into tasks first. Unticked, building starts by itself once that is done; a restore point is kept and Undo brings it back.</div>
             </div>
+        </div>
+        <div class="d-flex align-items-center gap-2 small text-body-secondary" id="ask-status">
             <span id="ask-msg" class="ms-auto text-truncate" role="status"></span>
             <a id="ask-fix" class="btn btn-sm btn-warning flex-shrink-0 d-none" target="_blank" rel="noopener" href="#"><i class="bi bi-cpu me-1"></i>Connect an agent</a>
         </div>
@@ -181,6 +189,13 @@ $__inst = (int) ($selected['id'] ?? 0);
                 return j;
             });
     }
+    // The options: folded behind their button, which stays lit while one of them is on — a choice
+    // that changes what Send does must not be invisible.
+    var opts = document.getElementById('ask-opts'), optBox = document.getElementById('ask-options'), review = document.getElementById('ask-review');
+    function lit(){ opts.classList.toggle('btn-primary', review.checked); opts.classList.toggle('btn-outline-secondary', !review.checked);
+        opts.title = review.checked ? 'Options — on: show me the tasks before building' : 'Options for this request'; }
+    opts.addEventListener('click', function(){ optBox.hidden = !optBox.hidden; opts.setAttribute('aria-expanded', String(!optBox.hidden)); });
+    review.addEventListener('change', lit);
     function grow(){ box.style.height = 'auto'; box.style.height = Math.min(box.scrollHeight + 2, 192) + 'px'; }
     box.addEventListener('input', grow);
     box.addEventListener('keydown', function(e){ if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); document.getElementById('ask-form').requestSubmit(); } });
