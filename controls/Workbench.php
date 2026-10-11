@@ -1674,6 +1674,29 @@ class Workbench extends BuildControl {
     }
 
     /**
+     * A problem Tiknix filed by itself, from the report it wrote as the task's description
+     * (AuditReporter / the firehose): the one-line message, the full message, where it was seen,
+     * its pictures (this project's app only), and the whole report as safe HTML for whoever wants it.
+     * @return array{message:string, full:string, where:string, shots: array<int, array{label:string,url:string,ok:bool}>, html:string}
+     */
+    private function askFound(string $report): array {
+        $host = parse_url($this->askAppUrl(), PHP_URL_HOST);
+        $one = fn(string $rx) => preg_match($rx, $report, $m) ? trim($m[1]) : '';
+        $full = $one('/###\s*Full message\s*```\s*(.*?)\s*```/s');
+        $shots = [];
+        if (preg_match_all('/!\[screenshot\]\((https:\/\/[^)\s]+\.(?:png|jpe?g|webp))\)/i', $report, $m)) {
+            foreach ($m[1] as $u) if ($host && parse_url($u, PHP_URL_HOST) === $host) $shots[$u] = ['label' => 'What the check saw', 'url' => $u, 'ok' => false];
+        }
+        return [
+            'message' => $one('/^-\s*\*\*Message:\*\*\s*(.+)$/m'),
+            'full'    => $full,
+            'where'   => trim($one('/^-\s*\*\*Request:\*\*\s*`?([^`\n]+)`?\s*$/m')),
+            'shots'   => array_slice(array_values($shots), 0, 8),
+            'html'    => \app\MarkdownParser::parseSafe($report),
+        ];
+    }
+
+    /**
      * A built task waiting for its person: what its agent said it did (its hand-off) and what it
      * changed (the diffstat), from the task's own log.
      * @return array{said:string, changed:string}
@@ -1771,6 +1794,9 @@ class Workbench extends BuildControl {
                 // agent's words, and what it changed — so it can be approved or sent back from here.
                 $review = null;
                 if (!$isPlan && in_array((string) $r->status, ['awaiting', 'completed'], true)) $review = $this->askReview($r);
+                // Not something the person typed: a problem Tiknix found itself (the check after a build,
+                // or an error on the live app) and filed as a task. Said as that, readable, with its pictures.
+                $found = (string) ($r->source ?? '') === 'detected_error' ? $this->askFound((string) $r->description) : null;
                 $ps = (string) $r->planStatus;
                 $state = !$isPlan ? ('task-' . (string) $r->status)
                        : ((int) ($r->queuePos ?? 0) > 0 && in_array($ps, ['approved', 'stalled'], true) ? 'queued' : ($ps !== '' ? $ps : 'draft'));
@@ -1783,7 +1809,7 @@ class Workbench extends BuildControl {
                     'message' => (string) ($r->progressMessage ?: ''), 'error' => (string) ($r->errorMessage ?: ''),
                     'needs' => $needs ? ['id' => (int) $needs->id, 'title' => (string) $needs->title, 'about' => mb_substr((string) ($needs->progressMessage ?? ''), 0, 300)] : null,
                     'trouble' => $trouble ? ['id' => (int) $trouble->id, 'title' => (string) $trouble->title, 'why' => (string) $trouble->errorMessage] : null,
-                    'audit' => (string) ($r->auditStatus ?? ''), 'proof' => $proof, 'review' => $review,
+                    'audit' => (string) ($r->auditStatus ?? ''), 'proof' => $proof, 'review' => $review, 'found' => $found,
                     'can_approve' => (int) $this->member->level <= LEVELS['ADMIN'],
                     // Undo is offered on the newest request only, when it is finished: going back
                     // to before an older one would also take away everything built since.

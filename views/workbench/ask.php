@@ -207,6 +207,7 @@ $__inst = (int) ($selected['id'] ?? 0);
             else if (act === 'build')    j = await post('/workbench/planbuild', {plan_id: plan});
             else if (act === 'retry')    j = await post('/workbench/taskretry', {task_id: b.getAttribute('data-task')});
             else if (act === 'stopplan') j = await post('/workbench/decomposestop', {});
+            else if (act === 'start')    j = await post(b.getAttribute('data-again') === '1' ? '/workbench/rerun' : '/workbench/run', {id: b.getAttribute('data-task')});
             else if (act === 'approve')  j = await post('/workbench/approve', {id: b.getAttribute('data-task')});
             else if (act === 'decline')  j = await post('/workbench/decline', {id: b.getAttribute('data-task')});
             else if (act === 'undo')     j = await post('/aibuilder/rollback/' + encodeURIComponent(b.getAttribute('data-checkpoint')), {id: INST});

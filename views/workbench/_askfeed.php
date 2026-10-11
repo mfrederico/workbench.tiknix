@@ -69,7 +69,9 @@ $you = function (string $text, string $meta) use ($h): string {
     $text = html_entity_decode($text, ENT_QUOTES | ENT_HTML5, 'UTF-8');
     $long = mb_strlen($text) > 420;
     return '<div class="d-flex justify-content-end mb-2"><div class="ask-you rounded-4 px-3 py-2">'
-         . '<div class="ask-text">' . nl2br($h($long ? mb_substr($text, 0, 400) . '…' : $text)) . '</div>'
+         . ($long ? '<details class="ask-more"><summary style="list-style:none;cursor:pointer"><span class="ask-text">' . nl2br($h(mb_substr($text, 0, 400))) . '… </span><u class="small">Show all</u></summary>'
+                    . '<div class="ask-text mt-2 pt-2" style="border-top:1px solid rgba(255,255,255,.35)">' . nl2br($h($text)) . '</div></details>'
+                  : '<div class="ask-text">' . nl2br($h($text)) . '</div>')
          . ($meta !== '' ? '<div class="small opacity-75 mt-1 text-end">' . $h($meta) . '</div>' : '') . '</div></div>';
 };
 $reply = fn(string $body) => '<div class="d-flex mb-4"><div class="ask-reply rounded-4 px-3 py-2 border bg-body">' . $body . '</div></div>';
@@ -77,8 +79,41 @@ $reply = fn(string $body) => '<div class="d-flex mb-4"><div class="ask-reply rou
 <?php if (!empty($feed['more'])): ?>
 <div class="text-center small mb-3"><a class="text-body-secondary" href="/workbench?status=all"><?= (int) $feed['more'] ?> earlier request<?= $feed['more'] === 1 ? '' : 's' ?> — on the Task Board</a></div>
 <?php endif; ?>
+<style>
+    /* a report written out in full: its pictures and code stay inside the bubble */
+    .ask-report img{max-width:100% !important;max-height:12rem !important;width:auto !important;height:auto !important;border-radius:.4rem;border:1px solid var(--bs-border-color)}
+    .ask-report pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:.8rem;background:var(--bs-tertiary-bg);padding:.5rem;border-radius:.4rem}
+    .ask-report h1,.ask-report h2,.ask-report h3{font-size:.95rem;margin:.75rem 0 .25rem}
+    .ask-report{overflow-wrap:anywhere}
+    details.ask-more[open] > summary > .ask-text, details.ask-more[open] > summary > u{display:none}
+</style>
 <?php foreach ($feed['entries'] as $e):
     $id = (int) $e['id'];
+    if (!empty($e['found'])):
+        // Tiknix speaking first: it found this itself. One bubble — what is wrong, the pictures, the whole report folded, and what can be done.
+        $fd = $e['found']; $st = substr($e['state'], 5);
+        $b = '<div class="fw-semibold"><i class="bi bi-bug-fill text-danger me-1"></i>Tiknix found a problem' . ($when($e['at']) !== '' ? ' <span class="fw-normal small text-body-secondary">· ' . $h($when($e['at'])) . '</span>' : '') . '</div>'
+           . '<div class="mt-1">' . $h($fd['message'] !== '' ? $fd['message'] : $e['title']) . '</div>'
+           . ($fd['full'] !== '' && $fd['full'] !== $fd['message'] ? '<div class="small text-body-secondary mt-1">' . nl2br($h($fd['full'])) . '</div>' : '')
+           . ($fd['where'] !== '' ? '<div class="small text-body-secondary mt-1">Seen on <code>' . $h($fd['where']) . '</code></div>' : '')
+           . $proof(['passed' => null, 'verdict' => '', 'shots' => $fd['shots']])
+           . '<details class="small mt-2"><summary class="text-body-secondary" style="cursor:pointer">Read the whole report</summary><div class="ask-report mt-2">' . $fd['html'] . '</div></details>';
+        if ($e['review'] !== null) {
+            $rv = $e['review'];
+            $b .= '<hr class="my-2"><div class="fw-semibold"><i class="bi bi-hourglass-split text-warning me-1"></i>A fix is built — waiting for you.</div>'
+                . ($rv['said'] !== '' ? '<div class="ask-said small border-start border-3 ps-2 mt-2">' . nl2br($h($rv['said'])) . '</div>' : '')
+                . ($e['can_approve'] ? '<div class="mt-2 d-flex flex-wrap gap-1 align-items-center">' . $btn('btn-success', 'approve', 'check-lg', 'Put it in my app', ['task' => $id]) . $btn('btn-outline-secondary', 'decline', 'x-lg', 'Discard it', ['task' => $id]) . $details($id) . '</div>' : '')
+                . $answer($id, 'solo', 'Or say what to change, and it builds it again…', 'Build again');
+        } else {
+            $say = ['pending' => '', 'running' => 'A fix is being built now.', 'merged' => 'Fixed — it is in your app.', 'resolved' => 'Looked at: nothing needed changing.', 'failed' => 'The fix stopped: ' . mb_strimwidth($e['error'], 0, 240, '…'), 'declined' => 'Left as it is.'][$st] ?? ucfirst($st) . '.';
+            $b .= ($say !== '' ? '<div class="small fw-semibold mt-2">' . $h($say) . '</div>' : '')
+                . '<div class="mt-2 d-flex flex-wrap gap-1 align-items-center">'
+                . (in_array($st, ['pending', 'failed'], true) ? $btn('btn-primary', 'start', 'wrench-adjustable', $st === 'failed' ? 'Try the fix again' : 'Fix it', ['task' => $id, 'again' => $st === 'failed' ? 1 : 0]) : '')
+                . $details($id) . '</div>';
+        }
+        echo $reply($b);
+        continue;
+    endif;
     echo $you($e['replan_of'] ? "(Tiknix re-planned what was left of #{$e['replan_of']})" : $e['asked'], trim(($e['files'] ? $e['files'] . ($e['files'] === 1 ? ' file attached' : ' files attached') . ' · ' : '') . $when($e['at']), ' ·'));
     $count = $e['total'] ? $e['built'] . ' of ' . $e['total'] . ' tasks built' : '';
     $b = '';
@@ -140,7 +175,7 @@ $reply = fn(string $body) => '<div class="d-flex mb-4"><div class="ask-reply rou
                 break;
             }
             $b = '<div class="fw-semibold">' . $h($say) . '</div>' . ($e['error'] !== '' && in_array($st, ['failed', 'conflict'], true) ? '<div class="small text-body-secondary mt-1">' . $h(mb_strimwidth($e['error'], 0, 260, '…')) . '</div>' : '')
-               . '<div class="mt-2"><a class="btn btn-sm btn-outline-primary" href="/workbench/view?id=' . $id . '">Open it</a></div>';
+               . '<div class="mt-2 d-flex flex-wrap gap-1 align-items-center">' . ($st === 'pending' ? $btn('btn-primary', 'start', 'play-fill', 'Build it', ['task' => $id]) : '') . '<a class="btn btn-sm btn-outline-primary" href="/workbench/view?id=' . $id . '">Open it</a></div>';
     }
     echo $reply($b);
 endforeach; ?>
