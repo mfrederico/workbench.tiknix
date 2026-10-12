@@ -1874,7 +1874,15 @@ class Workbench extends BuildControl {
             }
         }
         $slug = (string) $this->selected['slug'];
-        if (TmuxManager::exists('tiknix-' . (int) $this->member->id . '-plan-' . $slug) && ($g = $this->decomposingGoal())) $out['planning'] = $g;
+        if (TmuxManager::exists('tiknix-' . (int) $this->member->id . '-plan-' . $slug) && ($g = $this->decomposingGoal())) {
+            // What was asked, once and whole (the board's banner wants a title and an excerpt; a
+            // one-line request is both, and showing the two read as the request typed twice).
+            $goal  = (string) @file_get_contents(rtrim(\app\WorkbenchDb::dirOf($slug, (string) ($this->selected['app'] ?? '')), '/') . '/.aibuilder/plan-goal.md');
+            $asked = trim(\app\GoalBrief::split($goal)['goal']);
+            $files = 0;
+            if (($cut = strpos($asked, trim(self::ASK_FILES_HEAD))) !== false) { $files = preg_match_all('/^- `/m', substr($asked, $cut)); $asked = trim(substr($asked, 0, $cut)); }
+            $out['planning'] = $g + ['asked' => $asked, 'files' => $files];
+        }
         $out['waiting'] = \app\PromptQueue::queued((int) $this->member->id, $slug . '.' . ((string) ($this->selected['app'] ?? '') ?: 'tiknix'));
         return $out;
     }
@@ -2126,6 +2134,11 @@ class Workbench extends BuildControl {
             $who = $name === '' || $name === 'anthropic' ? 'the Anthropic account' : (string) (($rj['agent_names'][$name] ?? '') ?: $name);
             try {
                 $a = \app\TenantRun::activity($ct, ['planner-m' . (int) $this->member->id], 6)['planner-m' . (int) $this->member->id] ?? null;
+                // The newest transcript may still be the PREVIOUS planning run's (this one has not written
+                // its first line yet): what it last said is not what this run is doing. The goal file is
+                // written as a run starts, so a transcript older than it belongs to an earlier run.
+                $startedAt = (int) @filemtime($dir . '/.aibuilder/plan-goal.md');
+                if ($a && $a['found'] && $startedAt > 0 && ($a['at'] ?? '') !== '' && (int) strtotime((string) $a['at']) < $startedAt) $a = null;
                 if ($a && $a['found']) {
                     $clean = fn(string $l) => trim(preg_replace('/^\[[0-9:]*\]\s*(→\s*)?/u', '', $l));
                     $recent = array_values(array_filter(array_map($clean, $a['lines']), fn($l) => $l !== ''));

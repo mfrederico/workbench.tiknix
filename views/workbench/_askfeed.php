@@ -190,7 +190,7 @@ endforeach; ?>
     <?= $reply('<div class="fw-semibold"><i class="bi bi-hourglass-split me-1 text-info"></i>Waiting for the project to be free.</div><div class="small text-body-secondary">It starts by itself.</div>') ?>
 <?php endforeach; ?>
 <?php if ($feed['planning']): ?>
-    <?= $you($feed['planning']['title'] . ($feed['planning']['excerpt'] !== '' ? "\n" . $feed['planning']['excerpt'] : ''), '') ?>
+    <?= $you(($feed['planning']['asked'] ?? '') !== '' ? $feed['planning']['asked'] : $feed['planning']['title'], !empty($feed['planning']['files']) ? $feed['planning']['files'] . ($feed['planning']['files'] === 1 ? ' file attached' : ' files attached') : '') ?>
     <?= $reply('<div class="fw-semibold d-flex align-items-center gap-2"><span class="spinner-border spinner-border-sm text-primary" role="status"></span>Decomposing into appropriate tasks…</div>'
         . '<div class="small text-body-secondary mt-1" id="ask-doing">Reading your app first, then writing the tasks. This takes a few minutes; building starts by itself after it.</div>'
         . '<div class="mt-2">' . $btn('btn-outline-secondary', 'stopplan', 'stop-fill', 'Stop') . '</div>') ?>
