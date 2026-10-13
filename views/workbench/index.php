@@ -118,6 +118,24 @@
           project's work while you believed you were in another.
         -->
         <div class="col-lg-3 col-md-4 mb-4">
+            <?php if (!empty($asked)):
+                $__say = ['thinking' => ['Being read', 'secondary'], 'answer' => ['Answered', 'success'], 'unsure' => ['Build it, or answer?', 'warning'], 'asking' => ['Waiting on your answer', 'warning'], 'failed' => ['Did not go through', 'danger']]; ?>
+            <div class="card shadow-sm mb-3">
+                <div class="card-header d-flex justify-content-between align-items-center"><span class="fw-semibold">Asked</span><a class="small" href="/workbench/ask">Open Ask</a></div>
+                <ul class="list-group list-group-flush small">
+                    <?php foreach (array_slice($asked, 0, 8) as $__a): [$__label, $__tone] = $__say[(string) $__a['state']]; ?>
+                    <li class="list-group-item">
+                        <a class="text-reset text-decoration-none d-block" href="/workbench/ask">
+                            <span class="d-block text-truncate"><?= htmlspecialchars(mb_strimwidth((string) $__a['said'], 0, 90, '…')) ?></span>
+                            <span class="badge text-bg-<?= $__tone ?> fw-normal"><?= $__label ?></span>
+                            <span class="text-body-secondary"><?= htmlspecialchars(date('M j, g:i a', strtotime((string) $__a['created_at']) ?: time())) ?></span>
+                        </a>
+                    </li>
+                    <?php endforeach; ?>
+                </ul>
+                <?php if (count($asked) > 8): ?><div class="card-footer small text-body-secondary"><?= count($asked) - 8 ?> more in Ask</div><?php endif; ?>
+            </div>
+            <?php endif; ?>
             <div class="card shadow-sm">
                 <div class="card-header"><span class="fw-semibold">Project</span></div>
                 <div class="card-body">

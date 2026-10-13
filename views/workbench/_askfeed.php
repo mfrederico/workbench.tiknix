@@ -235,6 +235,17 @@ $reply = fn(string $body) => '<div class="d-flex mb-4"><div class="ask-reply rou
                . ($st === 'running' ? '<div class="small text-body-secondary ask-live mt-1" data-live="' . $id . '">Working…</div>' : '') . ($e['error'] !== '' && in_array($st, ['failed', 'conflict'], true) ? '<div class="small text-body-secondary mt-1">' . $h(mb_strimwidth($e['error'], 0, 260, '…')) . '</div>' : '')
                . '<div class="mt-2 d-flex flex-wrap gap-1 align-items-center">' . ($st === 'pending' ? $btn('btn-primary', 'start', 'play-fill', 'Build it', ['task' => $id]) : '') . '<a class="btn btn-sm btn-outline-primary" href="/workbench/view?id=' . $id . '">Open it</a></div>';
     }
+    // What happened, in order, folded under the request: the log its plan and tasks kept.
+    if (!empty($e['log'])) {
+        $rows = '';
+        foreach ($e['log'] as $l) {
+            $rows .= '<li class="d-flex gap-2 align-items-baseline' . ($l['tone'] === 'error' ? ' text-danger' : ($l['tone'] === 'warning' ? ' text-warning-emphasis' : '')) . '">'
+                   . '<span class="text-body-tertiary flex-shrink-0" style="font-variant-numeric:tabular-nums">' . $h(date('g:i', strtotime($l['at']) ?: time())) . '</span>'
+                   . '<span style="min-width:0">' . ($l['who'] !== '' ? '<span class="text-body-secondary">' . $h(mb_strimwidth($l['who'], 0, 48, '…')) . ' · </span>' : '') . $h($l['text']) . '</span></li>';
+        }
+        $b .= '<details class="ask-log mt-2 small"><summary class="text-body-secondary" style="cursor:pointer">What happened · ' . count($e['log']) . ' step' . (count($e['log']) === 1 ? '' : 's') . '</summary>'
+            . '<ul class="list-unstyled mb-0 mt-1 d-flex flex-column gap-1">' . $rows . '</ul></details>';
+    }
     // What the planner asked before it planned this comes first, where it happened: before the plan.
     foreach ($e['answered'] ?? [] as $qa) {
         if (empty($qa['first'])) continue;

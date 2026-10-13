@@ -308,6 +308,15 @@ class Workbench extends BuildControl {
             }
         }
 
+        // What was said in Ask that is not a plan on this board — a question and its answer, one it
+        // could not tell, one waiting on an answer: items of this project's record like the rest (app\AskStore).
+        $this->viewData['asked'] = [];
+        if ($this->selected) {
+            try {
+                $dir = \app\WorkbenchDb::dirOf((string) $this->selected['slug'], (string) ($this->selected['app'] ?? ''));
+                $this->viewData['asked'] = array_reverse(array_values(array_filter(\app\AskStore::all($dir, 40), fn($a) => in_array((string) $a['state'], ['thinking', 'answer', 'unsure', 'failed', 'asking'], true))));
+            } catch (\Throwable $e) { $this->logger->error('Workbench board: what was asked could not be read', ['error' => $e->getMessage()]); }
+        }
         $this->render('workbench/index', $this->viewData);
     }
 
@@ -1610,6 +1619,37 @@ class Workbench extends BuildControl {
     }
 
     /**
+     * A request's log for the conversation: the lines its plan and tasks wrote as they were
+     * worked, oldest first, each said in a person's words and cut to a line. The bookkeeping a
+     * reader does not need (which credential, what a run cost, a second "started" line) is left
+     * on the task's own page.
+     * @return list<array{at:string,who:string,text:string,tone:string}>
+     */
+    private function askLog($plan, array $kids): array {
+        $names = [(int) $plan->id => ''];
+        foreach ($kids as $k) $names[(int) $k->id] = (string) $k->title;
+        $ids = array_keys($names);
+        if (!in_array('tasklog', Bean::inspect(), true)) return [];
+        $out = [];
+        foreach (Bean::getAll('SELECT task_id, log_level, message, created_at FROM tasklog WHERE task_id IN (' . Bean::genSlots($ids) . ') ORDER BY id', $ids) as $l) {
+            $m = trim((string) $l['message']);
+            if ($m === '' || preg_match('/^(Ran on |This run: |Task so far: |Build agent started .* on task\/|Page design — |Page check — )/', $m)) continue;
+            $tone = in_array((string) $l['log_level'], ['error', 'warning'], true) ? (string) $l['log_level'] : '';
+            if (str_starts_with($m, 'Agent output (tail): ')) {
+                // its last words: the end of what it said, where its summary is
+                $said = trim((string) preg_replace('/\s+/', ' ', substr($m, 21)));
+                $m = 'Its agent said: ' . (mb_strlen($said) > 260 ? '…' . mb_substr($said, -260) : $said);
+            } else {
+                $m = (string) preg_replace('/^Build agent started in \S+ container on (.*)$/', 'Its agent started, on $1', $m);
+                $m = trim((string) preg_replace('/\s+/', ' ', $m));
+                if (mb_strlen($m) > 300) $m = mb_substr($m, 0, 300) . '…';
+            }
+            $out[] = ['at' => (string) $l['created_at'], 'who' => $names[(int) $l['task_id']] ?? '', 'text' => $m, 'tone' => $tone];
+        }
+        return $out;
+    }
+
+    /**
      * POST /workbench/askanswer — the answer to a question the PLANNER put before it could plan a
      * request (prompt_id, message). The answer is written into the request beside the question
      * and it is sent to be planned again. JSON.
@@ -1688,6 +1728,11 @@ class Workbench extends BuildControl {
             'member_id' => (int) $this->member->id, 'source' => \app\PromptLog::SOURCE_DECOMPOSE, 'title' => $title, 'body' => $goal,
             'instance_id' => (int) $instance->id, 'instance_tag' => $slug . '.' . $app, 'auto_build' => !$review,
         ]);
+        // Its item in the project's own record of what was asked (app\AskStore): there from the moment it is sent.
+        if ($promptId > 0) {
+            try { \app\AskTriage::mark($promptId, 'build'); }
+            catch (\Throwable $e) { $this->logger->error('Workbench ask: the request was not written to the project\'s record', ['prompt' => $promptId, 'error' => $e->getMessage()]); }
+        }
         // Asked while an earlier request is still being built: this one comes AFTER it. Decomposed
         // now, its plan would be written against an app that does not have that work yet — it
         // guesses at pages, builds beside them, and its check fails on what is not there. It waits
@@ -1997,6 +2042,9 @@ class Workbench extends BuildControl {
                 // What the check afterwards SAW: the audit's screenshots, each under the check it proves,
                 // and its one-line verdict (AuditReporter writes them as comments on the plan and its tasks).
                 $proof = $this->askProof(array_merge([(int) $r->id], array_map(fn($k) => (int) $k->id, $kids)));
+                // What HAPPENED, in order: the log every plan and task keeps as it is worked (started, what
+                // its agent said, asked, resumed, merged). The steps above say where things stand; this is the story.
+                $log = $this->askLog($r, $kids);
                 // A task made on its own that is built and waits for its person: what it did, in its
                 // agent's words, and what it changed — so it can be approved or sent back from here.
                 $review = null;
@@ -2017,7 +2065,7 @@ class Workbench extends BuildControl {
                     'needs' => $needs ? ['id' => (int) $needs->id, 'title' => (string) $needs->title, 'about' => mb_substr((string) ($needs->progressMessage ?? ''), 0, 1500),
                                           // a question its agent wrote for its person (not a task merely left waiting): shown as one
                                           'question' => trim((string) ($needs->askedJson ?? '')) !== ''] : null,
-                    'answered' => $answered,
+                    'answered' => $answered, 'log' => $log,
                     'trouble' => $trouble ? ['id' => (int) $trouble->id, 'title' => (string) $trouble->title, 'why' => (string) $trouble->errorMessage] : null,
                     'audit' => (string) ($r->auditStatus ?? ''), 'proof' => $proof, 'review' => $review, 'found' => $found,
                     'can_approve' => (int) $this->member->level <= LEVELS['ADMIN'],
