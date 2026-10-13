@@ -1641,6 +1641,8 @@ class Workbench extends BuildControl {
                 $m = 'Its agent said: ' . (mb_strlen($said) > 260 ? '…' . mb_substr($said, -260) : $said);
             } else {
                 $m = (string) preg_replace('/^Build agent started in \S+ container on (.*)$/', 'Its agent started, on $1', $m);
+                $m = (string) preg_replace('/^Checkpoint \S+ taken .*$/s', 'A restore point was taken before the first task (Undo goes back to it).', $m);
+                $m = (string) preg_replace('/^Auto-approved and started building.*$/s', 'Planned; building started.', $m);
                 $m = trim((string) preg_replace('/\s+/', ' ', $m));
                 if (mb_strlen($m) > 300) $m = mb_substr($m, 0, 300) . '…';
             }
