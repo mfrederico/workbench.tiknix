@@ -97,9 +97,16 @@ $reply = fn(string $body) => '<div class="d-flex mb-4"><div class="ask-reply rou
         if ($e['state'] === 'thinking') {
             echo $reply('<div class="ask-reading d-flex align-items-center gap-2 text-body-secondary"><span class="spinner-border spinner-border-sm text-primary" role="status"></span>Reading it…</div>');
         } elseif ($e['state'] === 'answer') {
+            // The one line worth keeping (the agent wrote it with the answer): shown, so what goes into the notebook is seen first.
+            $kind = (string) strstr((string) ($e['note'] ?? ''), ':', true);
+            $keep = trim((string) substr((string) ($e['note'] ?? ''), strlen($kind) + 1));
             echo $reply('<div class="ask-report">' . $e['answer'] . '</div>'
-                . '<div class="mt-2 pt-2 border-top d-flex align-items-center gap-2 small text-body-secondary"><span>Answered — nothing was changed.</span>'
-                . $btn('btn-link btn-sm p-0 ms-auto', 'askas', 'hammer', 'Build this instead', $pid + ['as' => 'build']) . '</div>');
+                . '<div class="mt-2 pt-2 border-top d-flex flex-wrap align-items-center gap-3 small text-body-secondary"><span>Answered — nothing was changed.</span>'
+                . '<span class="ms-auto d-flex flex-wrap gap-3">'
+                . (!empty($e['noted']) ? '<span><i class="bi bi-check-lg text-success me-1"></i>In the notebook</span>'
+                                       : ($keep !== '' ? $btn('btn-link btn-sm p-0', 'asknote', 'journal-plus', 'Add to notebook', $pid) : ''))
+                . $btn('btn-link btn-sm p-0', 'askas', 'hammer', 'Build this instead', $pid + ['as' => 'build']) . '</span></div>'
+                . ($keep !== '' && empty($e['noted']) ? '<div class="small text-body-secondary mt-1"><span class="fw-semibold">Worth keeping:</span> ' . $h($keep) . '</div>' : ''));
         } elseif ($e['state'] === 'unsure') {
             echo $reply('<div class="fw-semibold"><i class="bi bi-question-circle text-warning me-1"></i>Build this, or just answer?</div>'
                 . ($e['answer'] !== '' ? '<div class="small text-body-secondary mt-1">' . $e['answer'] . '</div>' : '')

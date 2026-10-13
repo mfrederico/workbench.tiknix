@@ -1597,6 +1597,29 @@ class Workbench extends BuildControl {
     }
 
     /**
+     * POST /workbench/asknote — put the one line worth keeping from an answer (prompt_id) into the
+     * project's notebook, as the person who asked: every later build reads it. Once per answer. JSON.
+     */
+    public function asknote($params = []) {
+        if (!$this->planActionGuard()) return;
+        $id = (int) $this->getParam('prompt_id', 0);
+        $note = $id > 0 ? \app\AskTriage::noteOf($id, (int) $this->member->id) : null;
+        if (!$note) { Flight::jsonError('There is nothing to add from that answer, or it is already in the notebook.', 409); return; }
+        $slug = (string) (strstr($note['tag'], '.', true) ?: $note['tag']);
+        if (!$this->selected || (string) $this->selected['slug'] !== $slug) { Flight::jsonError('That answer belongs to another project.', 409); return; }
+        $tenant = \app\TenantBuilder::bySlug($slug);
+        if (!$tenant) { Flight::jsonError("{$slug} is not running in its own container, so its notebook cannot be written.", 409); return; }
+        try { $r = \app\TenantHost::notebookAdd($tenant, [['kind' => $note['kind'], 'doc' => $note['doc'], 'text' => $note['text']]], 'an answer in Ask', \app\TenantHost::author((int) $this->member->id)); }
+        catch (\RuntimeException $e) { $r = ['ok' => false, 'error' => $e->getMessage()]; }
+        if (empty($r['ok'])) {
+            $this->logger->error('Workbench asknote: not added', ['prompt' => $id, 'error' => (string) ($r['error'] ?? '')]);
+            Flight::jsonError('It was not added to the notebook: ' . (string) ($r['error'] ?? 'the app did not answer'), 502); return;
+        }
+        \app\AskTriage::noted($id);
+        Flight::jsonSuccess(['added' => (int) ($r['added'] ?? 0)], !empty($r['added']) ? 'Added to the notebook. Every build from now on reads it.' : 'The notebook already says that.');
+    }
+
+    /**
      * POST /workbench/askas — the person overrules (or settles) what a message was taken for:
      * prompt_id, as = build | answer | again. "Build it" on an answer or an unsure one sends it
      * down the Builder's road; "Just answer" has the agent answer it; "Try again" reads it afresh.
@@ -1980,7 +2003,8 @@ class Workbench extends BuildControl {
         // What was asked and answered without a plan (app\AskTriage), in among the requests by when it was said.
         foreach (\app\AskTriage::talk((int) $this->member->id, $tag) as $t) {
             $out['entries'][] = ['kind' => 'talk', 'id' => $t['id'], 'asked' => $t['asked'], 'at' => $t['at'], 'state' => $t['state'],
-                                 'answer' => $t['state'] === 'answer' ? \app\MarkdownParser::parseSafe($t['answer']) : htmlspecialchars($t['answer'])];
+                                 'answer' => $t['state'] === 'answer' ? \app\MarkdownParser::parseSafe($t['answer']) : htmlspecialchars($t['answer']),
+                                 'note' => $t['note'], 'noted' => $t['noted']];
         }
         usort($out['entries'], fn($a, $b) => strcmp((string) $a['at'], (string) $b['at']));
         return $out;
