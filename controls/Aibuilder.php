@@ -504,6 +504,8 @@ class Aibuilder extends BuildControl {
             if ($line !== '') {
                 $nb = \app\TenantHost::notebookAdd($inst, [['kind' => 'built', 'doc' => 'built', 'text' => $line]], 'undo to ' . preg_replace('/^checkpoint-/', '', $tag), \app\TenantHost::author((int) $this->member->id));
                 if (empty($nb['ok'])) $this->logger->error('aibuilder rollback: the notebook was not told', ['instance' => $inst->slug, 'error' => (string) ($nb['error'] ?? '')]);
+                // …and the app is told (request.undone), for its own pipelines.
+                \app\TenantHost::builderEvent($inst, 'request.undone', ['checkpoint' => $tag, 'line' => $line]);
             }
         } catch (\Throwable $e) { $this->logger->error('aibuilder rollback: the notebook was not told', ['instance' => $inst->slug, 'error' => $e->getMessage()]); }
         $short = fn(string $t) => preg_replace('/^checkpoint-/', '', $t);
