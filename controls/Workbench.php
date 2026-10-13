@@ -2035,6 +2035,7 @@ class Workbench extends BuildControl {
             $asked = trim(\app\GoalBrief::split($goal)['goal']);
             $files = 0;
             if (($cut = strpos($asked, trim(self::ASK_FILES_HEAD))) !== false) { $files = preg_match_all('/^- `/m', substr($asked, $cut)); $asked = trim(substr($asked, 0, $cut)); }
+            $asked = trim(\app\AskTriage::splitAsked($asked)['said']);   // without what the planner asked and was answered
             $out['planning'] = $g + ['asked' => $asked, 'files' => $files];
         }
         $tag = $slug . '.' . ((string) ($this->selected['app'] ?? '') ?: 'tiknix');

@@ -254,7 +254,7 @@ $reply = fn(string $body) => '<div class="d-flex mb-4"><div class="ask-reply rou
 endforeach; ?>
 <?php foreach ($feed['waiting'] as $w):
     // what was said, without the list of attached files (kept with it; not something to retype)
-    $__said = trim(\app\GoalBrief::split((string) $w['body'])['goal']) ?: (string) $w['title'];
+    $__said = trim(\app\AskTriage::splitAsked(trim(\app\GoalBrief::split((string) $w['body'])['goal']))['said']) ?: (string) $w['title'];
     $__cut  = strpos($__said, "\n\n" . \app\PlanExecutor::ATTACHED_HEAD . "\n");
     $__text = $__cut !== false ? rtrim(substr($__said, 0, $__cut)) : $__said; ?>
     <?= $you($__said, '') ?>
