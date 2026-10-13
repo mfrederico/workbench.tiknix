@@ -1379,6 +1379,19 @@ class Workbench extends BuildControl {
         // Ran out of time last attempt: the retry gets the longer limit — the same 30 minutes
         // would end the same way.
         if (\app\PlanExecutor::ranOutOfTime((string) $task->errorMessage)) $task->timeLimit = \app\PlanExecutor::TIME_LIMIT_MAX;
+        // It had asked its person a question (PlanExecutor::ask): what they just said is the answer —
+        // kept beside the question, so the exchange stays in the conversation once it is answered.
+        if ($task->status === 'awaiting' && is_array($asked = json_decode((string) ($task->askedJson ?? ''), true)) && $asked) {
+            $last = array_key_last($asked);
+            if (trim((string) ($asked[$last]['a'] ?? '')) === '') {
+                $said = Bean::findOne('taskcomment', 'task_id = ? AND (is_from_claude IS NULL OR is_from_claude = 0) AND created_at >= ? ORDER BY id DESC', [(int) $task->id, (string) ($asked[$last]['at'] ?? '')]);
+                if (!$said || !$said->id || trim((string) $said->content) === '') { Flight::jsonError('It asked you a question — type your answer first, then send it.', 422); return; }
+                $asked[$last]['a'] = mb_substr(trim((string) $said->content), 0, 2000);
+                $asked[$last]['answered_at'] = date('Y-m-d H:i:s');
+                $task->askedJson = json_encode($asked, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+                $task->progressMessage = '';
+            }
+        }
         // Reset the task for a fresh attempt (fresh auto-retry budget).
         // What it stopped on stays with the task: its next brief says it beside what the person answered.
         if (trim((string) $task->errorMessage) !== '') $task->lastFailReason = mb_substr((string) $task->errorMessage, 0, 1000);
@@ -1947,9 +1960,12 @@ class Workbench extends BuildControl {
                 $files = 0;
                 if (($cut = strpos($asked, trim(self::ASK_FILES_HEAD))) !== false) { $files = preg_match_all('/^- `/m', substr($asked, $cut)); $asked = trim(substr($asked, 0, $cut)); }
                 if ($asked === '') $asked = (string) $r->title;
-                $steps = []; $built = 0; $needs = null; $trouble = null;
+                $steps = []; $built = 0; $needs = null; $trouble = null; $answered = [];
                 foreach ($kids as $k) {
                     $st = (string) $k->status;
+                    foreach ((array) (json_decode((string) ($k->askedJson ?? ''), true) ?: []) as $qa) {
+                        if (trim((string) ($qa['a'] ?? '')) !== '') $answered[] = ['title' => (string) $k->title, 'q' => (string) ($qa['q'] ?? ''), 'a' => (string) $qa['a']];
+                    }
                     $mark = in_array($st, ['merged', 'resolved', 'completed'], true) ? 'done' : (in_array($st, ['failed', 'conflict'], true) ? 'trouble' : (in_array($st, ['awaiting', 'waiting'], true) ? 'you' : ($st === 'running' ? 'now' : 'next')));
                     if ($mark === 'you' && !$needs) $needs = $k;
                     if ($mark === 'trouble' && !$trouble) $trouble = $k;
@@ -1978,7 +1994,10 @@ class Workbench extends BuildControl {
                     'by_me' => (int) $r->memberId === (int) $this->member->id, 'replan_of' => (int) ($r->replanOf ?? 0),
                     'at' => (string) $r->createdAt, 'state' => $state, 'steps' => $steps, 'built' => $built, 'total' => count($steps),
                     'message' => (string) ($r->progressMessage ?: ''), 'error' => (string) ($r->errorMessage ?: ''),
-                    'needs' => $needs ? ['id' => (int) $needs->id, 'title' => (string) $needs->title, 'about' => mb_substr((string) ($needs->progressMessage ?? ''), 0, 300)] : null,
+                    'needs' => $needs ? ['id' => (int) $needs->id, 'title' => (string) $needs->title, 'about' => mb_substr((string) ($needs->progressMessage ?? ''), 0, 1500),
+                                          // a question its agent wrote for its person (not a task merely left waiting): shown as one
+                                          'question' => trim((string) ($needs->askedJson ?? '')) !== ''] : null,
+                    'answered' => $answered,
                     'trouble' => $trouble ? ['id' => (int) $trouble->id, 'title' => (string) $trouble->title, 'why' => (string) $trouble->errorMessage] : null,
                     'audit' => (string) ($r->auditStatus ?? ''), 'proof' => $proof, 'review' => $review, 'found' => $found,
                     'can_approve' => (int) $this->member->level <= LEVELS['ADMIN'],

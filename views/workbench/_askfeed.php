@@ -87,6 +87,11 @@ $reply = fn(string $body) => '<div class="d-flex mb-4"><div class="ask-reply rou
     .ask-report h1,.ask-report h2,.ask-report h3{font-size:.95rem;margin:.75rem 0 .25rem}
     .ask-report{overflow-wrap:anywhere}
     details.ask-more[open] > summary > .ask-text, details.ask-more[open] > summary > u{display:none}
+    /* a question waiting on its person: the one yellow thing in the conversation */
+    .ask-question{background:var(--bs-warning-bg-subtle);border:2px solid var(--bs-warning);color:var(--bs-warning-text-emphasis);box-shadow:0 0 0 .25rem rgba(var(--bs-warning-rgb),.15)}
+    .ask-question .ask-question-note{color:var(--bs-warning-text-emphasis);opacity:.8}
+    /* once answered it is part of the conversation like anything else */
+    .ask-asked{background:var(--bs-tertiary-bg)}
 </style>
 <?php foreach ($feed['entries'] as $e):
     $id = (int) $e['id'];
@@ -156,6 +161,11 @@ $reply = fn(string $body) => '<div class="d-flex mb-4"><div class="ask-reply rou
                . '<div class="mt-2 d-flex flex-wrap gap-1 align-items-center">' . $btn('btn-primary', 'go', 'play-fill', 'Build it', ['plan' => $id]) . $details($id) . '</div>';
             break;
         case 'approved':
+            if (!empty($e['needs']['question'])) {   // paused for an answer, not waiting to be started
+                $b = '<div class="fw-semibold"><i class="bi bi-pause-circle text-warning me-1"></i>Paused for your answer' . ($count !== '' ? ' — ' . $h($count) : '') . '.</div>' . $steps($e['steps'], 7, empty($e['direct']))
+                   . '<div class="mt-2">' . $details($id) . '</div>';
+                break;
+            }
             $b = '<div class="fw-semibold">Ready when you are.</div>' . $steps($e['steps'], 7, empty($e['direct']))
                . '<div class="mt-2 d-flex flex-wrap gap-1 align-items-center">' . $btn('btn-primary', 'build', 'play-fill', 'Build it', ['plan' => $id]) . $details($id) . '</div>';
             break;
@@ -167,8 +177,7 @@ $reply = fn(string $body) => '<div class="d-flex mb-4"><div class="ask-reply rou
             $pct = $e['total'] ? (int) round($e['built'] * 100 / $e['total']) : 0;
             $b = '<div class="fw-semibold d-flex align-items-center gap-2"><span class="spinner-border spinner-border-sm text-primary" role="status"></span>Building — ' . $h($count) . '</div>'
                . '<div class="progress mt-2" style="height:4px" role="progressbar" aria-label="Built" aria-valuenow="' . $pct . '" aria-valuemin="0" aria-valuemax="100"><div class="progress-bar" style="width:' . $pct . '%"></div></div>'
-               . ($e['needs'] ? '<div class="alert alert-warning py-2 px-3 small mt-2 mb-0"><i class="bi bi-chat-dots-fill me-1"></i>It needs an answer from you on “' . $h($e['needs']['title']) . '”' . (($e['needs']['about'] ?? '') !== '' ? ': ' . $h($e['needs']['about']) : '.')
-                    . $answer((int) $e['needs']['id'], 'plan', 'Your answer…', 'Answer') . '</div>' : '')
+               . ''
                . ($e['trouble'] ? '<div class="alert alert-danger py-2 px-3 small mt-2 mb-0"><i class="bi bi-exclamation-triangle-fill me-1"></i>“' . $h($e['trouble']['title']) . '” stopped: ' . $h(mb_strimwidth($e['trouble']['why'], 0, 300, '…'))
                     . $answer((int) $e['trouble']['id'], 'plan', 'Tell it what to do about that, or leave empty to just try again…', 'Try again') . '</div>' : '')
                . $steps($e['steps'], 7, empty($e['direct'])) . '<div class="mt-2">' . $details($id) . '</div>';
@@ -212,6 +221,21 @@ $reply = fn(string $body) => '<div class="d-flex mb-4"><div class="ask-reply rou
                . '<div class="mt-2 d-flex flex-wrap gap-1 align-items-center">' . ($st === 'pending' ? $btn('btn-primary', 'start', 'play-fill', 'Build it', ['task' => $id]) : '') . '<a class="btn btn-sm btn-outline-primary" href="/workbench/view?id=' . $id . '">Open it</a></div>';
     }
     echo $reply($b);
+    // Questions a task put to its person. Answered ones stay, quiet, as part of the conversation;
+    // the open one is YELLOW — the one thing on the page that waits on them.
+    foreach ($e['answered'] ?? [] as $qa) {
+        echo '<div class="d-flex mb-2"><div class="ask-reply ask-asked rounded-4 px-3 py-2 border small"><div class="text-body-secondary"><i class="bi bi-chat-dots me-1"></i>“' . $h($qa['title']) . '” asked:</div>'
+           . '<div class="mt-1">' . nl2br($h($qa['q'])) . '</div></div></div>'
+           . $you($qa['a'], 'your answer');
+    }
+    if (!empty($e['needs'])) {
+        $isQ = !empty($e['needs']['question']);
+        echo '<div class="d-flex mb-4"><div class="ask-reply ask-question rounded-4 px-3 py-2">'
+           . '<div class="fw-semibold"><i class="bi bi-chat-dots-fill me-1"></i>' . ($isQ ? 'A question for you' : 'It needs an answer from you') . ' <span class="fw-normal small">· “' . $h($e['needs']['title']) . '”</span></div>'
+           . (($e['needs']['about'] ?? '') !== '' ? '<div class="mt-1">' . nl2br($h($e['needs']['about'])) . '</div>' : '')
+           . $answer((int) $e['needs']['id'], 'plan', 'Your answer…', 'Answer')
+           . '<div class="small mt-1 ask-question-note">' . ($isQ ? 'The build is paused on this. It goes on by itself when you answer.' : 'This task is waiting on you.') . '</div></div></div>';
+    }
 endforeach; ?>
 <?php foreach ($feed['waiting'] as $w):
     // what was said, without the list of attached files (kept with it; not something to retype)
