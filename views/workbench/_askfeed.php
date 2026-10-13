@@ -187,7 +187,7 @@ $reply = fn(string $body) => '<div class="d-flex mb-4"><div class="ask-reply rou
 endforeach; ?>
 <?php foreach ($feed['waiting'] as $w): ?>
     <?= $you(trim(\app\GoalBrief::split((string) $w['body'])['goal']) ?: (string) $w['title'], '') ?>
-    <?= $reply('<div class="fw-semibold"><i class="bi bi-hourglass-split me-1 text-info"></i>Waiting for the project to be free.</div><div class="small text-body-secondary">It starts by itself.</div>') ?>
+    <?= $reply('<div class="fw-semibold"><i class="bi bi-hourglass-split me-1 text-info"></i>Waiting for the request before it.</div><div class="small text-body-secondary">It starts by itself when that one is in the app, so it builds on it.</div>') ?>
 <?php endforeach; ?>
 <?php if ($feed['planning']): ?>
     <?= $you(($feed['planning']['asked'] ?? '') !== '' ? $feed['planning']['asked'] : $feed['planning']['title'], !empty($feed['planning']['files']) ? $feed['planning']['files'] . ($feed['planning']['files'] === 1 ? ' file attached' : ' files attached') : '') ?>

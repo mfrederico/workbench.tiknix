@@ -1575,6 +1575,15 @@ class Workbench extends BuildControl {
             'member_id' => (int) $this->member->id, 'source' => \app\PromptLog::SOURCE_DECOMPOSE, 'title' => $title, 'body' => $goal,
             'instance_id' => (int) $instance->id, 'instance_tag' => $slug . '.' . $app, 'auto_build' => !$review,
         ]);
+        // Asked while an earlier request is still being built: this one comes AFTER it. Decomposed
+        // now, its plan would be written against an app that does not have that work yet — it
+        // guesses at pages, builds beside them, and its check fails on what is not there. It waits
+        // (PromptQueue::drain starts it) until that is in the app. Not a fix for a found problem,
+        // and not a request whose tasks are to be shown first: nothing starts those unattended.
+        if (!$supersede && !$review && ($busy = \app\BuildQueue::busyWith($dir, $slug)) !== '' && $promptId > 0 && \app\PromptQueue::enqueue($promptId, true)) {
+            Flight::jsonSuccess(['state' => 'waiting'], "Got it. {$busy} — this one starts by itself when that is in the app, so it builds on it.");
+            return;
+        }
         try {
             $runner = new PlanRunner($slug, $dir, (int) $this->member->id, (int) $this->member->level, (string) ($instance->engine ?: \app\EngineRegistry::defaultEngine()));
             $runner->useAgent('');
