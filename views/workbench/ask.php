@@ -216,6 +216,8 @@ $__inst = (int) ($selected['id'] ?? 0);
         // a waiting request: its words open for editing, in place
         if (act === 'editq') { var ef = b.closest('.ask-reply').querySelector('.ask-edit'); if (ef) { ef.hidden = false; ef.elements.message.focus(); } return; }
         try {
+            if (act === 'askas' && b.getAttribute('data-as') === 'build' && b.textContent.indexOf('wanted this built') >= 0
+                && !await tkConfirm('Build this? It will be planned and built as a change to your app, like any request.', {okText: 'Build it'})) return;
             if (act === 'unqueue' && !await tkConfirm('Remove this waiting request? It will not be built. What you wrote stays in Prompts.', {okText: 'Remove it', danger: true})) return;
             if (act === 'decline' && !await tkConfirm('Discard what this task built? Its work is not put in your app. You can ask for it again.', {okText: 'Discard it', danger: true})) return;
             if (act === 'undo') {
@@ -308,5 +310,7 @@ $__inst = (int) ($selected['id'] ?? 0);
     });
     window.scrollTo(0, document.body.scrollHeight);
     setInterval(tick, 5000); tick();
+    // While something typed is being read, look every second and a half: an answer is seconds away, and five more is long.
+    setInterval(function(){ if (feed.querySelector('.ask-reading')) tick(); }, 1500);
 })();
 </script>

@@ -2022,7 +2022,10 @@ class Workbench extends BuildControl {
         // What was asked and answered without a plan (app\AskTriage), in among the requests by when it was said.
         foreach (\app\AskTriage::talk((int) $this->member->id, $tag) as $t) {
             $out['entries'][] = ['kind' => 'talk', 'id' => $t['id'], 'asked' => $t['asked'], 'at' => $t['at'], 'state' => $t['state'],
-                                 'answer' => $t['state'] === 'answer' ? \app\MarkdownParser::parseSafe($t['answer']) : htmlspecialchars($t['answer']),
+                                 // a page it names (`/landing`) opens that page of this project's app, signed in
+                                 'answer' => $t['state'] === 'answer' ? \app\AskTriage::linkPages(\app\MarkdownParser::parseSafe($t['answer']),
+                                                 rtrim((string) Flight::get('sidecar.core_url'), '/') . '/projects/open?id=' . $instId . '&to=')
+                                             : htmlspecialchars($t['answer']),
                                  'note' => $t['note'], 'noted' => $t['noted']];
         }
         usort($out['entries'], fn($a, $b) => strcmp((string) $a['at'], (string) $b['at']));
@@ -2180,6 +2183,8 @@ class Workbench extends BuildControl {
         }
 
         $ok = $runner->stop();
+        // An answered message that was sent on to be built goes back to being its answer.
+        \app\AskTriage::restoreAnswer((int) $this->member->id, (string) $instance->slug . '.' . ((string) ($instance->app ?? '') ?: 'tiknix'));
         // A half-written plan.json would be ingested as if it were finished. The planner
         // writes it only on success, but a cancel is exactly when "only on success" is
         // worth not betting on.
