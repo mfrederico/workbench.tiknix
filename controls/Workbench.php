@@ -1431,7 +1431,15 @@ class Workbench extends BuildControl {
      */
     public function boardsig($params = []) {
         if (!$this->requireLogin()) return;
-        if (!in_array('workbenchtask', Bean::inspect(), true)) { Flight::jsonSuccess(['sig' => 'empty', 'busy' => false]); return; }
+        // ?talk=1 (the Ask view): what was asked and answered without a plan, and what waits, are
+        // not on the board — an answer that arrived moved nothing there, and the page never drew it.
+        $talk = '';
+        if ((string) $this->getParam('talk', '') === '1' && $this->selected) {
+            $tag = (string) $this->selected['slug'] . '.' . ((string) ($this->selected['app'] ?? '') ?: 'tiknix');
+            $talk = json_encode([array_column(\app\AskTriage::talk((int) $this->member->id, $tag), 'state', 'id'),
+                                 array_column(\app\PromptQueue::queued((int) $this->member->id, $tag), 'id')]);
+        }
+        if (!in_array('workbenchtask', Bean::inspect(), true)) { Flight::jsonSuccess(['sig' => 'empty' . ($talk !== '' ? md5($talk) : ''), 'busy' => false]); return; }
         $have = array_keys(Bean::inspect('workbenchtask'));
         $cols = array_values(array_intersect(['id', 'status', 'plan_status', 'audit_status', 'split_outcome', 'progress_message', 'error_message', 'completed_at', 'needs_planning', 'agent', 'queue_pos'], $have));
         $one = (int) $this->getParam('task', 0);
@@ -1445,7 +1453,7 @@ class Workbench extends BuildControl {
         $rows = Bean::getAll('SELECT ' . implode(', ', $cols) . ' FROM workbenchtask ORDER BY id');
         $busy = false;
         foreach ($rows as $r) if (in_array((string) ($r['status'] ?? ''), ['running', 'queued'], true) || (string) ($r['plan_status'] ?? '') === 'building') { $busy = true; break; }
-        Flight::jsonSuccess(['sig' => md5(json_encode($rows)), 'busy' => $busy, 'tasks' => count($rows)]);
+        Flight::jsonSuccess(['sig' => md5(json_encode($rows) . $talk), 'busy' => $busy, 'tasks' => count($rows)]);
     }
 
     // ── Ask: the simple view ───────────────────────────────────────────────────────────────

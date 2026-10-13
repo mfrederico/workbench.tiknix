@@ -66,7 +66,7 @@ $__inst = (int) ($selected['id'] ?? 0);
             <button class="btn btn-outline-secondary flex-shrink-0" type="button" id="ask-attach" title="Attach pictures, PDFs, spreadsheets or text files (or drop or paste them)" aria-label="Attach files"><i class="bi bi-paperclip"></i></button>
             <button class="btn btn-outline-secondary flex-shrink-0" type="button" id="ask-opts" aria-expanded="false" aria-controls="ask-options" title="Options for this request" aria-label="Options for this request"><i class="bi bi-sliders"></i></button>
             <input type="file" id="ask-files" class="d-none" multiple accept="image/png,image/jpeg,image/webp,image/gif,application/pdf,text/plain,text/csv,.md,.xlsx">
-            <textarea class="form-control" id="ask-box" rows="1" maxlength="20000" placeholder="What should your app do next?" required></textarea>
+            <textarea class="form-control" id="ask-box" rows="1" maxlength="20000" placeholder="Ask a question, or say what your app should do next" required></textarea>
             <button class="btn btn-primary flex-shrink-0" type="submit" id="ask-send" aria-label="Send"><i class="bi bi-arrow-up"></i></button>
         </div>
         <?php /* Nothing under the box until there is something to say. The choices a request can carry
@@ -105,7 +105,9 @@ $__inst = (int) ($selected['id'] ?? 0);
         var was = atBottom();
         return fetch('/workbench/askfeed', {credentials: 'same-origin', headers: {'X-Requested-With': 'XMLHttpRequest'}})
             .then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); return r.text(); })
-            .then(function(html){ feed.innerHTML = html; paintLive(); if (stick || was) window.scrollTo(0, document.body.scrollHeight); if (feed.querySelector('.ask-live')) live(); });
+            .then(function(html){ feed.innerHTML = html; paintLive();
+                // "Reading it…" under the box has been answered above: it is no longer true
+                if (/^(Reading it…|Sending it to be built…)$/.test(msg.textContent) && !feed.querySelector('.ask-reading')) say(''); if (stick || was) window.scrollTo(0, document.body.scrollHeight); if (feed.querySelector('.ask-live')) live(); });
     }
     // What each agent building right now is doing, under its task: a build runs for many minutes
     // with nothing else moving, and has to be seen to be working.
@@ -128,7 +130,7 @@ $__inst = (int) ($selected['id'] ?? 0);
     function tick(){
         if (busy || document.hidden) return;
         busy = true;
-        fetch('/workbench/boardsig', {credentials: 'same-origin', headers: {'X-Requested-With': 'XMLHttpRequest'}})
+        fetch('/workbench/boardsig?talk=1', {credentials: 'same-origin', headers: {'X-Requested-With': 'XMLHttpRequest'}})
             .then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
             .then(function(j){
                 var s = j && j.data ? j.data.sig : null, was = planning();

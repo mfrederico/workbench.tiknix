@@ -95,7 +95,7 @@ $reply = fn(string $body) => '<div class="d-flex mb-4"><div class="ask-reply rou
         echo $you($e['asked'], $when($e['at']));
         $pid = ['prompt' => $id];
         if ($e['state'] === 'thinking') {
-            echo $reply('<div class="d-flex align-items-center gap-2 text-body-secondary"><span class="spinner-border spinner-border-sm text-primary" role="status"></span>Reading it…</div>');
+            echo $reply('<div class="ask-reading d-flex align-items-center gap-2 text-body-secondary"><span class="spinner-border spinner-border-sm text-primary" role="status"></span>Reading it…</div>');
         } elseif ($e['state'] === 'answer') {
             echo $reply('<div class="ask-report">' . $e['answer'] . '</div>'
                 . '<div class="mt-2 pt-2 border-top d-flex align-items-center gap-2 small text-body-secondary"><span>Answered — nothing was changed.</span>'
