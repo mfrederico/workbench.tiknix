@@ -235,10 +235,17 @@ $reply = fn(string $body) => '<div class="d-flex mb-4"><div class="ask-reply rou
                . ($st === 'running' ? '<div class="small text-body-secondary ask-live mt-1" data-live="' . $id . '">Working…</div>' : '') . ($e['error'] !== '' && in_array($st, ['failed', 'conflict'], true) ? '<div class="small text-body-secondary mt-1">' . $h(mb_strimwidth($e['error'], 0, 260, '…')) . '</div>' : '')
                . '<div class="mt-2 d-flex flex-wrap gap-1 align-items-center">' . ($st === 'pending' ? $btn('btn-primary', 'start', 'play-fill', 'Build it', ['task' => $id]) : '') . '<a class="btn btn-sm btn-outline-primary" href="/workbench/view?id=' . $id . '">Open it</a></div>';
     }
+    // What the planner asked before it planned this comes first, where it happened: before the plan.
+    foreach ($e['answered'] ?? [] as $qa) {
+        if (empty($qa['first'])) continue;
+        echo '<div class="d-flex mb-2"><div class="ask-reply ask-asked rounded-4 px-3 py-2 border small"><div class="text-body-secondary"><i class="bi bi-chat-dots me-1"></i>Before planning it, I asked:</div>'
+           . '<div class="mt-1">' . nl2br($h($qa['q'])) . '</div></div></div>' . $you($qa['a'], 'your answer');
+    }
     echo $reply($b);
     // Questions a task put to its person. Answered ones stay, quiet, as part of the conversation;
     // the open one is YELLOW — the one thing on the page that waits on them.
     foreach ($e['answered'] ?? [] as $qa) {
+        if (!empty($qa['first'])) continue;
         echo '<div class="d-flex mb-2"><div class="ask-reply ask-asked rounded-4 px-3 py-2 border small"><div class="text-body-secondary"><i class="bi bi-chat-dots me-1"></i>' . (!empty($qa['first']) ? 'Before planning it, I asked:' : '“' . $h($qa['title']) . '” asked:') . '</div>'
            . '<div class="mt-1">' . nl2br($h($qa['q'])) . '</div></div></div>'
            . $you($qa['a'], 'your answer');
