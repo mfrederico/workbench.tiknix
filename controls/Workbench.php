@@ -1489,7 +1489,7 @@ class Workbench extends BuildControl {
         $rj   = $meta ? (json_decode((string) ($meta->reportJson ?? ''), true) ?: []) : [];
         $name = (string) ($rj['default_agent'] ?? '');
         $this->viewData['askAgent'] = $name === '' ? '' : ($name === 'anthropic' ? 'the Anthropic account' : (string) (($rj['agent_names'][$name] ?? '') ?: $name));
-        $this->viewData['askAgentsUrl'] = rtrim((string) Flight::get('sidecar.core_url'), '/') . '/projects/open?to=' . rawurlencode('/agents');
+        $this->viewData['askAgentsUrl'] = $this->selected ? $this->agentsUrl((int) $this->selected['id']) : '';
         $this->render('workbench/ask', $this->viewData);
     }
 
@@ -1538,7 +1538,7 @@ class Workbench extends BuildControl {
         if ($why = $this->tenantAgentProblem($tenant, '')) {
             unset($_SESSION['workbench_agent_ok'][(int) $instance->id]);   // the next page shows the gate
             Flight::json(['success' => false, 'message' => 'This project has no working AI agent right now, so nothing can be built: ' . $why . '.',
-                          'data' => ['agents_url' => rtrim((string) Flight::get('sidecar.core_url'), '/') . '/projects/open?to=' . rawurlencode('/agents')]], 409);
+                          'data' => ['agents_url' => $this->agentsUrl((int) $instance->id)]], 409);
             return;
         }
 

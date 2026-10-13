@@ -103,8 +103,17 @@ abstract class BuildControl extends Control {
         return [
             'problem' => $problem,
             'name'    => (string) ($meta->displayName ?: $meta->slug),
-            'url'     => rtrim((string) Flight::get('sidecar.core_url'), '/') . '/projects/open?to=' . rawurlencode('/agents'),
+            'url'     => $this->agentsUrl($id),
         ];
+    }
+
+    /**
+     * The AI agents page of THIS project's own app (https://<its domain>/agents), through core's
+     * sign-in. The project is named in the link: without ?id= core opens whichever project the
+     * member last chose there, which need not be the one this Builder is on.
+     */
+    protected function agentsUrl(int $instanceId): string {
+        return rtrim((string) Flight::get('sidecar.core_url'), '/') . '/projects/open?id=' . $instanceId . '&to=' . rawurlencode('/agents?builder=' . $instanceId);
     }
 
     /** True only when the app itself reported its own MCP server off (an older app says nothing: not "off"). */
@@ -123,7 +132,7 @@ abstract class BuildControl extends Control {
         $gate = $this->viewData['agentGate'] ?? null;
         if ($gate === null) return true;
         $msg = ($gate['name'] ?? 'This project') . " has no agent yet, so nothing can be built: " . $gate['problem'];
-        if ($json) Flight::jsonError($msg, 409);
+        if ($json) Flight::json(['success' => false, 'message' => $msg, 'data' => ['agents_url' => $gate['url']]], 409);
         else { $this->flash('error', $msg); Flight::redirect('/workbench'); }
         return false;
     }

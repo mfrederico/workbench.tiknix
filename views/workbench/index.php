@@ -68,7 +68,7 @@
                 <strong>Your <code>PLAN.md</code> is in the project.</strong> Phase 1 is about to be planned.
             <?php elseif ($hp === 'waiting-agent'): ?>
                 <strong>Connect your AI agent first.</strong> Your plan is in the project, and it builds with the project&rsquo;s own agent &mdash; nothing is planned or built until one is signed in. Phase 1 starts by itself as soon as it is.
-                <div class="mt-2"><a class="btn btn-sm btn-primary" href="<?= htmlspecialchars($handoff['core']) ?>/projects/open?to=<?= rawurlencode('/agents') ?>" target="_blank" rel="noopener">Sign in with Claude</a></div>
+                <div class="mt-2"><a class="btn btn-sm btn-primary" href="<?= htmlspecialchars($handoff['core']) ?>/projects/open?id=<?= (int) ($selected['id'] ?? 0) ?>&amp;to=<?= rawurlencode('/agents') ?>" target="_blank" rel="noopener">Sign in with Claude</a></div>
             <?php elseif ($hp === 'planning'): ?>
                 <strong>Phase 1 is being planned from your <code>PLAN.md</code>.</strong> Its tasks appear here when the planner finishes &mdash; usually a few minutes.
             <?php else: ?>
