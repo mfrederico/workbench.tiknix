@@ -497,6 +497,15 @@ class Aibuilder extends BuildControl {
             return;
         }
         $this->logger->info('aibuilder rollback', ['instance' => $inst->slug, 'checkpoint' => $tag, 'before' => $r['before'], 'member' => (int) $this->member->id]);
+        // The undo also took back the notebook line that said the request was built (the notebook is
+        // in the app's code). It is said again, as what happened: built, and taken out (app\RequestNote).
+        try {
+            $line = \app\RequestNote::undone(\app\WorkbenchDb::dirOf((string) $inst->slug, (string) ($inst->app ?? '')), $tag);
+            if ($line !== '') {
+                $nb = \app\TenantHost::notebookAdd($inst, [['kind' => 'built', 'doc' => 'built', 'text' => $line]], 'undo', \app\TenantHost::author((int) $this->member->id));
+                if (empty($nb['ok'])) $this->logger->error('aibuilder rollback: the notebook was not told', ['instance' => $inst->slug, 'error' => (string) ($nb['error'] ?? '')]);
+            }
+        } catch (\Throwable $e) { $this->logger->error('aibuilder rollback: the notebook was not told', ['instance' => $inst->slug, 'error' => $e->getMessage()]); }
         $short = fn(string $t) => preg_replace('/^checkpoint-/', '', $t);
         Flight::jsonSuccess($r, 'Rolled back to ' . $short($tag) . ($r['data'] ? ' — code and data (' . $r['databases'] . ')' : ' — code only: this checkpoint has no copy of the data, which was left as it is')
             . '. The state before is saved as ' . $short($r['before']) . '.');
