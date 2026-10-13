@@ -1610,6 +1610,23 @@ class Workbench extends BuildControl {
     }
 
     /**
+     * POST /workbench/askanswer — the answer to a question the PLANNER put before it could plan a
+     * request (prompt_id, message). The answer is written into the request beside the question
+     * and it is sent to be planned again. JSON.
+     */
+    public function askanswer($params = []) {
+        if (!$this->planActionGuard()) return;
+        if (!$this->requireAgent(true)) return;
+        $id = (int) $this->getParam('prompt_id', 0);
+        $said = trim((string) $this->getParam('message', ''));
+        if ($said === '') { Flight::jsonError('Type your answer first.', 422); return; }
+        if (!\app\AskTriage::answered($id, (int) $this->member->id, $said)) { Flight::jsonError('That question is no longer waiting for an answer.', 409); return; }
+        try { $this->askRead($id, 'build'); }
+        catch (\Throwable $e) { Flight::jsonError('Your answer is saved, but planning did not start again: ' . $e->getMessage(), 500); return; }
+        Flight::jsonSuccess(['state' => 'build'], 'Got it — planning it with your answer.');
+    }
+
+    /**
      * POST /workbench/asknote — put the one line worth keeping from an answer (prompt_id) into the
      * project's notebook, as the person who asked: every later build reads it. Once per answer. JSON.
      */
@@ -1959,8 +1976,11 @@ class Workbench extends BuildControl {
                 // what was attached is said as a count, not as the note written for the agent
                 $files = 0;
                 if (($cut = strpos($asked, trim(self::ASK_FILES_HEAD))) !== false) { $files = preg_match_all('/^- `/m', substr($asked, $cut)); $asked = trim(substr($asked, 0, $cut)); }
+                // what the planner asked before it planned this, and the answer: shown as an exchange, not as part of what was typed
+                $parts = \app\AskTriage::splitAsked($asked); $asked = trim($parts['said']);
                 if ($asked === '') $asked = (string) $r->title;
                 $steps = []; $built = 0; $needs = null; $trouble = null; $answered = [];
+                foreach ($parts['qa'] as $qa) $answered[] = ['title' => 'The planner', 'q' => $qa['q'], 'a' => $qa['a'], 'first' => true];
                 foreach ($kids as $k) {
                     $st = (string) $k->status;
                     foreach ((array) (json_decode((string) ($k->askedJson ?? ''), true) ?: []) as $qa) {
@@ -2021,7 +2041,7 @@ class Workbench extends BuildControl {
         $out['waiting'] = \app\PromptQueue::queued((int) $this->member->id, $tag);
         // What was asked and answered without a plan (app\AskTriage), in among the requests by when it was said.
         foreach (\app\AskTriage::talk((int) $this->member->id, $tag) as $t) {
-            $out['entries'][] = ['kind' => 'talk', 'id' => $t['id'], 'asked' => $t['asked'], 'at' => $t['at'], 'state' => $t['state'],
+            $out['entries'][] = ['kind' => 'talk', 'id' => $t['id'], 'asked' => $t['asked'], 'qa' => $t['qa'], 'at' => $t['at'], 'state' => $t['state'],
                                  // a page it names (`/landing`) opens that page of this project's app, signed in
                                  'answer' => $t['state'] === 'answer' ? \app\AskTriage::linkPages(\app\MarkdownParser::parseSafe($t['answer']),
                                                  rtrim((string) Flight::get('sidecar.core_url'), '/') . '/projects/open?id=' . $instId . '&to=')

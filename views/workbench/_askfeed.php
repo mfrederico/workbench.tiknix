@@ -99,6 +99,21 @@ $reply = fn(string $body) => '<div class="d-flex mb-4"><div class="ask-reply rou
         // Said and answered without a plan: a question, or a message it could not tell was one.
         echo $you($e['asked'], $when($e['at']));
         $pid = ['prompt' => $id];
+        // what the planner asked about this request earlier, and what was answered: part of the conversation, quiet
+        foreach ($e['qa'] ?? [] as $qa) {
+            echo '<div class="d-flex mb-2"><div class="ask-reply ask-asked rounded-4 px-3 py-2 border small"><div class="text-body-secondary"><i class="bi bi-chat-dots me-1"></i>Before planning it, I asked:</div>'
+               . '<div class="mt-1">' . nl2br($h($qa['q'])) . '</div></div></div>' . $you($qa['a'], 'your answer');
+        }
+        if ($e['state'] === 'asking') {
+            // The planner cannot plan this without their decision: YELLOW, like a task's question.
+            echo '<div class="d-flex mb-4"><div class="ask-reply ask-question rounded-4 px-3 py-2">'
+               . '<div class="fw-semibold"><i class="bi bi-chat-dots-fill me-1"></i>A question for you <span class="fw-normal small">· before I plan this</span></div>'
+               . '<div class="mt-1">' . nl2br($e['answer']) . '</div>'
+               . '<form class="ask-plan-answer d-flex gap-2 mt-2" data-prompt="' . $id . '"><input class="form-control form-control-sm" name="message" maxlength="2000" placeholder="Your answer…" aria-label="Your answer" required>'
+               . '<button class="btn btn-sm btn-outline-primary text-nowrap" type="submit">Answer</button></form>'
+               . '<div class="small mt-1 ask-question-note">Nothing is planned or built until you answer. Then it goes on by itself.</div></div></div>';
+            continue;
+        }
         if ($e['state'] === 'thinking') {
             echo $reply('<div class="ask-reading d-flex align-items-center gap-2 text-body-secondary"><span class="spinner-border spinner-border-sm text-primary" role="status"></span>Reading it…</div>');
         } elseif ($e['state'] === 'answer') {
@@ -224,7 +239,7 @@ $reply = fn(string $body) => '<div class="d-flex mb-4"><div class="ask-reply rou
     // Questions a task put to its person. Answered ones stay, quiet, as part of the conversation;
     // the open one is YELLOW — the one thing on the page that waits on them.
     foreach ($e['answered'] ?? [] as $qa) {
-        echo '<div class="d-flex mb-2"><div class="ask-reply ask-asked rounded-4 px-3 py-2 border small"><div class="text-body-secondary"><i class="bi bi-chat-dots me-1"></i>“' . $h($qa['title']) . '” asked:</div>'
+        echo '<div class="d-flex mb-2"><div class="ask-reply ask-asked rounded-4 px-3 py-2 border small"><div class="text-body-secondary"><i class="bi bi-chat-dots me-1"></i>' . (!empty($qa['first']) ? 'Before planning it, I asked:' : '“' . $h($qa['title']) . '” asked:') . '</div>'
            . '<div class="mt-1">' . nl2br($h($qa['q'])) . '</div></div></div>'
            . $you($qa['a'], 'your answer');
     }

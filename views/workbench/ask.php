@@ -244,6 +244,15 @@ $__inst = (int) ($selected['id'] ?? 0);
             if (act === 'asknote') await redraw();   // its link becomes "In the notebook", where it is
         } catch (err) { say(err.message, true); b.disabled = false; }
     });
+    // The planner's question, answered: the request is planned again with the answer in it.
+    feed.addEventListener('submit', function(e){
+        var f = e.target.closest('.ask-plan-answer'); if (!f) return;
+        e.preventDefault();
+        var btn = f.querySelector('button'); btn.disabled = true; say('Sending your answer…');
+        post('/workbench/askanswer', {prompt_id: f.getAttribute('data-prompt'), message: f.elements.message.value.trim()})
+            .then(function(j){ f.elements.message.value = ''; say((j && j.message) || 'Got it.'); return redraw(true); })
+            .catch(function(err){ say(err.message, true); btn.disabled = false; });
+    });
     // A waiting request, edited in place: saved while it still waits (the page says so when it has started).
     feed.addEventListener('click', function(e){ var c = e.target.closest('.ask-edit [data-cancel]'); if (c) { c.closest('.ask-edit').hidden = true; redraw(true); } });
     feed.addEventListener('submit', function(e){
