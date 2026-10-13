@@ -117,7 +117,7 @@ $reply = fn(string $body) => '<div class="d-flex mb-4"><div class="ask-reply rou
                 . ($e['answer'] !== '' ? '<div class="small text-body-secondary mt-1">' . $e['answer'] . '</div>' : '')
                 . '<div class="mt-2 d-flex flex-wrap gap-2">' . $btn('btn-primary', 'askas', 'hammer', 'Build it', $pid + ['as' => 'build']) . $btn('btn-outline-primary', 'askas', 'chat-left-text', 'Just answer', $pid + ['as' => 'answer']) . '</div>');
         } else {
-            echo $reply('<div class="fw-semibold"><i class="bi bi-exclamation-triangle-fill text-danger me-1"></i>That could not be read.</div>'
+            echo $reply('<div class="fw-semibold"><i class="bi bi-exclamation-triangle-fill text-danger me-1"></i>That did not go through.</div>'
                 . '<div class="small text-body-secondary mt-1">' . $e['answer'] . '</div>'
                 . '<div class="mt-2 d-flex flex-wrap gap-2">' . $btn('btn-outline-primary', 'askas', 'arrow-clockwise', 'Try again', $pid + ['as' => 'again']) . $btn('btn-outline-secondary', 'askas', 'hammer', 'Build it', $pid + ['as' => 'build']) . '</div>');
         }
