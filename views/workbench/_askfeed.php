@@ -90,6 +90,27 @@ $reply = fn(string $body) => '<div class="d-flex mb-4"><div class="ask-reply rou
 </style>
 <?php foreach ($feed['entries'] as $e):
     $id = (int) $e['id'];
+    if (($e['kind'] ?? '') === 'talk'):
+        // Said and answered without a plan: a question, or a message it could not tell was one.
+        echo $you($e['asked'], $when($e['at']));
+        $pid = ['prompt' => $id];
+        if ($e['state'] === 'thinking') {
+            echo $reply('<div class="d-flex align-items-center gap-2 text-body-secondary"><span class="spinner-border spinner-border-sm text-primary" role="status"></span>Reading it…</div>');
+        } elseif ($e['state'] === 'answer') {
+            echo $reply('<div class="ask-report">' . $e['answer'] . '</div>'
+                . '<div class="mt-2 pt-2 border-top d-flex align-items-center gap-2 small text-body-secondary"><span>Answered — nothing was changed.</span>'
+                . $btn('btn-link btn-sm p-0 ms-auto', 'askas', 'hammer', 'Build this instead', $pid + ['as' => 'build']) . '</div>');
+        } elseif ($e['state'] === 'unsure') {
+            echo $reply('<div class="fw-semibold"><i class="bi bi-question-circle text-warning me-1"></i>Build this, or just answer?</div>'
+                . ($e['answer'] !== '' ? '<div class="small text-body-secondary mt-1">' . $e['answer'] . '</div>' : '')
+                . '<div class="mt-2 d-flex flex-wrap gap-2">' . $btn('btn-primary', 'askas', 'hammer', 'Build it', $pid + ['as' => 'build']) . $btn('btn-outline-primary', 'askas', 'chat-left-text', 'Just answer', $pid + ['as' => 'answer']) . '</div>');
+        } else {
+            echo $reply('<div class="fw-semibold"><i class="bi bi-exclamation-triangle-fill text-danger me-1"></i>That could not be read.</div>'
+                . '<div class="small text-body-secondary mt-1">' . $e['answer'] . '</div>'
+                . '<div class="mt-2 d-flex flex-wrap gap-2">' . $btn('btn-outline-primary', 'askas', 'arrow-clockwise', 'Try again', $pid + ['as' => 'again']) . $btn('btn-outline-secondary', 'askas', 'hammer', 'Build it', $pid + ['as' => 'build']) . '</div>');
+        }
+        continue;
+    endif;
     if (!empty($e['found'])):
         // Tiknix speaking first: it found this itself. One bubble — what is wrong, the pictures, the whole report folded, and what can be done.
         $fd = $e['found']; $st = substr($e['state'], 5);

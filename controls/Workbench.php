@@ -1524,9 +1524,12 @@ class Workbench extends BuildControl {
             Flight::jsonError('Choose a project to work on first.', 409); return;
         }
         $said = trim((string) $this->getParam('message', ''));
-        if (mb_strlen($said) < 20) { Flight::jsonError('Say a little more — a sentence or two about what you want and who it is for.', 422); return; }
+        if (mb_strlen($said) < 3) { Flight::jsonError('Type what you want built, or a question about your app.', 422); return; }
         if (mb_strlen($said) > 20000) { Flight::jsonError('That is too long for one request (20,000 characters at most). Split it, or attach it as a goal on the Task Board.', 422); return; }
         $review = in_array((string) $this->getParam('review', ''), ['1', 'on', 'true'], true);   // "show me the plan first"
+        // Something sent with files, or to be shown as tasks first, is a request to build: said by how it was sent.
+        $isBuild = $review || !empty($_FILES['files']['name'][0]);
+        if ($isBuild && mb_strlen($said) < 20) { Flight::jsonError('Say a little more — a sentence or two about what you want and who it is for.', 422); return; }
 
         $slug = (string) $instance->slug;
         $app  = $instance->app ?: 'tiknix';
@@ -1552,8 +1555,54 @@ class Workbench extends BuildControl {
         // Who it is for is not asked here: the request says it, or the planner asks through the plan.
         $goal  = \app\GoalBrief::compose($said . $attached['text'], 'none', '');
         $title = mb_substr(trim((string) strtok($said, "\n")), 0, 90);
-        \app\ToolUse::record('builder.ask', (int) $this->member->id, ['review' => $review, 'files' => $attached['count'], 'sheets' => $attached['sheets']], (int) $instance->id);
-        $this->askPlan($instance, $goal, $title, $review);
+        \app\ToolUse::record('builder.ask', (int) $this->member->id, ['review' => $review, 'files' => $attached['count'], 'sheets' => $attached['sheets'], 'triage' => !$isBuild], (int) $instance->id);
+        if ($isBuild) { $this->askPlan($instance, $goal, $title, $review); return; }
+
+        // Anything else is read first (app\AskTriage): a question is answered, a request is built,
+        // and when it cannot be told which, the person is asked. Detached — the page shows it thinking.
+        $promptId = \app\PromptLog::record([
+            'member_id' => (int) $this->member->id, 'source' => \app\PromptLog::SOURCE_DECOMPOSE, 'title' => $title, 'body' => $goal,
+            'instance_id' => (int) $instance->id, 'instance_tag' => $slug . '.' . $app, 'auto_build' => true,
+        ]);
+        if ($promptId <= 0) { Flight::jsonError('That could not be recorded, so nothing was started.', 500); return; }
+        try { $this->askRead($promptId, 'auto'); }
+        catch (\Throwable $e) {
+            $this->logger->error('Workbench ask: the reading did not start', ['error' => $e->getMessage(), 'prompt' => $promptId]);
+            \app\AskTriage::mark($promptId, 'failed', 'It could not be read: ' . $e->getMessage());
+            Flight::jsonError('That could not be read: ' . $e->getMessage(), 500); return;
+        }
+        Flight::jsonSuccess(['state' => 'thinking'], 'Reading it…');
+    }
+
+    /** Start the reading of one message, detached (scripts/ask-triage.php in core): the page does not wait on the agent. */
+    private function askRead(int $promptId, string $mode): void {
+        \app\AskTriage::mark($promptId, $mode === 'build' ? 'build' : 'thinking');
+        $core = rtrim((string) Flight::get('sidecar.core_root'), '/');
+        if ($core === '' || !is_file($core . '/scripts/ask-triage.php')) throw new \RuntimeException('the platform\'s ask-triage script was not found (sidecar.core_root)');
+        // Never with this project's task board as its database (TIKNIX_WORKBENCH_DB): it works in core's, as the prompt queue's cron does.
+        $cmd = 'env -u TIKNIX_WORKBENCH_DB php ' . escapeshellarg($core . '/scripts/ask-triage.php') . ' --prompt=' . $promptId . ' --mode=' . escapeshellarg($mode)
+             . ' >> ' . escapeshellarg($core . '/log/tiknix-ask.log') . ' 2>&1';
+        TmuxManager::create('tiknix-ask-' . $promptId . '-' . substr(bin2hex(random_bytes(3)), 0, 4), $cmd, $core);
+    }
+
+    /**
+     * POST /workbench/askas — the person overrules (or settles) what a message was taken for:
+     * prompt_id, as = build | answer | again. "Build it" on an answer or an unsure one sends it
+     * down the Builder's road; "Just answer" has the agent answer it; "Try again" reads it afresh.
+     */
+    public function askas($params = []) {
+        if (!$this->planActionGuard()) return;
+        if (!$this->requireAgent(true)) return;
+        $id = (int) $this->getParam('prompt_id', 0);
+        $as = (string) $this->getParam('as', '');
+        if (!in_array($as, ['build', 'answer', 'again'], true)) { Flight::jsonError('Build it, or answer it?', 422); return; }
+        $p = $id > 0 ? \app\PromptLog::find($id, (int) $this->member->id) : null;
+        if (!$p) { Flight::jsonError('No such message.', 404); return; }
+        $mine = array_column(\app\AskTriage::talk((int) $this->member->id, (string) $p['instance_tag'], 200), 'state', 'id');
+        if (!in_array($mine[$id] ?? '', ['answer', 'unsure', 'failed'], true)) { Flight::jsonError('That message is already being handled.', 409); return; }
+        try { $this->askRead($id, $as === 'again' ? 'auto' : $as); }
+        catch (\Throwable $e) { Flight::jsonError('That did not start: ' . $e->getMessage(), 500); return; }
+        Flight::jsonSuccess(['state' => $as === 'build' ? 'build' : 'thinking'], $as === 'build' ? 'Sending it to be built…' : 'Reading it…');
     }
 
     /**
@@ -1915,7 +1964,14 @@ class Workbench extends BuildControl {
             if (($cut = strpos($asked, trim(self::ASK_FILES_HEAD))) !== false) { $files = preg_match_all('/^- `/m', substr($asked, $cut)); $asked = trim(substr($asked, 0, $cut)); }
             $out['planning'] = $g + ['asked' => $asked, 'files' => $files];
         }
-        $out['waiting'] = \app\PromptQueue::queued((int) $this->member->id, $slug . '.' . ((string) ($this->selected['app'] ?? '') ?: 'tiknix'));
+        $tag = $slug . '.' . ((string) ($this->selected['app'] ?? '') ?: 'tiknix');
+        $out['waiting'] = \app\PromptQueue::queued((int) $this->member->id, $tag);
+        // What was asked and answered without a plan (app\AskTriage), in among the requests by when it was said.
+        foreach (\app\AskTriage::talk((int) $this->member->id, $tag) as $t) {
+            $out['entries'][] = ['kind' => 'talk', 'id' => $t['id'], 'asked' => $t['asked'], 'at' => $t['at'], 'state' => $t['state'],
+                                 'answer' => $t['state'] === 'answer' ? \app\MarkdownParser::parseSafe($t['answer']) : htmlspecialchars($t['answer'])];
+        }
+        usort($out['entries'], fn($a, $b) => strcmp((string) $a['at'], (string) $b['at']));
         return $out;
     }
 
