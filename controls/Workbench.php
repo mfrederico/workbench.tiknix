@@ -1529,6 +1529,9 @@ class Workbench extends BuildControl {
         $review = in_array((string) $this->getParam('review', ''), ['1', 'on', 'true'], true);   // "show me the plan first"
         // Something sent with files, or to be shown as tasks first, is a request to build: said by how it was sent.
         $isBuild = $review || !empty($_FILES['files']['name'][0]);
+        // An app whose runtime cannot answer yet (it is updated when it is not building): as before, everything is a request.
+        $rt = (string) ((json_decode((string) ($instance->reportJson ?? ''), true) ?: [])['runtime'] ?? '');
+        if (!\app\AskTriage::appCanAnswer($rt)) $isBuild = true;
         if ($isBuild && mb_strlen($said) < 20) { Flight::jsonError('Say a little more — a sentence or two about what you want and who it is for.', 422); return; }
 
         $slug = (string) $instance->slug;
