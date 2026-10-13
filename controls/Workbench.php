@@ -1669,6 +1669,17 @@ class Workbench extends BuildControl {
     }
 
     /**
+     * POST /workbench/askdid — the action a typed message asked for has been carried out (the page
+     * ran the same request the board's own button makes, as this person): the message becomes
+     * what was done, in the conversation. JSON.
+     */
+    public function askdid($params = []) {
+        if (!$this->planActionGuard()) return;
+        if (!\app\AskTriage::did((int) $this->getParam('prompt_id', 0), (int) $this->member->id)) { Flight::jsonError('That message is not waiting for a go-ahead.', 409); return; }
+        Flight::jsonSuccess([], 'Done.');
+    }
+
+    /**
      * POST /workbench/asknote — put the one line worth keeping from an answer (prompt_id) into the
      * project's notebook, as the person who asked: every later build reads it. Once per answer. JSON.
      */
@@ -1701,11 +1712,16 @@ class Workbench extends BuildControl {
         if (!$this->requireAgent(true)) return;
         $id = (int) $this->getParam('prompt_id', 0);
         $as = (string) $this->getParam('as', '');
-        if (!in_array($as, ['build', 'answer', 'again'], true)) { Flight::jsonError('Build it, or answer it?', 422); return; }
+        if (!in_array($as, ['build', 'answer', 'again', 'notthat'], true)) { Flight::jsonError('Build it, or answer it?', 422); return; }
         $p = $id > 0 ? \app\PromptLog::find($id, (int) $this->member->id) : null;
         if (!$p) { Flight::jsonError('No such message.', 404); return; }
         $mine = array_column(\app\AskTriage::talk((int) $this->member->id, (string) $p['instance_tag'], 200), 'state', 'id');
-        if (!in_array($mine[$id] ?? '', ['answer', 'unsure', 'failed'], true)) { Flight::jsonError('That message is already being handled.', 409); return; }
+        if (!in_array($mine[$id] ?? '', ['answer', 'unsure', 'failed', 'action'], true)) { Flight::jsonError('That message is already being handled.', 409); return; }
+        // "Not that": it was read as an action on the list, and the person says it is not — they choose what it is.
+        if ($as === 'notthat') {
+            \app\AskTriage::mark($id, 'unsure', 'Then what should I do with it?');
+            Flight::jsonSuccess(['state' => 'unsure'], 'Not that, then.'); return;
+        }
         try { $this->askRead($id, $as === 'again' ? 'auto' : $as); }
         catch (\Throwable $e) { Flight::jsonError('That did not start: ' . $e->getMessage(), 500); return; }
         Flight::jsonSuccess(['state' => $as === 'build' ? 'build' : 'thinking'], $as === 'build' ? 'Sending it to be built…' : 'Reading it…');
@@ -2008,6 +2024,9 @@ class Workbench extends BuildControl {
         $out = ['entries' => [], 'planning' => null, 'waiting' => [], 'more' => 0];
         if (!$this->selected) return $out;
         $instId = (int) $this->selected['id'];
+        // plan => the plan it continues (a follow-up: "make that bold"), from the project's own record
+        try { $followers = \app\AskStore::followers(\app\WorkbenchDb::dirOf((string) $this->selected['slug'], (string) ($this->selected['app'] ?? ''))); }
+        catch (\Throwable $e) { $followers = []; $this->logger->error('Workbench ask: follow-ups could not be read', ['error' => $e->getMessage()]); }
         if (in_array('workbenchtask', Bean::inspect(), true)) {
             $total = (int) Bean::count('workbenchtask', 'instance_id = ? AND parent_task_id IS NULL', [$instId]);
             $rows  = array_reverse(array_values(Bean::find('workbenchtask', 'instance_id = ? AND parent_task_id IS NULL ORDER BY id DESC LIMIT 12', [$instId])));
@@ -2068,6 +2087,7 @@ class Workbench extends BuildControl {
                                           // a question its agent wrote for its person (not a task merely left waiting): shown as one
                                           'question' => trim((string) ($needs->askedJson ?? '')) !== ''] : null,
                     'answered' => $answered, 'log' => $log,
+                    'follows' => isset($followers[(int) $r->id]) ? ['id' => $followers[(int) $r->id], 'title' => (string) (Bean::load('workbenchtask', $followers[(int) $r->id])->title ?? '')] : null,
                     'trouble' => $trouble ? ['id' => (int) $trouble->id, 'title' => (string) $trouble->title, 'why' => (string) $trouble->errorMessage] : null,
                     'audit' => (string) ($r->auditStatus ?? ''), 'proof' => $proof, 'review' => $review, 'found' => $found,
                     'can_approve' => (int) $this->member->level <= LEVELS['ADMIN'],
@@ -2097,7 +2117,9 @@ class Workbench extends BuildControl {
                                  'answer' => $t['state'] === 'answer' ? \app\AskTriage::linkPages(\app\MarkdownParser::parseSafe($t['answer']),
                                                  rtrim((string) Flight::get('sidecar.core_url'), '/') . '/projects/open?id=' . $instId . '&to=')
                                              : htmlspecialchars($t['answer']),
-                                 'note' => $t['note'], 'noted' => $t['noted']];
+                                 'note' => $t['note'], 'noted' => $t['noted'],
+                                 // what it asks the board to do, and to which item (app\AskTriage::act)
+                                 'act' => $t['state'] === 'action' ? (json_decode($t['answer'], true) ?: []) : []];
         }
         usort($out['entries'], fn($a, $b) => strcmp((string) $a['at'], (string) $b['at']));
         return $out;

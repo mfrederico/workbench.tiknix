@@ -114,6 +114,26 @@ $reply = fn(string $body) => '<div class="d-flex mb-4"><div class="ask-reply rou
                . '<div class="small mt-1 ask-question-note">Nothing is planned or built until you answer. Then it goes on by itself.</div></div></div>';
             continue;
         }
+        if ($e['state'] === 'did') {
+            echo $reply('<div class="text-body-secondary"><i class="bi bi-check-lg text-success me-1"></i>' . $e['answer'] . '</div>');
+            continue;
+        }
+        if ($e['state'] === 'action') {
+            // Read as something the board does: said exactly — what, and to which item — with the board's own button.
+            $a = $e['act']; $t = '“' . $h(mb_strimwidth((string) ($a['title'] ?? ''), 0, 110, '…')) . '”';
+            [$ask, $label, $icon, $danger] = [
+                'retry' => ["Try {$t} again?", 'Try it again', 'arrow-clockwise', false],
+                'fix'   => ["Fix {$t}? It is planned and built like a request, then checked again.", 'Fix it', 'wrench', false],
+                'undo'  => ["Undo {$t}? Your app's code and data go back to before it. How it is now is kept, so this can itself be undone from the Terminal page.", 'Undo it', 'arrow-counterclockwise', true],
+                'stop'  => ['Stop the request that is being planned now?', 'Stop it', 'stop-fill', true],
+            ][(string) ($a['verb'] ?? '')] ?? ['I could not tell what to do with that.', '', '', false];
+            echo '<div class="d-flex mb-4"><div class="ask-reply ask-question rounded-4 px-3 py-2">'
+               . '<div class="fw-semibold"><i class="bi bi-hand-index-thumb me-1"></i>' . $ask . '</div>'
+               . '<div class="mt-2 d-flex flex-wrap gap-2">'
+               . ($label !== '' ? $btn($danger ? 'btn-danger' : 'btn-primary', 'doact', $icon, $label, $pid + ['verb' => (string) $a['verb'], 'id' => (int) ($a['id'] ?? 0), 'checkpoint' => (string) ($a['checkpoint'] ?? '')]) : '')
+               . $btn('btn-outline-secondary', 'askas', 'x-lg', 'Not that', $pid + ['as' => 'notthat']) . '</div></div></div>';
+            continue;
+        }
         if ($e['state'] === 'thinking') {
             echo $reply('<div class="ask-reading d-flex align-items-center gap-2 text-body-secondary"><span class="spinner-border spinner-border-sm text-primary" role="status"></span>Reading it…</div>');
         } elseif ($e['state'] === 'answer') {
@@ -170,6 +190,8 @@ $reply = fn(string $body) => '<div class="d-flex mb-4"><div class="ask-reply rou
     echo $you($e['replan_of'] ? "(Tiknix re-planned what was left of #{$e['replan_of']})" : $e['asked'], trim(($e['files'] ? $e['files'] . ($e['files'] === 1 ? ' file attached' : ' files attached') . ' · ' : '') . $when($e['at']), ' ·'));
     $count = $e['total'] ? $e['built'] . ' of ' . $e['total'] . ' tasks built' : '';
     $b = '';
+    // a follow-up ("make that bold") says what it continues
+    $follow = !empty($e['follows']) ? '<div class="small text-body-secondary mb-1"><i class="bi bi-arrow-return-right me-1"></i>A follow-up to “' . $h(mb_strimwidth($e['follows']['title'], 0, 80, '…')) . '”</div>' : '';
     switch ($e['state']) {
         case 'draft':
             $b = '<div class="fw-semibold">Here is how I would do it' . ($e['total'] ? ' — ' . $e['total'] . ' task' . ($e['total'] === 1 ? '' : 's') : '') . '.</div>' . $steps($e['steps'], 7, empty($e['direct']))
@@ -252,7 +274,7 @@ $reply = fn(string $body) => '<div class="d-flex mb-4"><div class="ask-reply rou
         echo '<div class="d-flex mb-2"><div class="ask-reply ask-asked rounded-4 px-3 py-2 border small"><div class="text-body-secondary"><i class="bi bi-chat-dots me-1"></i>Before planning it, I asked:</div>'
            . '<div class="mt-1">' . nl2br($h($qa['q'])) . '</div></div></div>' . $you($qa['a'], 'your answer');
     }
-    echo $reply($b);
+    echo $reply($follow . $b);
     // Questions a task put to its person. Answered ones stay, quiet, as part of the conversation;
     // the open one is YELLOW — the one thing on the page that waits on them.
     foreach ($e['answered'] ?? [] as $qa) {

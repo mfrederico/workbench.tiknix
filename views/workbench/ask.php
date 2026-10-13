@@ -234,13 +234,23 @@ $__inst = (int) ($selected['id'] ?? 0);
             else if (act === 'unqueue')  j = await post('/workbench/promptunqueue', {prompt_id: b.getAttribute('data-prompt')});
             else if (act === 'askas')    j = await post('/workbench/askas', {prompt_id: b.getAttribute('data-prompt'), as: b.getAttribute('data-as')});
             else if (act === 'asknote')  j = await post('/workbench/asknote', {prompt_id: b.getAttribute('data-prompt')});
+            else if (act === 'doact') {
+                // what a typed message asked the board to do: the same request the board's own button makes, then said as done
+                var verb = b.getAttribute('data-verb'), tid = b.getAttribute('data-id');
+                if (verb === 'retry')     j = await post('/workbench/taskretry', {task_id: tid});
+                else if (verb === 'fix')  j = await post('/workbench/askfix', {id: tid});
+                else if (verb === 'undo') j = await post('/aibuilder/rollback/' + encodeURIComponent(b.getAttribute('data-checkpoint')), {id: INST});
+                else if (verb === 'stop') j = await post('/workbench/decomposestop', {});
+                else throw new Error('I do not know how to do that.');
+                await post('/workbench/askdid', {prompt_id: b.getAttribute('data-prompt')});
+            }
             else if (act === 'approve')  j = await post('/workbench/approve', {id: b.getAttribute('data-task')});
             else if (act === 'decline')  j = await post('/workbench/decline', {id: b.getAttribute('data-task')});
             else if (act === 'undo')     j = await post('/aibuilder/rollback/' + encodeURIComponent(b.getAttribute('data-checkpoint')), {id: INST});
             say((j && j.message) || '');
             if (act === 'undo') await tkAlert((j && j.message) || 'Undone.');
             // what was pressed has started something: show it, at the bottom, where a new request shows
-            await redraw(act === 'fix' || act === 'go' || act === 'build' || act === 'askas');
+            await redraw(act === 'fix' || act === 'go' || act === 'build' || act === 'askas' || act === 'doact');
             if (act === 'asknote') await redraw();   // its link becomes "In the notebook", where it is
         } catch (err) { say(err.message, true); b.disabled = false; }
     });
