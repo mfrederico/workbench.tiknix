@@ -502,7 +502,7 @@ class Aibuilder extends BuildControl {
         try {
             $line = \app\RequestNote::undone(\app\WorkbenchDb::dirOf((string) $inst->slug, (string) ($inst->app ?? '')), $tag);
             if ($line !== '') {
-                $nb = \app\TenantHost::notebookAdd($inst, [['kind' => 'built', 'doc' => 'built', 'text' => $line]], 'undo', \app\TenantHost::author((int) $this->member->id));
+                $nb = \app\TenantHost::notebookAdd($inst, [['kind' => 'built', 'doc' => 'built', 'text' => $line]], 'undo to ' . preg_replace('/^checkpoint-/', '', $tag), \app\TenantHost::author((int) $this->member->id));
                 if (empty($nb['ok'])) $this->logger->error('aibuilder rollback: the notebook was not told', ['instance' => $inst->slug, 'error' => (string) ($nb['error'] ?? '')]);
             }
         } catch (\Throwable $e) { $this->logger->error('aibuilder rollback: the notebook was not told', ['instance' => $inst->slug, 'error' => $e->getMessage()]); }

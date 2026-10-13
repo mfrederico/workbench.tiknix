@@ -1827,7 +1827,8 @@ class Workbench extends BuildControl {
               . ($f['full'] !== '' && $f['full'] !== $what ? "\n\n{$f['full']}" : '')
               . ($f['where'] !== '' ? "\n\nIt was seen on: {$f['where']}" : '')
               . ($shots ? "\n\nPictures of it, taken by the check (open them with the Read tool — they are in the app itself, not in your working copy):\n" . implode("\n", $shots) : '')
-              . "\n\nFind the cause before changing anything, fix that, and give the task a check in its `verify` that would have caught this.";
+              . "\n\nFind the cause before changing anything, fix that, and give the task a check in its `verify` that would have caught this."
+              . " The task that fixes it must write the CAUSE as a `- lesson:` in its `## Notebook` section — what went wrong and how to avoid it, in one sentence — so the next build does not make it again.";
         \app\ToolUse::record('builder.ask', (int) $this->member->id, ['review' => false, 'fix' => true], (int) $instance->id);
         $this->askPlan($instance, \app\GoalBrief::compose($said, 'none', ''), mb_substr('Fix: ' . $what, 0, 90), false, [(int) $task->id]);
     }
@@ -3282,6 +3283,15 @@ class Workbench extends BuildControl {
                     ? 'Notebook: ' . count($entries) . ' entr' . (count($entries) === 1 ? 'y' : 'ies') . ' not added — ' . (string) ($nb['error'] ?? 'the app did not answer')
                     : 'Notebook: ' . (int) ($nb['added'] ?? 0) . ' added' . (!empty($nb['skipped']) ? ', ' . (int) $nb['skipped'] . ' already there' : '') . ":\n" . implode("\n", array_map(fn($e) => "- {$e['kind']}: {$e['text']}", $entries)));
             }
+            // A task made on its own leaves its line in the notebook's Built page too, as a request does
+            // (app\RequestNote): the ledger is of everything that reached the app, however it was asked for.
+            try {
+                $line = \app\RequestNote::built(\app\WorkbenchDb::dirOf((string) $this->selected['slug'], (string) ($this->selected['app'] ?? '')), (int) $task->id);
+                if ($line !== '') {
+                    $nbl = \app\TenantHost::notebookAdd($ct, [['kind' => 'built', 'doc' => 'built', 'text' => $line]], 'task #' . (int) $task->id, \app\TenantHost::author((int) $this->member->id));
+                    if (empty($nbl['ok'])) $this->logTaskEvent((int) $task->id, 'warning', 'system', 'Notebook: the line saying what this task built was not written — ' . (string) ($nbl['error'] ?? 'the app did not answer'));
+                }
+            } catch (\Throwable $e) { $this->logTaskEvent((int) $task->id, 'warning', 'system', 'Notebook: the line saying what this task built was not written — ' . $e->getMessage()); }
             $this->logTaskEvent((int) $task->id, 'success', 'system', 'Merged into the app in its container as ' . ($m['merged'] ?? '?'));
             Flight::json(['success' => true, 'message' => $after === '' ? 'Merged into the app' : 'Merged into the app — but a step after the merge failed: ' . $after]);
             return;
