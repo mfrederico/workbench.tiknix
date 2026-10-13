@@ -264,7 +264,7 @@ $__inst = (int) ($selected['id'] ?? 0);
         btn.disabled = true; say(text ? 'Sending your answer…' : 'Trying it again…');
         (text ? post('/workbench/comment', {id: id, content: text}) : Promise.resolve())
             .then(function(){ return plan ? post('/workbench/taskretry', {task_id: id}) : post('/workbench/rerun', {id: id}); })
-            .then(function(j){ f.elements.change.value = ''; say((j && j.message) || 'Building it again with what you said.'); return redraw(true); })
+            .then(function(j){ var wasQ = !!f.closest('.ask-question'); f.elements.change.value = ''; say(wasQ ? 'Got it — the build goes on with your answer.' : ((j && j.message) || 'Building it again with what you said.')); return redraw(true); })
             .catch(function(err){ say(err.message, true); btn.disabled = false; });
     });
 
