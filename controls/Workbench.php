@@ -1603,6 +1603,29 @@ class Workbench extends BuildControl {
     }
 
     /**
+     * POST /workbench/askedit — change what a request says while it WAITS for the one before it
+     * (prompt_id, message). What was attached to it stays attached. Once its planner has started
+     * it is no longer editable here: say what to change as a new request. JSON.
+     */
+    public function askedit($params = []) {
+        if (!$this->planActionGuard()) return;
+        $id = (int) $this->getParam('prompt_id', 0);
+        $p  = $id > 0 ? \app\PromptLog::find($id, (int) $this->member->id) : null;
+        if (!$p) { Flight::jsonError('No such request.', 404); return; }
+        $said = trim((string) $this->getParam('message', ''));
+        if (mb_strlen($said) < 20) { Flight::jsonError('Say a little more — a sentence or two about what you want and who it is for.', 422); return; }
+        if (mb_strlen($said) > 20000) { Flight::jsonError('That is too long for one request (20,000 characters at most).', 422); return; }
+        // the files sent with it are a section at the end of what was said: kept as it is
+        $old  = \app\GoalBrief::split((string) $p['body'])['goal'];
+        $at   = strpos($old, self::ASK_FILES_HEAD);
+        $body = \app\GoalBrief::compose($said . ($at !== false ? substr($old, $at) : ''), 'none', '');
+        if (!\app\PromptQueue::rewrite($id, (int) $this->member->id, $body, mb_substr(trim((string) strtok($said, "\n")), 0, 90))) {
+            Flight::jsonError('That request is no longer waiting — it has started. Say what to change as a new request.', 409); return;
+        }
+        Flight::jsonSuccess(['id' => $id], 'Changed. It starts with these words when its turn comes.');
+    }
+
+    /**
      * POST /workbench/askfix — "Fix it" on a problem Tiknix found: handled as a request like any
      * other (decomposed, built, checked afterwards), written from the problem's own report. The
      * found-problem task it came from is replaced by the plan that fixes it. JSON.

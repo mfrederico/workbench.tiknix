@@ -211,7 +211,10 @@ $__inst = (int) ($selected['id'] ?? 0);
     feed.addEventListener('click', async function(e){
         var b = e.target.closest('.ask-act'); if (!b) return;
         var act = b.getAttribute('data-act'), plan = b.getAttribute('data-plan');
+        // a waiting request: its words open for editing, in place
+        if (act === 'editq') { var ef = b.closest('.ask-reply').querySelector('.ask-edit'); if (ef) { ef.hidden = false; ef.elements.message.focus(); } return; }
         try {
+            if (act === 'unqueue' && !await tkConfirm('Remove this waiting request? It will not be built. What you wrote stays in Prompts.', {okText: 'Remove it', danger: true})) return;
             if (act === 'decline' && !await tkConfirm('Discard what this task built? Its work is not put in your app. You can ask for it again.', {okText: 'Discard it', danger: true})) return;
             if (act === 'undo') {
                 if (!await tkConfirm('Put your app back to how it was before this request? Its code and its data go back to that moment. How it is now is kept, so this can itself be undone from the Terminal page.', {okText: 'Undo it', danger: true})) return;
@@ -224,6 +227,7 @@ $__inst = (int) ($selected['id'] ?? 0);
             else if (act === 'stopplan') j = await post('/workbench/decomposestop', {});
             else if (act === 'start')    j = await post('/workbench/run', {id: b.getAttribute('data-task')});
             else if (act === 'fix')      j = await post('/workbench/askfix', {id: b.getAttribute('data-task')});
+            else if (act === 'unqueue')  j = await post('/workbench/promptunqueue', {prompt_id: b.getAttribute('data-prompt')});
             else if (act === 'approve')  j = await post('/workbench/approve', {id: b.getAttribute('data-task')});
             else if (act === 'decline')  j = await post('/workbench/decline', {id: b.getAttribute('data-task')});
             else if (act === 'undo')     j = await post('/aibuilder/rollback/' + encodeURIComponent(b.getAttribute('data-checkpoint')), {id: INST});
@@ -232,6 +236,16 @@ $__inst = (int) ($selected['id'] ?? 0);
             // what was pressed has started something: show it, at the bottom, where a new request shows
             await redraw(act === 'fix' || act === 'go' || act === 'build');
         } catch (err) { say(err.message, true); b.disabled = false; }
+    });
+    // A waiting request, edited in place: saved while it still waits (the page says so when it has started).
+    feed.addEventListener('click', function(e){ var c = e.target.closest('.ask-edit [data-cancel]'); if (c) { c.closest('.ask-edit').hidden = true; redraw(true); } });
+    feed.addEventListener('submit', function(e){
+        var f = e.target.closest('.ask-edit'); if (!f) return;
+        e.preventDefault();
+        var btn = f.querySelector('button[type=submit]'); btn.disabled = true; say('Saving…');
+        post('/workbench/askedit', {prompt_id: f.getAttribute('data-prompt'), message: f.elements.message.value.trim()})
+            .then(function(j){ say((j && j.message) || 'Changed.'); f.elements.message.blur(); return redraw(true); })
+            .catch(function(err){ say(err.message, true); btn.disabled = false; });
     });
     // "Say what to change": the words go on the task (they are part of its brief from then on) and it is built again.
     feed.addEventListener('submit', function(e){

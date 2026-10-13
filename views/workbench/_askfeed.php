@@ -185,9 +185,19 @@ $reply = fn(string $body) => '<div class="d-flex mb-4"><div class="ask-reply rou
     }
     echo $reply($b);
 endforeach; ?>
-<?php foreach ($feed['waiting'] as $w): ?>
-    <?= $you(trim(\app\GoalBrief::split((string) $w['body'])['goal']) ?: (string) $w['title'], '') ?>
-    <?= $reply('<div class="fw-semibold"><i class="bi bi-hourglass-split me-1 text-info"></i>Waiting for the request before it.</div><div class="small text-body-secondary">It starts by itself when that one is in the app, so it builds on it.</div>') ?>
+<?php foreach ($feed['waiting'] as $w):
+    // what was said, without the list of attached files (kept with it; not something to retype)
+    $__said = trim(\app\GoalBrief::split((string) $w['body'])['goal']) ?: (string) $w['title'];
+    $__cut  = strpos($__said, "\n\n" . \app\PlanExecutor::ATTACHED_HEAD . "\n");
+    $__text = $__cut !== false ? rtrim(substr($__said, 0, $__cut)) : $__said; ?>
+    <?= $you($__said, '') ?>
+    <?= $reply('<div class="fw-semibold"><i class="bi bi-hourglass-split me-1 text-info"></i>Waiting for the request before it.</div>'
+        . '<div class="small text-body-secondary">It starts by itself when that one is in the app, so it builds on it. Until then you can change what it says.</div>'
+        . '<div class="mt-2 d-flex flex-wrap gap-2">' . $btn('btn-outline-primary', 'editq', 'pencil', 'Edit') . $btn('btn-outline-secondary', 'unqueue', 'x-lg', 'Remove', ['prompt' => (int) $w['id']]) . '</div>'
+        . '<form class="ask-edit mt-2" data-prompt="' . (int) $w['id'] . '" hidden>'
+        . '<textarea class="form-control form-control-sm" name="message" rows="5" aria-label="What this request says">' . $h($__text) . '</textarea>'
+        . '<div class="mt-2 d-flex gap-2"><button class="btn btn-sm btn-primary" type="submit"><i class="bi bi-check-lg me-1"></i>Save the change</button>'
+        . '<button class="btn btn-sm btn-link text-body-secondary" type="button" data-cancel>Cancel</button></div></form>') ?>
 <?php endforeach; ?>
 <?php if ($feed['planning']): ?>
     <?= $you(($feed['planning']['asked'] ?? '') !== '' ? $feed['planning']['asked'] : $feed['planning']['title'], !empty($feed['planning']['files']) ? $feed['planning']['files'] . ($feed['planning']['files'] === 1 ? ' file attached' : ' files attached') : '') ?>
