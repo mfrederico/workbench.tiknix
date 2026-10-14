@@ -39,6 +39,7 @@ $__inst = (int) ($selected['id'] ?? 0);
             <?php if (($askAgent ?? '') !== ''): ?>
                 <i class="bi bi-cpu me-1"></i>Built by <strong class="text-body"><?= htmlspecialchars($askAgent) ?></strong>
                 &middot; <a class="text-body-secondary" href="<?= htmlspecialchars($askAgentsUrl) ?>" target="_blank" rel="noopener">change</a>
+                &middot; <button type="button" class="btn btn-link btn-sm p-0 align-baseline text-body-secondary small" id="ask-email" title="Get this project's Ask address by email: reply to it to ask, or to build">Ask by email</button>
             <?php else: ?>
                 <i class="bi bi-cpu me-1"></i><a class="text-body-secondary" href="<?= htmlspecialchars($askAgentsUrl) ?>" target="_blank" rel="noopener">This project's AI agents</a>
             <?php endif; ?>
@@ -97,6 +98,15 @@ $__inst = (int) ($selected['id'] ?? 0);
         }).then(function(r){ return r.json().catch(function(){ throw new Error('The Builder answered with something unreadable (HTTP ' + r.status + ').'); }); })
           .then(function(j){ if (!j || j.success === false) throw new Error((j && j.message) || 'That did not work.'); return j; });
     }
+    // "Ask by email": the address arrives by email (which is what lets replies from it be acted on); said here once sent
+    var mailBtn = document.getElementById('ask-email');
+    if (mailBtn) mailBtn.addEventListener('click', function(){
+        mailBtn.disabled = true; mailBtn.textContent = 'Sending…';
+        post('/workbench/askemail').then(function(j){
+            var s = document.createElement('div'); s.className = 'small text-body-secondary mb-2'; s.textContent = j.message;
+            mailBtn.closest('.d-flex').after(s); mailBtn.textContent = 'Sent';
+        }).catch(function(e){ mailBtn.disabled = false; mailBtn.textContent = 'Ask by email'; say(e.message, true); });
+    });
     function atBottom(){ return window.innerHeight + window.scrollY >= document.body.scrollHeight - 160; }
     function redraw(stick){
         // someone is typing a change into a reply: redrawing now would throw their words away

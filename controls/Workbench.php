@@ -1669,6 +1669,24 @@ class Workbench extends BuildControl {
     }
 
     /**
+     * POST /workbench/askemail — this person's own address for this project's Ask: made the first time,
+     * and introduced by an email to them, which is what lets mail from their address to it be acted
+     * on (app\BuilderMail). Asked again, the introduction is sent again. JSON.
+     */
+    public function askemail($params = []) {
+        if (!$this->planActionGuard()) return;
+        $instance = $this->selected ? $this->access->instanceMeta((int) $this->selected['id']) : null;
+        if (!$instance || !$instance->id || !$this->access->canAccessInstance((int) $this->member->id, (int) $instance->id)) { Flight::jsonError('Choose a project to work on first.', 409); return; }
+        $core = rtrim((string) Flight::get('sidecar.core_root'), '/');
+        try { $addr = \app\BuilderMail::askAddress($core . '/database/tiknix.db', $instance, (int) $this->member->id); }
+        catch (\Throwable $e) {
+            $this->logger->error('Workbench askemail: not sent', ['instance' => (string) $instance->slug, 'error' => $e->getMessage()]);
+            Flight::jsonError('The email was not sent: ' . $e->getMessage(), 502); return;
+        }
+        Flight::jsonSuccess(['address' => $addr], 'Sent to ' . (string) $this->member->email . '. Reply to it, or write to ' . $addr . ' from that address, to ask this project anything.');
+    }
+
+    /**
      * POST /workbench/askdid — the action a typed message asked for has been carried out (the page
      * ran the same request the board's own button makes, as this person): the message becomes
      * what was done, in the conversation. JSON.
