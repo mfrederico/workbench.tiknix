@@ -2059,7 +2059,10 @@ class Workbench extends BuildControl {
                     // A task that split itself is not a task of its own any more: its pieces are.
                     if (str_starts_with((string) ($k->splitOutcome ?? ''), 'split')) continue;
                     if ($mark === 'done') $built++;
-                    $steps[] = ['id' => (int) $k->id, 'title' => (string) $k->title, 'mark' => $mark, 'note' => (string) ($k->progressMessage ?? '')];
+                    $rk = json_decode((string) ($k->rankJson ?? ''), true) ?: [];
+                    $steps[] = ['id' => (int) $k->id, 'title' => (string) $k->title, 'mark' => $mark, 'note' => (string) ($k->progressMessage ?? ''),
+                                'risk' => isset($rk['risk']) ? (int) $rk['risk'] : null, 'effort' => isset($rk['effort']) ? (int) $rk['effort'] : null,
+                                'why' => array_values((array) ($rk['why'] ?? [])), 'set_by' => (string) ($rk['set_by'] ?? '')];
                 }
                 // What the check afterwards SAW: the audit's screenshots, each under the check it proves,
                 // and its one-line verdict (AuditReporter writes them as comments on the plan and its tasks).
@@ -2088,6 +2091,12 @@ class Workbench extends BuildControl {
                                           // a question its agent wrote for its person (not a task merely left waiting): shown as one
                                           'question' => trim((string) ($needs->askedJson ?? '')) !== ''] : null,
                     'answered' => $answered, 'log' => $log,
+                    // Plan and Fan, step one: how much work, how risky, what waits on what (app\PlanRank)
+                    'rank' => $kids ? \app\PlanRank::rollup(array_map(function ($k) {
+                        $rk = json_decode((string) ($k->rankJson ?? ''), true) ?: [];
+                        return ['id' => (int) $k->id, 'deps' => array_map('intval', (array) (json_decode((string) ($k->dependsOn ?? ''), true) ?: [])),
+                                'effort' => $rk['effort'] ?? null, 'risk' => $rk['risk'] ?? null];
+                    }, $kids)) : null,
                     'follows' => isset($followers[(int) $r->id]) ? ['id' => $followers[(int) $r->id], 'title' => (string) (Bean::load('workbenchtask', $followers[(int) $r->id])->title ?? '')] : null,
                     'trouble' => $trouble ? ['id' => (int) $trouble->id, 'title' => (string) $trouble->title, 'why' => (string) $trouble->errorMessage] : null,
                     'audit' => (string) ($r->auditStatus ?? ''), 'proof' => $proof, 'review' => $review, 'found' => $found,
@@ -2790,6 +2799,7 @@ class Workbench extends BuildControl {
                 'acceptance'    => $acceptance !== '',
                 'type'          => (string) $this->getParam('task_type', 'feature') !== (string) $task->taskType,
                 'priority'      => (int) $this->getParam('priority', 3) !== (int) $task->priority,
+                'risk'          => (int) $this->getParam('rank_risk', 0) > 0 && (int) $this->getParam('rank_risk', 0) !== (int) ((json_decode((string) ($task->rankJson ?? ''), true) ?: [])['risk'] ?? 0),
                 'related_files' => $relatedFiles !== json_encode(array_values(json_decode((string) $task->relatedFiles, true) ?: [])),
                 'tags'          => $tags !== json_encode(array_values(json_decode((string) $task->tags, true) ?: [])),
                 'agent'         => $tenant ? $agent !== (string) ($task->agent ?? '') : false,
@@ -2801,6 +2811,10 @@ class Workbench extends BuildControl {
             $task->description = $description;
             $task->taskType = $this->getParam('task_type', 'feature');
             $task->priority = (int)$this->getParam('priority', 3);
+            // Its risk, as a person sees it (Critical … Minor): wins over the estimate, which is kept beside it (app\PlanRank).
+            $wantRisk = (int) $this->getParam('rank_risk', 0);
+            $rk = json_decode((string) ($task->rankJson ?? ''), true) ?: [];
+            if ($wantRisk >= 1 && $wantRisk <= 5 && $wantRisk !== (int) ($rk['risk'] ?? 0)) $task->rankJson = json_encode(\app\PlanRank::setByPerson($rk, $wantRisk), JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
             $task->authcontrolLevel = \app\GoalBrief::level($audience);
             // The criteria are in the description now; a column of their own would show them twice.
             $task->acceptanceCriteria = '';

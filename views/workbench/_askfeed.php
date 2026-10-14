@@ -23,6 +23,7 @@ $steps = function (array $list, int $show = 7, bool $decomposed = true) use ($h,
             . ($s['mark'] === 'now' ? '<span class="spinner-border spinner-border-sm text-primary flex-shrink-0" style="width:.75rem;height:.75rem" role="status"></span>'
                                     : '<i class="bi bi-' . $icon . ' ' . $tone . ' flex-shrink-0" aria-hidden="true"></i>')
             . '<span class="flex-grow-1" style="min-width:0"><a class="text-reset text-decoration-none' . ($s['mark'] === 'next' ? ' text-body-secondary' : '') . '" href="/workbench/view?id=' . (int) $s['id'] . '">' . $h($s['title']) . '</a>'
+            . (isset($s['risk']) && $s['risk'] !== null ? ' <span class="ask-risk ask-risk-' . (int) $s['risk'] . '" title="' . $h('Risk: ' . \app\PlanRank::LABELS[(int) $s['risk']] . ($s['set_by'] === 'person' ? ' (set by a person)' : '') . (!empty($s['why']) ? ' — ' . implode('; ', $s['why']) : '') . (!empty($s['effort']) ? ' · effort ' . (int) $s['effort'] . ' of 5' : '')) . '">' . $h(\app\PlanRank::LABELS[(int) $s['risk']]) . '</span>' : '')
             . '<span class="visually-hidden"> — ' . $h($say) . '</span>'
             // what its agent is doing right now (filled and kept current by the page: /workbench/askdoing)
             . ($s['mark'] === 'now' ? '<span class="d-block text-body-secondary ask-live" data-live="' . (int) $s['id'] . '" style="font-size:.8rem">Working…</span>' : '')
@@ -92,6 +93,10 @@ $reply = fn(string $body) => '<div class="d-flex mb-4"><div class="ask-reply rou
     .ask-question .ask-question-note{color:var(--bs-warning-text-emphasis);opacity:.8}
     /* once answered it is part of the conversation like anything else */
     .ask-asked{background:var(--bs-tertiary-bg)}
+    /* risk, 1–5: a word on a quiet chip, the colour only as a second cue */
+    .ask-risk{display:inline-block;font-size:.72rem;line-height:1.2;padding:.05rem .4rem;border-radius:.6rem;border:1px solid var(--bs-border-color);color:var(--bs-secondary-color);white-space:nowrap;vertical-align:.08em}
+    .ask-risk-4{border-color:var(--bs-warning);color:var(--bs-warning-text-emphasis)}
+    .ask-risk-5{border-color:var(--bs-danger);color:var(--bs-danger-text-emphasis);font-weight:600}
 </style>
 <?php foreach ($feed['entries'] as $e):
     $id = (int) $e['id'];
@@ -274,7 +279,16 @@ $reply = fn(string $body) => '<div class="d-flex mb-4"><div class="ask-reply rou
         echo '<div class="d-flex mb-2"><div class="ask-reply ask-asked rounded-4 px-3 py-2 border small"><div class="text-body-secondary"><i class="bi bi-chat-dots me-1"></i>Before planning it, I asked:</div>'
            . '<div class="mt-1">' . nl2br($h($qa['q'])) . '</div></div></div>' . $you($qa['a'], 'your answer');
     }
-    echo $reply($follow . $b);
+    // How big and how risky the request is, rolled up from its tasks (app\PlanRank): shown so it can be argued with.
+    $rankLine = '';
+    if (!empty($e['rank']['class'])) {
+        $rk = $e['rank']; $chain = count($rk['path']);
+        $rankLine = '<div class="small text-body-secondary mt-1 ask-rank" title="Effort ' . (int) $rk['total'] . ' in all · the longest chain of tasks that must run one after another is ' . $chain . '">'
+            . '<span class="fw-semibold">' . ucfirst($h($rk['class'])) . '</span>'
+            . ($rk['max_risk'] !== null ? ' · highest risk <span class="ask-risk ask-risk-' . (int) $rk['max_risk'] . '">' . $h(\app\PlanRank::LABELS[(int) $rk['max_risk']]) . '</span>' : '')
+            . ' · ' . (int) $rk['tasks'] . ' task' . ($rk['tasks'] === 1 ? '' : 's') . ($chain > 1 ? ', ' . $chain . ' in a row' : '') . '</div>';
+    }
+    echo $reply($follow . $rankLine . $b);
     // Questions a task put to its person. Answered ones stay, quiet, as part of the conversation;
     // the open one is YELLOW — the one thing on the page that waits on them.
     foreach ($e['answered'] ?? [] as $qa) {

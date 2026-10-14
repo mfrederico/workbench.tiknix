@@ -103,6 +103,21 @@
                                             <?php endforeach; ?>
                                         </select>
                                     </div>
+                                    <?php $__rk = json_decode((string) ($task->rankJson ?? ''), true) ?: []; ?>
+                                    <div class="col-md-6 mb-3">
+                                        <label for="rank_risk" class="form-label">Risk</label>
+                                        <select class="form-select" id="rank_risk" name="rank_risk">
+                                            <?php if (!isset($__rk['risk'])): ?><option value="0" selected>Not scored</option><?php endif; ?>
+                                            <?php foreach (\app\PlanRank::LABELS as $__n => $__label): ?>
+                                                <option value="<?= $__n ?>" <?= (int) ($__rk['risk'] ?? 0) === $__n ? 'selected' : '' ?>><?= $__label ?></option>
+                                            <?php endforeach; ?>
+                                        </select>
+                                        <div class="form-text"><?php
+                                            if (($__rk['set_by'] ?? '') === 'person') echo 'Set by a person' . (isset($__rk['planner']) && $__rk['planner'] !== null ? ' — the planner said ' . htmlspecialchars(\app\PlanRank::LABELS[(int) $__rk['planner']] ?? '?') : '') . '.';
+                                            elseif (!empty($__rk['why'])) echo 'Why: ' . htmlspecialchars(implode('; ', $__rk['why'])) . '.';
+                                            else echo 'How likely it is to go wrong, and how badly.';
+                                        ?></div>
+                                    </div>
                                 </div>
                                 <div class="mb-3">
                                     <label for="related_files" class="form-label">Files to start from</label>
