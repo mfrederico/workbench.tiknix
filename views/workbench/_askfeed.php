@@ -218,6 +218,14 @@ $reply = fn(string $body) => '<div class="d-flex mb-4"><div class="ask-reply rou
                    . '<div class="mt-2">' . $details($id) . '</div>';
                 break;
             }
+            if (!empty($e['budget']['before'])) {   // not started: likely to cost more than its limit (PlanExecutor::budgetPrecheck)
+                $b = '<div class="fw-semibold"><i class="bi bi-pause-circle text-warning me-1"></i>Likely over its spending limit.</div>'
+                   . '<div class="small text-body-secondary">Tasks like these have used about ' . $h(\app\RunStats::tokens((int) $e['budget']['estimate'])) . ' tokens in this project; its agent\'s limit for one request is ' . $h(\app\RunStats::tokens((int) $e['budget']['limit'])) . '. Nothing has started.</div>'
+                   . $steps($e['steps'], 7, empty($e['direct']))
+                   . '<div class="mt-2 d-flex flex-wrap gap-1 align-items-center">' . $btn('btn-primary', 'build', 'play-fill', 'Build anyway', ['plan' => $id])
+                   . '<a class="btn btn-sm btn-link" href="' . $h($e['budget']['limits']) . '" target="_blank" rel="noopener">Change the limit</a>' . $details($id) . '</div>';
+                break;
+            }
             if (!empty($e['budget'])) {   // held at its spending limit: say so, and the two ways on
                 $b = '<div class="fw-semibold"><i class="bi bi-pause-circle text-warning me-1"></i>Paused at its spending limit.</div>'
                    . '<div class="small text-body-secondary">This request has used ' . $h(\app\RunStats::tokens((int) $e['budget']['spent'])) . ' tokens, past its agent\'s limit for one request. Go on, or change the limit first.</div>'

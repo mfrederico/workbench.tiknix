@@ -2113,7 +2113,8 @@ class Workbench extends BuildControl {
                     // to before an older one would also take away everything built since.
                     'undo' => ((int) $r->id === $lastDone && (int) $r->id === $newest) ? (string) ($r->planCheckpoint ?? '') : '',
                     // stopped at its agent's Spend per request (Plan and Fan, step five): what it has used, and where the limit is changed
-                    'budget' => !empty($r->budgetHold) ? ['spent' => array_sum(array_map(function ($k) { $s = json_decode((string) ($k->statsJson ?? ''), true) ?: []; return (int) ($s['input_tokens'] ?? 0) + (int) ($s['output_tokens'] ?? 0); }, $kids)),
+                    'budget' => !empty($r->budgetHold) ? ['before' => (int) $r->budgetHold === 2, 'estimate' => (int) ((json_decode((string) ($r->budgetEstimate ?? ''), true) ?: [])['estimate'] ?? 0),
+                                                         'limit' => (int) ((json_decode((string) ($r->budgetEstimate ?? ''), true) ?: [])['limit'] ?? 0), 'spent' => array_sum(array_map(function ($k) { $s = json_decode((string) ($k->statsJson ?? ''), true) ?: []; return (int) ($s['input_tokens'] ?? 0) + (int) ($s['output_tokens'] ?? 0); }, $kids)),
                                                          'limits' => rtrim((string) Flight::get('sidecar.core_url'), '/') . '/projects/open?id=' . (int) ($this->selected['id'] ?? 0) . '&to=' . rawurlencode('/agents')] : null,
                 ];
             }
