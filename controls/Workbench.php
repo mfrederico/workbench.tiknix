@@ -1463,7 +1463,7 @@ class Workbench extends BuildControl {
         }
         if (!in_array('workbenchtask', Bean::inspect(), true)) { Flight::jsonSuccess(['sig' => 'empty' . ($talk !== '' ? md5($talk) : ''), 'busy' => false]); return; }
         $have = array_keys(Bean::inspect('workbenchtask'));
-        $cols = array_values(array_intersect(['id', 'status', 'plan_status', 'audit_status', 'split_outcome', 'progress_message', 'error_message', 'completed_at', 'needs_planning', 'agent', 'queue_pos'], $have));
+        $cols = array_values(array_intersect(['id', 'status', 'plan_status', 'audit_status', 'split_outcome', 'progress_message', 'error_message', 'completed_at', 'needs_planning', 'agent', 'queue_pos', 'review_json'], $have));
         $one = (int) $this->getParam('task', 0);
         if ($one > 0) {
             $task = Bean::load('workbenchtask', $one);
@@ -2062,7 +2062,9 @@ class Workbench extends BuildControl {
                     $rk = json_decode((string) ($k->rankJson ?? ''), true) ?: [];
                     $steps[] = ['id' => (int) $k->id, 'title' => (string) $k->title, 'mark' => $mark, 'note' => (string) ($k->progressMessage ?? ''),
                                 'risk' => isset($rk['risk']) ? (int) $rk['risk'] : null, 'effort' => isset($rk['effort']) ? (int) $rk['effort'] : null,
-                                'why' => array_values((array) ($rk['why'] ?? [])), 'set_by' => (string) ($rk['set_by'] ?? '')];
+                                'why' => array_values((array) ($rk['why'] ?? [])), 'set_by' => (string) ($rk['set_by'] ?? ''),
+                                // its second reading, when it was risky enough for one (app\TaskReview)
+                                'review' => json_decode((string) ($k->reviewJson ?? ''), true) ?: null];
                 }
                 // What the check afterwards SAW: the audit's screenshots, each under the check it proves,
                 // and its one-line verdict (AuditReporter writes them as comments on the plan and its tasks).
@@ -3065,6 +3067,12 @@ class Workbench extends BuildControl {
                     } else {
                         TmuxManager::kill((string) $sub->agentSession);
                     }
+                }
+                // A review still reading it (Plan and Fan, step three) ends with it.
+                $rv = json_decode((string) ($sub->reviewJson ?? ''), true) ?: [];
+                if (($rv['state'] ?? '') === 'running' && ($ct = $this->tenantInst())) {
+                    try { \app\TenantHost::askDrop($ct, (string) $rv['run']); }
+                    catch (\RuntimeException $e) { $this->logger->error('Purge: could not end the task review', ['run' => (string) $rv['run'], 'error' => $e->getMessage()]); }
                 }
                 $sub->xownTasklogList;
                 $sub->xownTasksnapshotList;

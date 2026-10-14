@@ -24,6 +24,15 @@ $steps = function (array $list, int $show = 7, bool $decomposed = true) use ($h,
                                     : '<i class="bi bi-' . $icon . ' ' . $tone . ' flex-shrink-0" aria-hidden="true"></i>')
             . '<span class="flex-grow-1" style="min-width:0"><a class="text-reset text-decoration-none' . ($s['mark'] === 'next' ? ' text-body-secondary' : '') . '" href="/workbench/view?id=' . (int) $s['id'] . '">' . $h($s['title']) . '</a>'
             . (isset($s['risk']) && $s['risk'] !== null ? ' <span class="ask-risk ask-risk-' . (int) $s['risk'] . '" title="' . $h('Risk: ' . \app\PlanRank::LABELS[(int) $s['risk']] . ($s['set_by'] === 'person' ? ' (set by a person)' : '') . (!empty($s['why']) ? ' — ' . implode('; ', $s['why']) : '') . (!empty($s['effort']) ? ' · effort ' . (int) $s['effort'] . ' of 5' : '')) . '">' . $h(\app\PlanRank::LABELS[(int) $s['risk']]) . '</span>' : '')
+            // its second reading (Plan and Fan, step three): reading now, nothing found, or what it found and the task fixing it
+            . (function ($rv) use ($h) {
+                $st = (string) ($rv['state'] ?? '');
+                if ($st === 'running') return ' <span class="ask-review text-body-secondary" title="Its agent is reading what this task changed against its checks"><i class="bi bi-eye" aria-hidden="true"></i> Reviewing</span>';
+                if ($st === 'passed')  return ' <span class="ask-review text-body-secondary" title="Read a second time: nothing wrong found"><i class="bi bi-check2" aria-hidden="true"></i> Reviewed</span>';
+                if ($st === 'found')   return ' <span class="ask-review text-warning-emphasis" title="' . $h(implode("\n", (array) ($rv['problems'] ?? []))) . '"><i class="bi bi-eye" aria-hidden="true"></i> Review found ' . count((array) ($rv['problems'] ?? [])) . (!empty($rv['fix']) ? ' · <a class="text-reset" href="/workbench/view?id=' . (int) $rv['fix'] . '">fix #' . (int) $rv['fix'] . '</a>' : '') . '</span>';
+                if ($st === 'failed')  return ' <span class="ask-review text-danger-emphasis" title="' . $h((string) ($rv['error'] ?? '')) . '"><i class="bi bi-eye-slash" aria-hidden="true"></i> Not reviewed</span>';
+                return '';
+            })($s['review'] ?? null)
             . '<span class="visually-hidden"> — ' . $h($say) . '</span>'
             // what its agent is doing right now (filled and kept current by the page: /workbench/askdoing)
             . ($s['mark'] === 'now' ? '<span class="d-block text-body-secondary ask-live" data-live="' . (int) $s['id'] . '" style="font-size:.8rem">Working…</span>' : '')
@@ -96,6 +105,7 @@ $reply = fn(string $body) => '<div class="d-flex mb-4"><div class="ask-reply rou
     /* risk, 1–5: a word on a quiet chip, the colour only as a second cue */
     .ask-risk{display:inline-block;font-size:.72rem;line-height:1.2;padding:.05rem .4rem;border-radius:.6rem;border:1px solid var(--bs-border-color);color:var(--bs-secondary-color);white-space:nowrap;vertical-align:.08em}
     .ask-risk-4{border-color:var(--bs-warning);color:var(--bs-warning-text-emphasis)}
+    .ask-review{font-size:.72rem;white-space:nowrap}
     .ask-risk-5{border-color:var(--bs-danger);color:var(--bs-danger-text-emphasis);font-weight:600}
 </style>
 <?php foreach ($feed['entries'] as $e):
