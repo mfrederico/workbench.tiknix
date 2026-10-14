@@ -79,6 +79,9 @@ $__inst = (int) ($selected['id'] ?? 0);
                 <div style="font-size:.75rem">Every request is decomposed into tasks first. Unticked, building starts by itself once that is done; a restore point is kept and Undo brings it back.</div>
             </div>
         </div>
+        <?php /* What they will likely type next (Workbench::conversation's suggest): greyed in the box, Tab takes it;
+                 on a phone, which has no Tab, this one line under the box does. */ ?>
+        <button type="button" class="btn btn-link btn-sm p-0 mt-1 text-body-secondary text-decoration-none text-start text-truncate d-block d-md-none w-100" id="ask-suggest" hidden></button>
         <div class="d-flex align-items-center gap-2 small text-body-secondary" id="ask-status">
             <span id="ask-msg" class="ms-auto text-truncate" role="status"></span>
             <a id="ask-fix" class="btn btn-sm btn-warning flex-shrink-0 d-none" target="_blank" rel="noopener" href="#"><i class="bi bi-cpu me-1"></i>Connect an agent</a>
@@ -107,6 +110,21 @@ $__inst = (int) ($selected['id'] ?? 0);
             mailBtn.closest('.d-flex').after(s); mailBtn.textContent = 'Sent';
         }).catch(function(e){ mailBtn.disabled = false; mailBtn.textContent = 'Ask by email'; say(e.message, true); });
     });
+    // The next message, guessed (greyed in the empty box; Tab or a tap takes it; typing ignores it).
+    var hintBtn = document.getElementById('ask-suggest'), PLAIN = box.getAttribute('placeholder'), hint = '';
+    function suggest(){
+        var s = document.getElementById('ask-state');
+        hint = (s && s.dataset.suggest) || '';
+        var show = hint !== '' && box.value === '';
+        box.setAttribute('placeholder', show ? hint + (window.matchMedia('(min-width: 768px)').matches ? '   ⇥ Tab' : '') : PLAIN);
+        hintBtn.hidden = !show;
+        if (show) hintBtn.innerHTML = '<i class="bi bi-arrow-return-right me-1" aria-hidden="true"></i>' + hint.replace(/[&<>"]/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; });
+    }
+    function takeHint(){ if (!hint) return; box.value = hint; hint = ''; hintBtn.hidden = true; box.setAttribute('placeholder', PLAIN); box.focus(); box.dispatchEvent(new Event('input')); }
+    box.addEventListener('keydown', function(e){ if (e.key === 'Tab' && !e.shiftKey && box.value === '' && hint) { e.preventDefault(); takeHint(); } });
+    box.addEventListener('input', function(){ if (box.value !== '') { hintBtn.hidden = true; box.setAttribute('placeholder', PLAIN); } else suggest(); });
+    hintBtn.addEventListener('click', takeHint);
+    suggest();
     function atBottom(){ return window.innerHeight + window.scrollY >= document.body.scrollHeight - 160; }
     function redraw(stick){
         // someone is typing a change into a reply: redrawing now would throw their words away
@@ -115,7 +133,7 @@ $__inst = (int) ($selected['id'] ?? 0);
         var was = atBottom();
         return fetch('/workbench/askfeed', {credentials: 'same-origin', headers: {'X-Requested-With': 'XMLHttpRequest'}})
             .then(function(r){ if (!r.ok) throw new Error('HTTP ' + r.status); return r.text(); })
-            .then(function(html){ feed.innerHTML = html; paintLive();
+            .then(function(html){ feed.innerHTML = html; paintLive(); suggest();
                 // "Reading it…" under the box has been answered above: it is no longer true
                 if (/^(Reading it…|Sending it to be built…)$/.test(msg.textContent) && !feed.querySelector('.ask-reading')) say(''); if (stick || was) window.scrollTo(0, document.body.scrollHeight); if (feed.querySelector('.ask-live')) live(); });
     }

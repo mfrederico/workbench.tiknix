@@ -2162,6 +2162,17 @@ class Workbench extends BuildControl {
                                  'act' => $t['state'] === 'action' ? (json_decode($t['answer'], true) ?: []) : []];
         }
         usort($out['entries'], fn($a, $b) => strcmp((string) $a['at'], (string) $b['at']));
+        // What they will likely type next, greyed in the box (Tab takes it): from the newest exchange only —
+        // an answer's own guess, or after a finished build what its check said needs fixing. Never older than that.
+        $out['suggest'] = '';
+        $last = $out['entries'] ? end($out['entries']) : null;
+        if ($last && ($last['kind'] ?? '') === 'talk' && $last['state'] === 'answer') {
+            foreach (\app\AskTriage::talk((int) $this->member->id, $tag) as $t) if ($t['id'] === $last['id']) $out['suggest'] = (string) ($t['next'] ?? '');
+        } elseif ($last && !empty($last['plan']) && $last['state'] === 'done') {
+            $f = \app\WorkbenchDb::dirOf($slug, (string) ($this->selected['app'] ?? '')) . '/.aibuilder/audit.json';
+            $m = is_file($f) ? json_decode((string) file_get_contents($f), true) : null;
+            if (is_array($m) && (int) ($m['plan_id'] ?? 0) === (int) $last['id']) $out['suggest'] = \app\AskTriage::nextAfterCheck($m);
+        }
         return $out;
     }
 

@@ -363,4 +363,4 @@ endforeach; ?>
     <div class="small">Say it in your own words. Tiknix works out the steps, builds them, and shows you the result here.</div>
 </div>
 <?php endif; ?>
-<span id="ask-state" data-planning="<?= $feed['planning'] ? 1 : 0 ?>" hidden></span>
+<span id="ask-state" data-planning="<?= $feed['planning'] ? 1 : 0 ?>" data-suggest="<?= htmlspecialchars((string) ($feed['suggest'] ?? '')) ?>" hidden></span>
