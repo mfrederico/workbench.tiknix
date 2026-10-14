@@ -2094,11 +2094,17 @@ class Workbench extends BuildControl {
                                           'question' => trim((string) ($needs->askedJson ?? '')) !== ''] : null,
                     'answered' => $answered, 'log' => $log,
                     // Plan and Fan, step one: how much work, how risky, what waits on what (app\PlanRank)
-                    'rank' => $kids ? \app\PlanRank::rollup(array_map(function ($k) {
-                        $rk = json_decode((string) ($k->rankJson ?? ''), true) ?: [];
-                        return ['id' => (int) $k->id, 'deps' => array_map('intval', (array) (json_decode((string) ($k->dependsOn ?? ''), true) ?: [])),
-                                'effort' => $rk['effort'] ?? null, 'risk' => $rk['risk'] ?? null];
-                    }, $kids)) : null,
+                    'rank' => $kids ? (function () use ($kids, &$learned) {
+                        $rt = array_map(function ($k) {
+                            $rk = json_decode((string) ($k->rankJson ?? ''), true) ?: [];
+                            return ['id' => (int) $k->id, 'deps' => array_map('intval', (array) (json_decode((string) ($k->dependsOn ?? ''), true) ?: [])),
+                                    'effort' => $rk['effort'] ?? null, 'risk' => $rk['risk'] ?? null];
+                        }, $kids);
+                        $roll = \app\PlanRank::rollup($rt);
+                        // step four: the least it can take HERE — its chain of tasks at this project's own medians (app\PlanLearn)
+                        $learned ??= \app\PlanLearn::learn(\app\PlanLearn::rows(\app\WorkbenchDb::dirOf((string) $this->selected['slug'], (string) ($this->selected['app'] ?? ''))));
+                        return $roll + ['floor' => \app\PlanLearn::floor($roll['path'], $rt, $learned)];
+                    })() : null,
                     'follows' => isset($followers[(int) $r->id]) ? ['id' => $followers[(int) $r->id], 'title' => (string) (Bean::load('workbenchtask', $followers[(int) $r->id])->title ?? '')] : null,
                     'trouble' => $trouble ? ['id' => (int) $trouble->id, 'title' => (string) $trouble->title, 'why' => (string) $trouble->errorMessage] : null,
                     'audit' => (string) ($r->auditStatus ?? ''), 'proof' => $proof, 'review' => $review, 'found' => $found,

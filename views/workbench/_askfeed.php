@@ -296,7 +296,11 @@ $reply = fn(string $body) => '<div class="d-flex mb-4"><div class="ask-reply rou
         $rankLine = '<div class="small text-body-secondary mt-1 ask-rank" title="Effort ' . (int) $rk['total'] . ' in all · the longest chain of tasks that must run one after another is ' . $chain . '">'
             . '<span class="fw-semibold">' . ucfirst($h($rk['class'])) . '</span>'
             . ($rk['max_risk'] !== null ? ' · highest risk <span class="ask-risk ask-risk-' . (int) $rk['max_risk'] . '">' . $h(\app\PlanRank::LABELS[(int) $rk['max_risk']]) . '</span>' : '')
-            . ' · ' . (int) $rk['tasks'] . ' task' . ($rk['tasks'] === 1 ? '' : 's') . ($chain > 1 ? ', ' . $chain . ' in a row' : '') . '</div>';
+            . ' · ' . (int) $rk['tasks'] . ' task' . ($rk['tasks'] === 1 ? '' : 's') . ($chain > 1 ? ', ' . $chain . ' in a row' : '')
+            // what tasks like these have really taken in this project (app\PlanLearn), while it is still to be built
+            . (!empty($rk['floor']) && !in_array((string) $e['state'], ['done', 'completed', 'attention', 'stalled'], true)
+                ? ' · <span title="Its longest chain of tasks, at what tasks of the same effort have taken in this project">at least ' . $h(\app\RunStats::duration((int) $rk['floor'])) . ' here</span>' : '')
+            . '</div>';
     }
     echo $reply($follow . $rankLine . $b);
     // Questions a task put to its person. Answered ones stay, quiet, as part of the conversation;
