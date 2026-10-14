@@ -261,6 +261,7 @@ $__inst = (int) ($selected['id'] ?? 0);
             else if (act === 'fix')      j = await post('/workbench/askfix', {id: b.getAttribute('data-task')});
             else if (act === 'unqueue')  j = await post('/workbench/promptunqueue', {prompt_id: b.getAttribute('data-prompt')});
             else if (act === 'askas')    j = await post('/workbench/askas', {prompt_id: b.getAttribute('data-prompt'), as: b.getAttribute('data-as')});
+            else if (act === 'askdo')    j = await post('/workbench/askdo', {prompt_id: b.getAttribute('data-prompt')});
             else if (act === 'asknote')  j = await post('/workbench/asknote', {prompt_id: b.getAttribute('data-prompt')});
             else if (act === 'doact') {
                 // what a typed message asked the board to do: the same request the board's own button makes, then said as done
@@ -278,7 +279,7 @@ $__inst = (int) ($selected['id'] ?? 0);
             say((j && j.message) || '');
             if (act === 'undo') await tkAlert((j && j.message) || 'Undone.');
             // what was pressed has started something: show it, at the bottom, where a new request shows
-            await redraw(act === 'fix' || act === 'go' || act === 'build' || act === 'askas' || act === 'doact');
+            await redraw(act === 'fix' || act === 'go' || act === 'build' || act === 'askas' || act === 'doact' || act === 'askdo');
             if (act === 'asknote') await redraw();   // its link becomes "In the notebook", where it is
         } catch (err) { say(err.message, true); b.disabled = false; }
     });

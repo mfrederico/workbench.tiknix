@@ -1687,6 +1687,17 @@ class Workbench extends BuildControl {
     }
 
     /**
+     * POST /workbench/askdo — Do it: run the action on the app's records that Ask wrote for this
+     * message (app\AskOperation), once, after a restore point. A project admin only. JSON.
+     */
+    public function askdo($params = []) {
+        if (!$this->planActionGuard()) return;
+        $r = \app\AskTriage::doIt((int) $this->getParam('prompt_id', 0), (int) $this->member->id);
+        if (!$r['ok']) { Flight::jsonError($r['text'], 409); return; }
+        Flight::jsonSuccess([], 'Done.');
+    }
+
+    /**
      * POST /workbench/askdid — the action a typed message asked for has been carried out (the page
      * ran the same request the board's own button makes, as this person): the message becomes
      * what was done, in the conversation. JSON.
@@ -1734,7 +1745,7 @@ class Workbench extends BuildControl {
         $p = $id > 0 ? \app\PromptLog::find($id, (int) $this->member->id) : null;
         if (!$p) { Flight::jsonError('No such message.', 404); return; }
         $mine = array_column(\app\AskTriage::talk((int) $this->member->id, (string) $p['instance_tag'], 200), 'state', 'id');
-        if (!in_array($mine[$id] ?? '', ['answer', 'unsure', 'failed', 'action'], true)) { Flight::jsonError('That message is already being handled.', 409); return; }
+        if (!in_array($mine[$id] ?? '', ['answer', 'unsure', 'failed', 'action', 'operation'], true)) { Flight::jsonError('That message is already being handled.', 409); return; }
         // "Not that": it was read as an action on the list, and the person says it is not — they choose what it is.
         if ($as === 'notthat') {
             \app\AskTriage::mark($id, 'unsure', 'Then what should I do with it?');
@@ -2157,7 +2168,7 @@ class Workbench extends BuildControl {
                                  'answer' => $t['state'] === 'answer' ? \app\AskTriage::linkPages(\app\MarkdownParser::parseSafe($t['answer']),
                                                  rtrim((string) Flight::get('sidecar.core_url'), '/') . '/projects/open?id=' . $instId . '&to=')
                                              : htmlspecialchars($t['answer']),
-                                 'note' => $t['note'], 'noted' => $t['noted'],
+                                 'note' => $t['note'], 'noted' => $t['noted'], 'op' => (string) ($t['op'] ?? ''),
                                  // what it asks the board to do, and to which item (app\AskTriage::act)
                                  'act' => $t['state'] === 'action' ? (json_decode($t['answer'], true) ?: []) : []];
         }

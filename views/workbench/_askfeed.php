@@ -130,7 +130,18 @@ $reply = fn(string $body) => '<div class="d-flex mb-4"><div class="ask-reply rou
             continue;
         }
         if ($e['state'] === 'did') {
-            echo $reply('<div class="text-body-secondary"><i class="bi bi-check-lg text-success me-1"></i>' . $e['answer'] . '</div>');
+            echo $reply('<div class="text-body-secondary"><i class="bi bi-check-lg text-success me-1"></i>' . nl2br($e['answer']) . '</div>');
+            continue;
+        }
+        if ($e['state'] === 'operation') {
+            // Something to do to the app's records (app\AskOperation): said in words, the code folded away, nothing run until Do it.
+            echo '<div class="d-flex mb-4"><div class="ask-reply ask-question rounded-4 px-3 py-2">'
+               . '<div class="fw-semibold"><i class="bi bi-database-gear me-1"></i>Do this to your app\'s data?</div>'
+               . '<div class="mt-1">' . nl2br($e['answer']) . '</div>'
+               . '<details class="small mt-2"><summary class="text-body-secondary">What it will run</summary><pre class="small mt-1 mb-0" style="white-space:pre-wrap">' . $h((string) ($e['op'] ?? '')) . '</pre></details>'
+               . '<div class="mt-2 d-flex flex-wrap gap-2">' . $btn('btn-primary', 'askdo', 'play-fill', 'Do it', $pid)
+               . $btn('btn-outline-secondary', 'askas', 'x-lg', 'Not that', $pid + ['as' => 'notthat']) . '</div>'
+               . '<div class="small mt-1 ask-question-note">A restore point is taken first. Nothing in the app\'s code changes.</div></div></div>';
             continue;
         }
         if ($e['state'] === 'action') {
