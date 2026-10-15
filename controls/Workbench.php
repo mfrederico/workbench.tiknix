@@ -2173,6 +2173,16 @@ class Workbench extends BuildControl {
                                  'act' => $t['state'] === 'action' ? (json_decode($t['answer'], true) ?: []) : []];
         }
         usort($out['entries'], fn($a, $b) => strcmp((string) $a['at'], (string) $b['at']));
+        // Each waiting request names the one it waits for, in that person's words (128 characters): the one
+        // being planned or built now for the first, then each the one queued before it.
+        $said = fn(string $t) => mb_strimwidth(trim((string) preg_replace('/\s+/', ' ', $t)), 0, 128, '…');
+        $ahead = '';
+        if ($out['planning']) $ahead = $said((string) (($out['planning']['asked'] ?? '') ?: ($out['planning']['title'] ?? '')));
+        foreach (array_reverse($out['entries']) as $e) if ($ahead === '' && !empty($e['plan']) && in_array($e['state'], ['building', 'queued'], true)) $ahead = $said((string) ($e['asked'] ?: $e['title']));
+        foreach ($out['waiting'] as $i => $w) {
+            $out['waiting'][$i]['ahead'] = $ahead;
+            $ahead = $said(trim(\app\AskTriage::splitAsked(trim(\app\GoalBrief::split((string) $w['body'])['goal']))['said']) ?: (string) $w['title']);
+        }
         // What they will likely type next, greyed in the box (Tab takes it): from the newest exchange only —
         // an answer's own guess, or after a finished build what its check said needs fixing. Never older than that.
         $out['suggest'] = '';

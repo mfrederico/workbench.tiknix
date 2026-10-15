@@ -354,6 +354,7 @@ endforeach; ?>
     $__text = $__cut !== false ? rtrim(substr($__said, 0, $__cut)) : $__said; ?>
     <?= $you($__said, '') ?>
     <?= $reply('<div class="fw-semibold"><i class="bi bi-hourglass-split me-1 text-info"></i>Waiting for the request before it.</div>'
+        . (($w['ahead'] ?? '') !== '' ? '<div class="small text-body-secondary fst-italic mb-1">“' . $h($w['ahead']) . '”</div>' : '')
         . '<div class="small text-body-secondary">It starts by itself when that one is in the app, so it builds on it. Until then you can change what it says.</div>'
         . '<div class="mt-2 d-flex flex-wrap gap-2">' . $btn('btn-outline-primary', 'editq', 'pencil', 'Edit') . $btn('btn-outline-secondary', 'unqueue', 'x-lg', 'Remove', ['prompt' => (int) $w['id']]) . '</div>'
         . '<form class="ask-edit mt-2" data-prompt="' . (int) $w['id'] . '" hidden>'
