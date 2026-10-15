@@ -354,11 +354,14 @@ endforeach; ?>
     $__text = $__cut !== false ? rtrim(substr($__said, 0, $__cut)) : $__said; ?>
     <?= $you($__said, '') ?>
     <?= $reply('<div class="fw-semibold"><i class="bi bi-hourglass-split me-1 text-info"></i>Waiting for the request before it.</div>'
-        . (($w['ahead'] ?? '') !== '' ? '<div class="small text-body-secondary fst-italic mb-1">“' . $h($w['ahead']) . '”</div>' : '')
+        . (($w['ahead'] ?? '') !== '' ? '<div class="small text-body-secondary mb-1">Next after: <span class="fst-italic">“' . $h($w['ahead']) . '”</span></div>' : '')
         . '<div class="small text-body-secondary">It starts by itself when that one is in the app, so it builds on it. Until then you can change what it says.</div>'
         . '<div class="mt-2 d-flex flex-wrap gap-2">' . $btn('btn-outline-primary', 'editq', 'pencil', 'Edit') . $btn('btn-outline-secondary', 'unqueue', 'x-lg', 'Remove', ['prompt' => (int) $w['id']]) . '</div>'
         . '<form class="ask-edit mt-2" data-prompt="' . (int) $w['id'] . '" hidden>'
         . '<textarea class="form-control form-control-sm" name="message" rows="5" aria-label="What this request says">' . $h($__text) . '</textarea>'
+        // the planner's questions and the answers already given: part of the request, kept when it is changed
+        . implode('', array_map(fn($qa) => '<div class="small text-body-secondary mt-2"><span class="fw-semibold">Kept with it —</span> asked: ' . $h(mb_strimwidth((string) $qa['q'], 0, 160, '…')) . '<br>your answer: ' . $h((string) $qa['a']) . '</div>',
+              \app\AskTriage::splitAsked(trim(\app\GoalBrief::split((string) $w['body'])['goal']))['qa']))
         . '<div class="mt-2 d-flex gap-2"><button class="btn btn-sm btn-primary" type="submit"><i class="bi bi-check-lg me-1"></i>Save the change</button>'
         . '<button class="btn btn-sm btn-link text-body-secondary" type="button" data-cancel>Cancel</button></div></form>') ?>
 <?php endforeach; ?>
