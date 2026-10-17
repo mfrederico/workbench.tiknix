@@ -199,6 +199,18 @@ $reply = fn(string $body) => '<div class="d-flex mb-4"><div class="ask-reply rou
                 . ($rv['said'] !== '' ? '<div class="ask-said ask-report small border-start border-3 ps-2 mt-2">' . \app\MarkdownParser::parseSafe($rv['said']) . '</div>' : '')
                 . ($e['can_approve'] ? '<div class="mt-2 d-flex flex-wrap gap-1 align-items-center">' . $btn('btn-success', 'approve', 'check-lg', 'Put it in my app', ['task' => $id]) . $btn('btn-outline-secondary', 'decline', 'x-lg', 'Discard it', ['task' => $id]) . $details($id) . '</div>' : '')
                 . $answer($id, 'solo', 'Or say what to change, and it builds it again…', 'Build again');
+        } elseif (($fx = $fd['fix'] ?? null) !== null) {
+            // Its fix, followed to the end (Workbench::fixState): the Fix it button becomes where that fix stands.
+            $to = $fx['id'] > 0 ? ' <a class="text-reset" href="#ask-r' . (int) $fx['id'] . '" title="' . $h($fx['title']) . '">request #' . (int) $fx['id'] . '</a>' : '';
+            $again = $btn('btn-outline-primary', 'fix', 'wrench-adjustable', 'Try the fix again', ['task' => $id]);
+            $b .= '<div class="mt-2 d-flex flex-wrap gap-2 align-items-center ask-fix ask-fix-' . $h($fx['state']) . '">' . match ($fx['state']) {
+                'planning' => '<span class="d-inline-flex align-items-center gap-2 fw-semibold"><span class="spinner-border spinner-border-sm text-primary" role="status"></span>Planning a fix…</span>',
+                'building' => '<span class="d-inline-flex align-items-center gap-2 fw-semibold"><span class="spinner-border spinner-border-sm text-primary" role="status"></span>Being fixed by' . $to . '</span>',
+                'fixed'    => '<span class="badge rounded-pill text-bg-success fs-6 fw-semibold px-3 py-2"><i class="bi bi-check-circle-fill me-1"></i>Fixed!</span>'
+                            . '<span class="small text-body-secondary">by' . $to . ($fx['checked'] ? ' · checked in a browser' : '') . ($when($fx['at']) !== '' ? ' · ' . $h($when($fx['at'])) : '') . '</span>',
+                'unchecked'=> '<span class="small fw-semibold"><i class="bi bi-exclamation-triangle-fill text-warning me-1"></i>The fix in' . $to . ' was built, but the check afterwards still found something.</span>' . $again,
+                default    => '<span class="small fw-semibold"><i class="bi bi-exclamation-triangle-fill text-danger me-1"></i>The fix in' . $to . ' stopped before it was done.</span>' . $again,
+            } . $details($id) . '</div>';
         } else {
             if ($st === 'running') {
                 $b .= '<hr class="my-2"><div class="fw-semibold d-flex align-items-center gap-2"><span class="spinner-border spinner-border-sm text-primary" role="status"></span>Building a fix…</div>'
@@ -329,7 +341,7 @@ $reply = fn(string $body) => '<div class="d-flex mb-4"><div class="ask-reply rou
                 ? ' · <span title="Its longest chain of tasks, at what tasks of the same effort have taken in this project">at least ' . $h(\app\RunStats::duration((int) $rk['floor'])) . ' here</span>' : '')
             . '</div>';
     }
-    echo $reply($follow . $rankLine . $b);
+    echo '<span class="ask-anchor" id="ask-r' . (int) $id . '"></span>' . $reply($follow . $rankLine . $b);
     // Questions a task put to its person. Answered ones stay, quiet, as part of the conversation;
     // the open one is YELLOW — the one thing on the page that waits on them.
     foreach ($e['answered'] ?? [] as $qa) {

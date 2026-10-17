@@ -1767,7 +1767,7 @@ class Workbench extends BuildControl {
      * when its plan lands. Such a request is not queued while the project is busy: the queue
      * does not carry what it replaces, so it is refused with the reason and asked again.
      */
-    private function askPlan(object $instance, string $goal, string $title, bool $review, array $supersede = []): void {
+    private function askPlan(object $instance, string $goal, string $title, bool $review, array $supersede = []): bool {
         $slug = (string) $instance->slug;
         $app  = $instance->app ?: 'tiknix';
         $dir  = \app\WorkbenchDb::dirOf($slug, $app);
@@ -1787,7 +1787,7 @@ class Workbench extends BuildControl {
         // and not a request whose tasks are to be shown first: nothing starts those unattended.
         if (!$supersede && !$review && ($busy = \app\BuildQueue::busyWith($dir, $slug)) !== '' && $promptId > 0 && \app\PromptQueue::enqueue($promptId, true)) {
             Flight::jsonSuccess(['state' => 'waiting'], "Got it. {$busy} — this one starts by itself when that is in the app, so it builds on it.");
-            return;
+            return true;
         }
         try {
             $runner = new PlanRunner($slug, $dir, (int) $this->member->id, (int) $this->member->level, (string) ($instance->engine ?: \app\EngineRegistry::defaultEngine()));
@@ -1798,13 +1798,14 @@ class Workbench extends BuildControl {
         } catch (\Throwable $e) {
             if (!$supersede && $promptId > 0 && \app\PromptQueue::enqueue($promptId, !$review)) {
                 Flight::jsonSuccess(['state' => 'waiting'], 'Got it. The project is busy with an earlier request — this one starts by itself when that is planned.');
-                return;
+                return true;
             }
             $this->logger->error('Workbench ask: the planner did not start', ['error' => $e->getMessage(), 'instance' => $slug]);
             Flight::jsonError($supersede ? 'The project is busy decomposing another request right now (' . $e->getMessage() . '). Press it again when that is done.' : 'This could not start: ' . $e->getMessage(), $supersede ? 409 : 500);
-            return;
+            return false;
         }
         Flight::jsonSuccess(['state' => 'planning'], $review ? 'Decomposing it into tasks — they appear here for you to start.' : 'Decomposing it into tasks, then building them.');
+        return true;
     }
 
     /**
@@ -1841,7 +1842,10 @@ class Workbench extends BuildControl {
         $task = Bean::load('workbenchtask', (int) $this->getParam('id', 0));
         if (!$task->id || !$this->access->canRun((int) $this->member->id, $task)) { Flight::jsonError('No such task', 404); return; }
         if ((string) ($task->source ?? '') !== 'detected_error' || !empty($task->parentTaskId)) { Flight::jsonError('That is not a problem Tiknix found.', 409); return; }
-        if (!in_array((string) $task->status, ['pending', 'failed'], true)) { Flight::jsonError('A fix for this is already ' . ((string) $task->status === 'running' ? 'being built' : (string) $task->status) . '.', 409); return; }
+        // Open, or its fix stopped (the plan that was fixing it ended without fixing it): it may be fixed (again).
+        $again = (string) $task->status === 'resolved' && ($fx = $this->fixState($task)) !== null && in_array($fx['state'], ['stopped', 'unchecked'], true);
+        if (!$again && !in_array((string) $task->status, ['pending', 'failed'], true)) { Flight::jsonError('A fix for this is already ' . ((string) $task->status === 'running' ? 'being built' : ((string) $task->status === 'resolved' ? 'under way' : (string) $task->status)) . '.', 409); return; }
+        if ((int) ($task->fixAskedAt ?? 0) > time() - self::FIX_PLANNING_SECONDS && !$again) { Flight::jsonError('A fix for this is being planned now.', 409); return; }
         $instance = $this->selected ? $this->access->instanceMeta((int) $this->selected['id']) : null;
         if (!$instance || !$instance->id || (int) $task->instanceId !== (int) $instance->id) { Flight::jsonError('That problem belongs to another project.', 409); return; }
         $tenant = \app\TenantBuilder::bySlug((string) $instance->slug);
@@ -1859,7 +1863,31 @@ class Workbench extends BuildControl {
               . "\n\nFind the cause before changing anything, fix that, and give the task a check in its `verify` that would have caught this."
               . " The task that fixes it must write the CAUSE as a `- lesson:` in its `## Notebook` section — what went wrong and how to avoid it, in one sentence — so the next build does not make it again.";
         \app\ToolUse::record('builder.ask', (int) $this->member->id, ['review' => false, 'fix' => true], (int) $instance->id);
-        $this->askPlan($instance, \app\GoalBrief::compose($said, 'none', ''), mb_substr('Fix: ' . $what, 0, 90), false, [(int) $task->id]);
+        // Pressed: the button says "Planning a fix…" until its plan lands (plan-ingest links it, fixed_by).
+        $task->fixAskedAt = time(); Bean::store($task);
+        if (!$this->askPlan($instance, \app\GoalBrief::compose($said, 'none', ''), mb_substr('Fix: ' . $what, 0, 90), false, [(int) $task->id])) {
+            $task->fixAskedAt = 0; Bean::store($task);       // it did not start: the button comes back
+        }
+    }
+
+    /** How long "Planning a fix…" stands in for the button before it is offered again (a planner that never landed). */
+    private const FIX_PLANNING_SECONDS = 1800;
+
+    /**
+     * Where the fix of a found problem stands, from the plan fixing it (fixed_by, set when that plan
+     * landed): null when none was asked for. state: planning | building | fixed | unchecked (built,
+     * but its check found something) | stopped. at: when it was fixed.
+     */
+    private function fixState(object $task): ?array {
+        $plan = (int) ($task->fixedBy ?? 0);
+        if ($plan <= 0) return (int) ($task->fixAskedAt ?? 0) > time() - self::FIX_PLANNING_SECONDS ? ['state' => 'planning', 'id' => 0, 'title' => '', 'at' => ''] : null;
+        $p = Bean::load('workbenchtask', $plan);
+        if (!$p->id) return ['state' => 'stopped', 'id' => $plan, 'title' => 'a request that was removed', 'at' => ''];
+        $ps = (string) $p->planStatus;
+        $state = $ps === 'done' ? ((string) ($p->auditStatus ?? '') === 'failed' ? 'unchecked' : 'fixed')
+               : (in_array($ps, ['attention', 'stalled'], true) ? 'stopped' : 'building');
+        return ['state' => $state, 'id' => (int) $p->id, 'title' => (string) $p->title, 'checked' => (string) ($p->auditStatus ?? '') === 'passed',
+                'at' => (string) ($p->completedAt ?: $p->updatedAt ?: '')];
     }
 
     private const ASK_FILES_MAX = 5;
@@ -2107,7 +2135,7 @@ class Workbench extends BuildControl {
                 if (!$isPlan && in_array((string) $r->status, ['awaiting', 'completed'], true)) $review = $this->askReview($r);
                 // Not something the person typed: a problem Tiknix found itself (the check after a build,
                 // or an error on the live app) and filed as a task. Said as that, readable, with its pictures.
-                $found = (string) ($r->source ?? '') === 'detected_error' ? $this->askFound((string) $r->description) : null;
+                $found = (string) ($r->source ?? '') === 'detected_error' ? $this->askFound((string) $r->description) + ['fix' => $this->fixState($r)] : null;
                 $ps = (string) $r->planStatus;
                 $state = !$isPlan ? ('task-' . (string) $r->status)
                        : ((int) ($r->queuePos ?? 0) > 0 && in_array($ps, ['approved', 'stalled'], true) ? 'queued' : ($ps !== '' ? $ps : 'draft'));

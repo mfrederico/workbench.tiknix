@@ -9,6 +9,7 @@ $__inst = (int) ($selected['id'] ?? 0);
     .ask-wrap{max-width:46rem;margin:0 auto;padding:1rem 1rem 10rem}
     .ask-you{max-width:85%;background:var(--bs-primary);color:#fff;overflow-wrap:anywhere}
     .ask-reply{max-width:92%;min-width:min(22rem,92%);overflow-wrap:anywhere}
+    .ask-anchor{display:block;scroll-margin-top:6rem}
     .ask-steps li{padding:.1rem 0}
     .ask-shot img{transition:transform .12s ease, box-shadow .12s ease}
     .ask-shot:hover img,.ask-shot:focus-visible img{transform:scale(1.04);box-shadow:0 .25rem .75rem rgba(0,0,0,.35)}
