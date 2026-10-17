@@ -1842,31 +1842,90 @@ class Workbench extends BuildControl {
         $task = Bean::load('workbenchtask', (int) $this->getParam('id', 0));
         if (!$task->id || !$this->access->canRun((int) $this->member->id, $task)) { Flight::jsonError('No such task', 404); return; }
         if ((string) ($task->source ?? '') !== 'detected_error' || !empty($task->parentTaskId)) { Flight::jsonError('That is not a problem Tiknix found.', 409); return; }
-        // Open, or its fix stopped (the plan that was fixing it ended without fixing it): it may be fixed (again).
-        $again = (string) $task->status === 'resolved' && ($fx = $this->fixState($task)) !== null && in_array($fx['state'], ['stopped', 'unchecked'], true);
-        if (!$again && !in_array((string) $task->status, ['pending', 'failed'], true)) { Flight::jsonError('A fix for this is already ' . ((string) $task->status === 'running' ? 'being built' : ((string) $task->status === 'resolved' ? 'under way' : (string) $task->status)) . '.', 409); return; }
-        if ((int) ($task->fixAskedAt ?? 0) > time() - self::FIX_PLANNING_SECONDS && !$again) { Flight::jsonError('A fix for this is being planned now.', 409); return; }
-        $instance = $this->selected ? $this->access->instanceMeta((int) $this->selected['id']) : null;
-        if (!$instance || !$instance->id || (int) $task->instanceId !== (int) $instance->id) { Flight::jsonError('That problem belongs to another project.', 409); return; }
-        $tenant = \app\TenantBuilder::bySlug((string) $instance->slug);
-        if (!$tenant) { Flight::jsonError("{$instance->slug} is not running in its own container yet, so nothing can be built in it.", 409); return; }
-        if ($why = $this->tenantAgentProblem($tenant, '')) { Flight::jsonError('This project has no working AI agent right now, so nothing can be built: ' . $why . '.', 409); return; }
+        if (($why = $this->fixRefusal($task)) !== '') { Flight::jsonError($why, 409); return; }
+        if (!($instance = $this->fixInstance())) return;
+        if ((int) $task->instanceId !== (int) $instance->id) { Flight::jsonError('That problem belongs to another project.', 409); return; }
 
+        [$what, $about] = $this->fixBrief($task);
+        $said = "Fix this problem, which Tiknix found: {$what}{$about}\n\n" . self::FIX_HOW;
+        $this->fixStart($instance, $said, 'Fix: ' . $what, [$task]);
+    }
+
+    /**
+     * POST /workbench/askfixall — "Fix all": every open problem Tiknix found in this project, as ONE
+     * request (the project plans one request at a time, so N presses would be refused while the
+     * first plans). Its planner decides how many tasks they make; each problem then follows that
+     * one request to Fixed! (fixed_by). At most FIX_ALL_MAX, newest first. JSON.
+     */
+    public function askfixall($params = []) {
+        if (!$this->planActionGuard()) return;
+        if (!$this->requireAgent(true)) return;
+        if (!($instance = $this->fixInstance())) return;
+        $open = array_slice($this->openFound((int) $instance->id), 0, self::FIX_ALL_MAX);
+        if (!$open) { Flight::jsonError('There is no open problem to fix.', 409); return; }
+        if (count($open) === 1) {
+            [$what, $about] = $this->fixBrief($open[0]);
+            $this->fixStart($instance, "Fix this problem, which Tiknix found: {$what}{$about}\n\n" . self::FIX_HOW, 'Fix: ' . $what, $open);
+            return;
+        }
+        $said = 'Fix these ' . count($open) . " problems, which Tiknix found. Some may share a cause — find the causes first, and fix each cause once.\n";
+        foreach ($open as $i => $t) { [$what, $about] = $this->fixBrief($t); $said .= "\n## " . ($i + 1) . ". {$what}{$about}\n"; }
+        $this->fixStart($instance, $said . "\n" . self::FIX_HOW, 'Fix ' . count($open) . ' problems Tiknix found', $open);
+    }
+
+    /** Most problems one "Fix all" takes: a request the planner can still read whole. */
+    private const FIX_ALL_MAX = 8;
+
+    private const FIX_HOW = "Find the cause before changing anything, fix that, and give the task a check in its `verify` that would have caught this."
+        . " The task that fixes it must write the CAUSE as a `- lesson:` in its `## Notebook` section — what went wrong and how to avoid it, in one sentence — so the next build does not make it again.";
+
+    /** '' when this found problem may be fixed now, else why not. */
+    private function fixRefusal(object $task): string {
+        // Open, or its fix stopped (the plan that was fixing it ended without fixing it): it may be fixed (again).
+        $fx = $this->fixState($task);
+        $again = (string) $task->status === 'resolved' && $fx !== null && in_array($fx['state'], ['stopped', 'unchecked'], true);
+        if (!$again && !in_array((string) $task->status, ['pending', 'failed'], true)) return 'A fix for this is already ' . ((string) $task->status === 'running' ? 'being built' : ((string) $task->status === 'resolved' ? 'under way' : (string) $task->status)) . '.';
+        if (!$again && $fx !== null && $fx['state'] === 'planning') return 'A fix for this is being planned now.';
+        return '';
+    }
+
+    /** The open problems Tiknix found in this project — ones "Fix all" would take — newest first. */
+    private function openFound(int $instanceId): array {
+        $out = [];
+        foreach (Bean::find('workbenchtask', "instance_id = ? AND source = 'detected_error' AND parent_task_id IS NULL AND status IN ('pending', 'failed', 'resolved') ORDER BY id DESC", [$instanceId]) as $t) {
+            if (!$this->access->canRun((int) $this->member->id, $t)) continue;
+            if ($this->fixRefusal($t) === '') $out[] = $t;
+        }
+        return $out;
+    }
+
+    /** The selected project, if a fix can be built in it now; otherwise null with the reason sent. */
+    private function fixInstance(): ?object {
+        $instance = $this->selected ? $this->access->instanceMeta((int) $this->selected['id']) : null;
+        if (!$instance || !$instance->id) { Flight::jsonError('Choose a project first.', 409); return null; }
+        $tenant = \app\TenantBuilder::bySlug((string) $instance->slug);
+        if (!$tenant) { Flight::jsonError("{$instance->slug} is not running in its own container yet, so nothing can be built in it.", 409); return null; }
+        if ($why = $this->tenantAgentProblem($tenant, '')) { Flight::jsonError('This project has no working AI agent right now, so nothing can be built: ' . $why . '.', 409); return null; }
+        return $instance;
+    }
+
+    /** A found problem said for the agent: [what, the rest — its detail, where, its pictures]. */
+    private function fixBrief(object $task): array {
         $f = $this->askFound((string) $task->description);
         $what = $f['message'] !== '' ? $f['message'] : (string) $task->title;
         // The check's pictures are files of the app itself (public/uploads/audit/…): named by where they are, for the agent to open.
         $shots = array_map(fn($s) => '- `/srv/app/public' . parse_url($s['url'], PHP_URL_PATH) . '`', $f['shots']);
-        $said = "Fix this problem, which the check found after the last build: {$what}"
-              . ($f['full'] !== '' && $f['full'] !== $what ? "\n\n{$f['full']}" : '')
-              . ($f['where'] !== '' ? "\n\nIt was seen on: {$f['where']}" : '')
-              . ($shots ? "\n\nPictures of it, taken by the check (open them with the Read tool — they are in the app itself, not in your working copy):\n" . implode("\n", $shots) : '')
-              . "\n\nFind the cause before changing anything, fix that, and give the task a check in its `verify` that would have caught this."
-              . " The task that fixes it must write the CAUSE as a `- lesson:` in its `## Notebook` section — what went wrong and how to avoid it, in one sentence — so the next build does not make it again.";
-        \app\ToolUse::record('builder.ask', (int) $this->member->id, ['review' => false, 'fix' => true], (int) $instance->id);
-        // Pressed: the button says "Planning a fix…" until its plan lands (plan-ingest links it, fixed_by).
-        $task->fixAskedAt = time(); Bean::store($task);
-        if (!$this->askPlan($instance, \app\GoalBrief::compose($said, 'none', ''), mb_substr('Fix: ' . $what, 0, 90), false, [(int) $task->id])) {
-            $task->fixAskedAt = 0; Bean::store($task);       // it did not start: the button comes back
+        return [$what, ($f['full'] !== '' && $f['full'] !== $what ? "\n\n{$f['full']}" : '')
+            . ($f['where'] !== '' ? "\n\nIt was seen on: {$f['where']}" : '')
+            . ($shots ? "\n\nPictures of it, taken by the check (open them with the Read tool — they are in the app itself, not in your working copy):\n" . implode("\n", $shots) : '')];
+    }
+
+    /** Send the fix down the Builder's road; its problems say "Planning a fix…" until its plan lands (plan-ingest links them, fixed_by). */
+    private function fixStart(object $instance, string $said, string $title, array $tasks): void {
+        \app\ToolUse::record('builder.ask', (int) $this->member->id, ['review' => false, 'fix' => true, 'fix_count' => count($tasks)], (int) $instance->id);
+        foreach ($tasks as $t) { $t->fixAskedAt = time(); Bean::store($t); }
+        if (!$this->askPlan($instance, \app\GoalBrief::compose($said, 'none', ''), mb_substr($title, 0, 90), false, array_map(fn($t) => (int) $t->id, $tasks))) {
+            foreach ($tasks as $t) { $t->fixAskedAt = 0; Bean::store($t); }   // it did not start: the buttons come back
         }
     }
 
@@ -2079,9 +2138,11 @@ class Workbench extends BuildControl {
      * @return array{entries: array<int, array>, planning: ?array, waiting: array, more: int}
      */
     private function conversation(): array {
-        $out = ['entries' => [], 'planning' => null, 'waiting' => [], 'more' => 0];
+        $out = ['entries' => [], 'planning' => null, 'waiting' => [], 'more' => 0, 'open_found' => 0];
         if (!$this->selected) return $out;
         $instId = (int) $this->selected['id'];
+        // How many problems Tiknix found are open (what "Fix all" takes) — with a bubble of their own when there are several.
+        if (in_array('workbenchtask', Bean::inspect(), true)) $out['open_found'] = count($this->openFound($instId));
         // plan => the plan it continues (a follow-up: "make that bold"), from the project's own record
         try { $followers = \app\AskStore::followers(\app\WorkbenchDb::dirOf((string) $this->selected['slug'], (string) ($this->selected['app'] ?? ''))); }
         catch (\Throwable $e) { $followers = []; $this->logger->error('Workbench ask: follow-ups could not be read', ['error' => $e->getMessage()]); }

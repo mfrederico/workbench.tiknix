@@ -359,6 +359,12 @@ $reply = fn(string $body) => '<div class="d-flex mb-4"><div class="ask-reply rou
            . '<div class="small mt-1 ask-question-note">' . ($isQ ? 'The build is paused on this. It goes on by itself when you answer.' : 'This task is waiting on you.') . '</div></div></div>';
     }
 endforeach; ?>
+<?php if (($feed['open_found'] ?? 0) >= 2):
+    $__n = (int) $feed['open_found']; $__take = min($__n, 8); ?>
+    <?= $reply('<div class="fw-semibold"><i class="bi bi-bug-fill text-danger me-1"></i>' . $__n . ' problems Tiknix found are still open.</div>'
+        . '<div class="small text-body-secondary mt-1">Fix ' . ($__take === $__n ? 'them all' : 'the newest ' . $__take) . ' as one request: it finds what they have in common, fixes each cause once, and checks again. Each problem above shows when it is fixed.</div>'
+        . '<div class="mt-2">' . $btn('btn-primary', 'fixall', 'wrench-adjustable', 'Fix all ' . $__take) . '</div>') ?>
+<?php endif; ?>
 <?php foreach ($feed['waiting'] as $w):
     // what was said, without the list of attached files (kept with it; not something to retype)
     $__said = trim(\app\AskTriage::splitAsked(trim(\app\GoalBrief::split((string) $w['body'])['goal']))['said']) ?: (string) $w['title'];
