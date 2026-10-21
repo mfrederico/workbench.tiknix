@@ -577,8 +577,11 @@
                                                class="text-body-secondary text-decoration-none"><code>#<?= (int) $task->id ?></code></a>
                                         </td>
                                         <td>
-                                            <?php if ($task->status === 'pending'): ?>
-                                                <input type="checkbox" class="form-check-input wb-consol me-1 align-middle" value="<?= (int)$task->id ?>" title="Select to consolidate with other pending tasks">
+                                            <?php // Any task not running can be selected — to delete it; only pending ones also consolidate.
+                                                  // (A declined or finished task had no box, so it could never leave the list.) ?>
+                                            <?php if ($task->status !== 'running'): ?>
+                                                <input type="checkbox" class="form-check-input wb-consol me-1 align-middle" value="<?= (int)$task->id ?>" data-pending="<?= $task->status === 'pending' ? '1' : '0' ?>"
+                                                       title="<?= $task->status === 'pending' ? 'Select to delete, or to consolidate with other pending tasks' : 'Select to delete' ?>">
                                             <?php endif; ?>
                                             <?php if ($isSub): ?><i class="bi bi-arrow-return-right text-muted me-1"></i><?php endif; ?>
                                             <a href="/workbench/view?id=<?= $task->id ?>" class="text-decoration-none fw-medium">
@@ -962,6 +965,7 @@
                 <script>
                 (function(){
                     var selected = new Set();
+                    var notPending = new Set();   // selected tasks that cannot be consolidated (not pending)
                     var bar, countEl, btn, cancel;
                     var BTN_HTML = '<i class="bi bi-union me-1"></i>Consolidate into one';
                     /* Bulk delete. Names the count in the confirm and says what else goes with
@@ -1004,7 +1008,8 @@
                         if (!bar) return;
                         countEl.textContent = selected.size;
                         bar.style.display = selected.size > 0 ? 'flex' : 'none';
-                        btn.disabled = selected.size < 2;      // consolidate needs two to merge
+                        btn.disabled = selected.size < 2 || notPending.size > 0;      // consolidate needs two pending tasks to merge
+                        btn.title = notPending.size > 0 ? 'Only pending tasks can be consolidated' : '';
                         // Delete is meaningful for a single task, so it enables at one.
                         var del = document.getElementById('wbDeleteBtn');
                         if (del) del.disabled = selected.size < 1;
@@ -1033,6 +1038,7 @@
                         var cb = t.closest('.wb-consol');
                         if (!cb) return;
                         if (cb.checked) selected.add(cb.value); else selected.delete(cb.value);
+                        if (cb.checked && cb.getAttribute('data-pending') === '0') notPending.add(cb.value); else notPending.delete(cb.value);
                         applyChecks(); refresh();   // keep the plan-header checkbox in sync
                     });
                     var tbl = document.getElementById('wbTasks');
