@@ -1520,6 +1520,8 @@ class Workbench extends BuildControl {
         $name = (string) ($rj['default_agent'] ?? '');
         $this->viewData['askAgent'] = $name === '' ? '' : ($name === 'anthropic' ? 'the Anthropic account' : (string) (($rj['agent_names'][$name] ?? '') ?: $name));
         $this->viewData['askAgentsUrl'] = $this->selected ? $this->agentsUrl((int) $this->selected['id']) : '';
+        // where a connector's own panel opens, in a frame on this page (core's Connections, ?only=…&embed=1)
+        $this->viewData['connectBase'] = $this->selected ? rtrim((string) Flight::get('sidecar.core_url'), '/') . '/connections?id=' . (int) $this->selected['id'] : '';
         $this->render('workbench/ask', $this->viewData);
     }
 
@@ -2200,7 +2202,18 @@ class Workbench extends BuildControl {
                 $ps = (string) $r->planStatus;
                 $state = !$isPlan ? ('task-' . (string) $r->status)
                        : ((int) ($r->queuePos ?? 0) > 0 && in_array($ps, ['approved', 'stalled'], true) ? 'queued' : ($ps !== '' ? $ps : 'draft'));
+                // Connections its build said the app needs (AgentTask::NEEDS_FILE): each a card that opens the connector's panel
+                // here. Met ones (core's ConnectionNeeds marks them when it is connected) say so, quietly.
+                $connect = [];
+                foreach (array_merge([$r], $kids) as $x) foreach ((json_decode((string) ($x->needsJson ?? ''), true) ?: []) as $ck => $nd) {
+                    if (!preg_match('/^[a-z][a-z0-9_]{1,30}$/', (string) $ck)) continue;
+                    $label = $ck;
+                    try { $cn = \app\services\connectors\ConnectorRegistry::get((string) $ck); if ($cn) $label = (string) ($cn->meta()['label'] ?? $ck); } catch (\Throwable $e) { /* the key is said instead */ }
+                    $done = (string) ($nd['connected_at'] ?? '') !== '';
+                    if (!isset($connect[$ck]) || !$done) $connect[$ck] = ['key' => (string) $ck, 'label' => $label, 'why' => (string) ($nd['why'] ?? ''), 'done' => $done];
+                }
                 $out['entries'][] = [
+                    'connect' => array_values($connect),
                     'id' => (int) $r->id, 'plan' => $isPlan, 'title' => (string) $r->title, 'asked' => $asked, 'files' => $files,
                     // one of the few requests that went straight to a build agent (2026-10-11): it was not decomposed, so it is not said to have been
                     'direct' => (string) ($r->source ?? '') === 'ask',

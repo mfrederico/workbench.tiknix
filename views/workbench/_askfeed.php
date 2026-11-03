@@ -350,6 +350,14 @@ $reply = fn(string $body) => '<div class="d-flex mb-4"><div class="ask-reply rou
            . '<div class="mt-1">' . nl2br($h($qa['q'])) . '</div></div></div>'
            . $you($qa['a'], 'your answer');
     }
+    // Connections the build said the app needs: one card each, its button opening the connector's panel right here (ask.php).
+    foreach ($e['connect'] ?? [] as $cn) {
+        if (!empty($cn['done'])) { echo $reply('<div class="small"><i class="bi bi-plug-fill text-success me-1"></i>' . $h($cn['label']) . ' is connected' . ($cn['why'] !== '' ? ' (' . $h($cn['why']) . ')' : '') . '.</div>'); continue; }
+        echo '<div class="d-flex mb-4"><div class="ask-reply ask-question rounded-4 px-3 py-2">'
+           . '<div class="fw-semibold"><i class="bi bi-plug me-1"></i>Connect ' . $h($cn['label']) . '</div>'
+           . '<div class="mt-1">Your app needs ' . $h($cn['label']) . ($cn['why'] !== '' ? ' for ' . $h($cn['why']) : '') . '. It works without it for now and says so; once it is connected, it just works.</div>'
+           . '<div class="mt-2"><button type="button" class="btn btn-sm btn-primary" data-connect="' . $h($cn['key']) . '" data-connect-label="' . $h($cn['label']) . '"><i class="bi bi-plug me-1"></i>Connect ' . $h($cn['label']) . '</button></div></div></div>';
+    }
     if (!empty($e['needs'])) {
         $isQ = !empty($e['needs']['question']);
         echo '<div class="d-flex mb-4"><div class="ask-reply ask-question rounded-4 px-3 py-2">'

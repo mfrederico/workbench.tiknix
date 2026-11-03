@@ -53,6 +53,19 @@ $__inst = (int) ($selected['id'] ?? 0);
     </div>
     <div id="ask-feed"><?php include __DIR__ . '/_askfeed.php'; ?></div>
 </div>
+<?php /* A connection the build needs: the connector's own panel from tiknix.com, in a frame, without leaving Ask. */ ?>
+<div class="modal fade" id="ask-connect" tabindex="-1" aria-labelledby="ask-connect-title" aria-hidden="true">
+    <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable modal-fullscreen-sm-down">
+        <div class="modal-content">
+            <div class="modal-header py-2">
+                <h2 class="modal-title h6 mb-0" id="ask-connect-title">Connect</h2>
+                <span class="small text-success ms-3" id="ask-connect-done" hidden><i class="bi bi-check-circle-fill me-1"></i>Connected. You can close this.</span>
+                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+            </div>
+            <div class="modal-body p-0"><iframe id="ask-connect-frame" title="Connect" style="width:100%;height:70vh;border:0;display:block"></iframe></div>
+        </div>
+    </div>
+</div>
 <div id="ask-view" role="dialog" aria-modal="true" aria-label="Picture from the check" tabindex="-1">
     <button type="button" class="x" aria-label="Close"><i class="bi bi-x-lg"></i></button>
     <button type="button" class="nav prev" aria-label="The picture before"><i class="bi bi-chevron-left"></i></button>
@@ -138,6 +151,7 @@ $__inst = (int) ($selected['id'] ?? 0);
                 // "Reading it…" under the box has been answered above: it is no longer true
                 if (/^(Reading it…|Sending it to be built…)$/.test(msg.textContent) && !feed.querySelector('.ask-reading')) say(''); if (stick || was) window.scrollTo(0, document.body.scrollHeight); if (feed.querySelector('.ask-live')) live(); });
     }
+    document.addEventListener('ask:redraw', function(){ redraw(true); });   // a connection was made in the panel (below)
     // What each agent building right now is doing, under its task: a build runs for many minutes
     // with nothing else moving, and has to be seen to be working.
     var doing = {};
@@ -362,5 +376,26 @@ $__inst = (int) ($selected['id'] ?? 0);
     setInterval(tick, 5000); tick();
     // While something typed is being read, look every second and a half: an answer is seconds away, and five more is long.
     setInterval(function(){ if (feed.querySelector('.ask-reading')) tick(); }, 1500);
+})();
+</script>
+<script>
+// The Connect buttons: the connector's panel from tiknix.com opens here (?only=<connector>&embed=1). Connecting it there marks
+// the need met on tiknix.com itself (ConnectionNeeds); the panel's message only says when to redraw the conversation.
+(function () {
+    var base = <?= json_encode($connectBase ?? '', JSON_UNESCAPED_SLASHES) ?>; if (!base) return;
+    var core = new URL(base, location.href).origin, el = document.getElementById('ask-connect'), frame = document.getElementById('ask-connect-frame');
+    var title = document.getElementById('ask-connect-title'), done = document.getElementById('ask-connect-done'), modal = null;
+    document.addEventListener('click', function (e) {
+        var b = e.target.closest('[data-connect]'); if (!b) return;
+        title.textContent = 'Connect ' + (b.getAttribute('data-connect-label') || b.getAttribute('data-connect')); done.hidden = true;
+        frame.src = base + '&only=' + encodeURIComponent(b.getAttribute('data-connect')) + '&embed=1';
+        modal = modal || new bootstrap.Modal(el); modal.show();
+    });
+    window.addEventListener('message', function (ev) {
+        if (ev.origin !== core || !ev.data || ev.data.tiknix !== 'connected') return;
+        done.hidden = false;
+        setTimeout(function () { document.dispatchEvent(new CustomEvent('ask:redraw')); }, 800);
+    });
+    el.addEventListener('hidden.bs.modal', function () { frame.src = 'about:blank'; document.dispatchEvent(new CustomEvent('ask:redraw')); });
 })();
 </script>
