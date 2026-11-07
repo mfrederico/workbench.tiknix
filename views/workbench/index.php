@@ -125,7 +125,7 @@
                 <ul class="list-group list-group-flush small">
                     <?php foreach (array_slice($asked, 0, 8) as $__a): [$__label, $__tone] = $__say[(string) $__a['state']]; ?>
                     <li class="list-group-item">
-                        <a class="text-reset text-decoration-none d-block" href="/workbench/ask">
+                        <a class="text-reset text-decoration-none d-block" href="/workbench/ask#ask-p<?= (int) $__a['prompt_ref'] ?>">
                             <span class="d-block text-truncate"><?= htmlspecialchars(mb_strimwidth((string) $__a['said'], 0, 90, '…')) ?></span>
                             <span class="badge text-bg-<?= $__tone ?> fw-normal"><?= $__label ?></span>
                             <span class="text-body-secondary"><?= htmlspecialchars(date('M j, g:i a', strtotime((string) $__a['created_at']) ?: time())) ?></span>

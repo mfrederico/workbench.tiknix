@@ -372,7 +372,16 @@ $__inst = (int) ($selected['id'] ?? 0);
             post('/workbench/askview', {view: b.getAttribute('data-view')}).then(function(j){ window.location.href = j.data.url; }).catch(function(e){ say(e.message, true); });
         });
     });
-    window.scrollTo(0, document.body.scrollHeight);
+    // Opened at one request (the board's Asked card links /workbench/ask#ask-p…): land on it,
+    // with its answer box focused when it is waiting on one. Otherwise, the newest is at the bottom.
+    (function(){
+        var at = location.hash && /^#ask-[a-z]\d+$/.test(location.hash) ? document.getElementById(location.hash.slice(1)) : null;
+        if (!at) { window.scrollTo(0, document.body.scrollHeight); return; }
+        at.scrollIntoView({block: 'start'});
+        var next = at.nextElementSibling, form = null;
+        while (next && !next.classList.contains('ask-anchor')) { form = form || next.querySelector('.ask-plan-answer input, .ask-reply form input'); next = next.nextElementSibling; }
+        if (form) form.focus({preventScroll: true});
+    })();
     setInterval(tick, 5000); tick();
     // While something typed is being read, look every second and a half: an answer is seconds away, and five more is long.
     setInterval(function(){ if (feed.querySelector('.ask-reading')) tick(); }, 1500);

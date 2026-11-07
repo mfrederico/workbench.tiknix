@@ -112,7 +112,8 @@ $reply = fn(string $body) => '<div class="d-flex mb-4"><div class="ask-reply rou
     $id = (int) $e['id'];
     if (($e['kind'] ?? '') === 'talk'):
         // Said and answered without a plan: a question, or a message it could not tell was one.
-        echo $you($e['asked'], $when($e['at']));
+        // Anchored by its prompt (ask-p…): the board's Asked card links here, and ask.php scrolls to it.
+        echo '<span class="ask-anchor" id="ask-p' . $id . '"></span>' . $you($e['asked'], $when($e['at']));
         $pid = ['prompt' => $id];
         // what the planner asked about this request earlier, and what was answered: part of the conversation, quiet
         foreach ($e['qa'] ?? [] as $qa) {
